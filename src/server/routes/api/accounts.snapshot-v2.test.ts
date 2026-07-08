@@ -1,12 +1,10 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   formatLocalDate,
   formatUtcSqlDateTime,
 } from "../../services/localTimeService.js";
+import { createTestDataDir, type TestDataDir } from "../../test-fixtures/testDataDir.js";
 
 type DbModule = typeof import("../../db/index.js");
 
@@ -14,19 +12,18 @@ describe("accounts snapshot v2", () => {
   let app: FastifyInstance;
   let db: DbModule["db"];
   let schema: DbModule["schema"];
-  let dataDir = "";
-  let previousDataDir: string | undefined;
+  let closeDbConnections: DbModule["closeDbConnections"];
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    previousDataDir = process.env.DATA_DIR;
-    dataDir = mkdtempSync(join(tmpdir(), "metapi-accounts-snapshot-v2-"));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir("metapi-accounts-snapshot-v2-");
 
     await import("../../db/migrate.js");
     const dbModule = await import("../../db/index.js");
     const routesModule = await import("./accounts.js");
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -47,12 +44,7 @@ describe("accounts snapshot v2", () => {
 
   afterAll(async () => {
     await app.close();
-    if (previousDataDir === undefined) {
-      delete process.env.DATA_DIR;
-    } else {
-      process.env.DATA_DIR = previousDataDir;
-    }
-    rmSync(dataDir, { recursive: true, force: true });
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it("returns accounts and sites in one snapshot payload", async () => {

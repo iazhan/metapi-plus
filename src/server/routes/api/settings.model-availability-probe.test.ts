@@ -1,9 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
 
 const { startModelAvailabilityProbeSchedulerMock, stopModelAvailabilityProbeSchedulerMock } = vi.hoisted(() => ({
   startModelAvailabilityProbeSchedulerMock: vi.fn(),
@@ -23,11 +21,11 @@ describe('settings model availability probe runtime setting', () => {
   let config: ConfigModule['config'];
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
+  let closeDbConnections: DbModule['closeDbConnections'];
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-settings-model-probe-'));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-settings-model-probe-');
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
@@ -36,6 +34,7 @@ describe('settings model availability probe runtime setting', () => {
 
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     config = configModule.config;
 
     app = Fastify();
@@ -51,8 +50,7 @@ describe('settings model availability probe runtime setting', () => {
 
   afterAll(async () => {
     await app.close();
-    rmSync(dataDir, { recursive: true, force: true });
-    delete process.env.DATA_DIR;
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('persists enabling the model availability probe and starts the scheduler', async () => {

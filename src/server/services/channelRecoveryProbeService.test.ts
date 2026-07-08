@@ -1,8 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { createTestDataDir, type TestDataDir } from '../test-fixtures/testDataDir.js';
 
 const probeRuntimeModelMock = vi.fn();
 
@@ -19,6 +17,7 @@ type TokenRouterModule = typeof import('./tokenRouter.js');
 describe('channelRecoveryProbeService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let runChannelRecoveryProbeSweep: RecoveryModule['runChannelRecoveryProbeSweep'];
   let resetChannelRecoveryProbeState: RecoveryModule['resetChannelRecoveryProbeState'];
   let proxyChannelCoordinator: CoordinatorModule['proxyChannelCoordinator'];
@@ -26,14 +25,11 @@ describe('channelRecoveryProbeService', () => {
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
-  let dataDir = '';
-  let originalDataDir: string | undefined;
+  let testDataDir: TestDataDir;
   let originalConcurrencyLimit = 0;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-channel-recovery-probe-'));
-    originalDataDir = process.env.DATA_DIR;
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-channel-recovery-probe-');
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
@@ -44,6 +40,7 @@ describe('channelRecoveryProbeService', () => {
 
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     runChannelRecoveryProbeSweep = recoveryModule.runChannelRecoveryProbeSweep;
     resetChannelRecoveryProbeState = recoveryModule.resetChannelRecoveryProbeState;
     proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
@@ -75,18 +72,13 @@ describe('channelRecoveryProbeService', () => {
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     config.proxySessionChannelConcurrencyLimit = originalConcurrencyLimit;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
-    rmSync(dataDir, { recursive: true, force: true });
-    if (originalDataDir === undefined) {
-      delete process.env.DATA_DIR;
-    } else {
-      process.env.DATA_DIR = originalDataDir;
-    }
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('clears cooldown markers when a background probe succeeds', async () => {

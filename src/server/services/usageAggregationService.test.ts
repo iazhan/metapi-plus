@@ -1,9 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { formatUtcSqlDateTime } from "./localTimeService.js";
+import { createTestDataDir, type TestDataDir } from "../test-fixtures/testDataDir.js";
 
 type DbModule = typeof import("../db/index.js");
 type ProjectorModule = typeof import("./usageAggregationService.js");
@@ -11,21 +9,20 @@ type ProjectorModule = typeof import("./usageAggregationService.js");
 describe("usageAggregationService", () => {
   let db: DbModule["db"];
   let schema: DbModule["schema"];
+  let closeDbConnections: DbModule["closeDbConnections"];
   let runUsageAggregationProjectionPass: ProjectorModule["runUsageAggregationProjectionPass"];
   let requestUsageAggregatesRecompute: ProjectorModule["requestUsageAggregatesRecompute"];
-  let dataDir = "";
-  let previousDataDir: string | undefined;
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    previousDataDir = process.env.DATA_DIR;
-    dataDir = mkdtempSync(join(tmpdir(), "metapi-usage-projector-"));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir("metapi-usage-projector-");
 
     await import("../db/migrate.js");
     const dbModule = await import("../db/index.js");
     const projectorModule = await import("./usageAggregationService.js");
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     runUsageAggregationProjectionPass = projectorModule.runUsageAggregationProjectionPass;
     requestUsageAggregatesRecompute = projectorModule.requestUsageAggregatesRecompute;
   });
@@ -40,13 +37,8 @@ describe("usageAggregationService", () => {
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.DATA_DIR;
-    } else {
-      process.env.DATA_DIR = previousDataDir;
-    }
-    rmSync(dataDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it("projects proxy logs into day/hour/model aggregates and supports recompute requests", async () => {

@@ -1,10 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from 'vitest';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
+import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
 
 const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
@@ -30,9 +28,9 @@ describe('account tokens sync routes with site status', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let maskToken: AccountTokenServiceModule['maskToken'];
-  let dataDir = '';
-  let previousDataDir: string | undefined;
+  let testDataDir: TestDataDir;
   let seedId = 0;
 
   const nextSeed = () => {
@@ -62,10 +60,8 @@ describe('account tokens sync routes with site status', () => {
   };
 
   beforeAll(async () => {
-    previousDataDir = process.env.DATA_DIR;
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-account-tokens-sync-'));
     vi.resetModules();
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-account-tokens-sync-');
     vi.resetModules();
 
     await import('../../db/migrate.js');
@@ -74,6 +70,7 @@ describe('account tokens sync routes with site status', () => {
     const routesModule = await import('./accountTokens.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     maskToken = accountTokenServiceModule.maskToken;
 
     app = Fastify();
@@ -100,12 +97,7 @@ describe('account tokens sync routes with site status', () => {
 
   afterAll(async () => {
     await app.close();
-    if (previousDataDir === undefined) {
-      delete process.env.DATA_DIR;
-    } else {
-      process.env.DATA_DIR = previousDataDir;
-    }
-    rmSync(dataDir, { recursive: true, force: true });
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('returns skipped for single-account sync when site is disabled', async () => {

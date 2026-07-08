@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createTestDataDir, type TestDataDir } from "../test-fixtures/testDataDir.js";
 
 type DbModule = typeof import("../db/index.js");
 type AdminSnapshotStoreModule = typeof import("./adminSnapshotStore.js");
@@ -9,22 +7,21 @@ type AdminSnapshotStoreModule = typeof import("./adminSnapshotStore.js");
 describe("adminSnapshotStore", () => {
   let db: DbModule["db"];
   let schema: DbModule["schema"];
+  let closeDbConnections: DbModule["closeDbConnections"];
   let readAdminSnapshot: AdminSnapshotStoreModule["readAdminSnapshot"];
   let writeAdminSnapshot: AdminSnapshotStoreModule["writeAdminSnapshot"];
   let deleteExpiredAdminSnapshots: AdminSnapshotStoreModule["deleteExpiredAdminSnapshots"];
-  let dataDir = "";
-  let previousDataDir: string | undefined;
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    previousDataDir = process.env.DATA_DIR;
-    dataDir = mkdtempSync(join(tmpdir(), "metapi-admin-snapshot-store-"));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir("metapi-admin-snapshot-store-");
 
     await import("../db/migrate.js");
     const dbModule = await import("../db/index.js");
     const storeModule = await import("./adminSnapshotStore.js");
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     readAdminSnapshot = storeModule.readAdminSnapshot;
     writeAdminSnapshot = storeModule.writeAdminSnapshot;
     deleteExpiredAdminSnapshots = storeModule.deleteExpiredAdminSnapshots;
@@ -34,13 +31,8 @@ describe("adminSnapshotStore", () => {
     await db.delete(schema.adminSnapshots).run();
   });
 
-  afterAll(() => {
-    if (previousDataDir === undefined) {
-      delete process.env.DATA_DIR;
-    } else {
-      process.env.DATA_DIR = previousDataDir;
-    }
-    rmSync(dataDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it("persists and reloads admin snapshot payloads from the runtime database", async () => {

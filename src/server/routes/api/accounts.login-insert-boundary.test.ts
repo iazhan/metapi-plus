@@ -1,8 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
 
 const loginMock = vi.fn();
 const getApiTokenMock = vi.fn();
@@ -38,17 +36,18 @@ describe('accounts login insert boundary', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
+  let closeDbConnections: DbModule['closeDbConnections'];
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-accounts-login-insert-boundary-'));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-accounts-login-insert-boundary-');
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./accounts.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -67,10 +66,7 @@ describe('accounts login insert boundary', () => {
 
   afterAll(async () => {
     await app.close();
-    if (dataDir) {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-    delete process.env.DATA_DIR;
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('fails fast when login account creation cannot complete through the shared insert helper', async () => {

@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createTestDataDir, type TestDataDir } from '../test-fixtures/testDataDir.js';
 
 type DbModule = typeof import('./index.js');
 type InsertHelpersModule = typeof import('./insertHelpers.js');
@@ -9,16 +7,17 @@ type InsertHelpersModule = typeof import('./insertHelpers.js');
 describe('insert helpers', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let insertHelpers: InsertHelpersModule;
-  let dataDir = '';
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-insert-helpers-'));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-insert-helpers-');
     await import('./migrate.js');
     const dbModule = await import('./index.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     insertHelpers = await import('./insertHelpers.js');
   });
 
@@ -26,11 +25,8 @@ describe('insert helpers', () => {
     await db.delete(schema.sites).run();
   });
 
-  afterAll(() => {
-    delete process.env.DATA_DIR;
-    if (dataDir) {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
+  afterAll(async () => {
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('extracts positive inserted ids from run results', () => {

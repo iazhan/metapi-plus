@@ -1,8 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { createTestDataDir, type TestDataDir } from '../test-fixtures/testDataDir.js';
 
 vi.mock('../db/insertHelpers.js', async () => {
   const actual = await vi.importActual<typeof import('../db/insertHelpers.js')>('../db/insertHelpers.js');
@@ -20,18 +18,19 @@ type MigrationModule = typeof import('./siteApiKeyMigrationService.js');
 describe('siteApiKeyMigrationService insert boundary', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let migrateSiteApiKeysToAccounts: MigrationModule['migrateSiteApiKeysToAccounts'];
-  let dataDir = '';
+  let testDataDir: TestDataDir;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-site-api-key-migration-boundary-'));
-    process.env.DATA_DIR = dataDir;
+    testDataDir = createTestDataDir('metapi-site-api-key-migration-boundary-');
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const migrationModule = await import('./siteApiKeyMigrationService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     migrateSiteApiKeysToAccounts = migrationModule.migrateSiteApiKeysToAccounts;
   });
 
@@ -42,10 +41,7 @@ describe('siteApiKeyMigrationService insert boundary', () => {
   });
 
   afterAll(async () => {
-    if (dataDir) {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-    delete process.env.DATA_DIR;
+    await testDataDir.cleanup(closeDbConnections);
   });
 
   it('does not clear the site apiKey when creating the replacement account cannot complete', async () => {
