@@ -45,7 +45,7 @@ spec:
       serviceAccountName: metapi-deploy-helper
       containers:
         - name: helper
-          image: 1467078763/metapi:latest
+          image: ghcr.io/iazhan/metapi-plus:latest
           imagePullPolicy: Always
           command: ["/bin/sh", "-lc"]
           args:

@@ -16,15 +16,40 @@ describe('docker workflows', () => {
     expect(releaseWorkflow).toContain('"${tag}-armv7"');
   });
 
-  it('derives Docker Hub image names from the configured username secret', () => {
+  it('publishes GHCR image names from the repository owner', () => {
     const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
     const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
 
-    expect(ciWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
+    expect(ciWorkflow).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
+    expect(ciWorkflow).not.toContain('DOCKERHUB_IMAGE');
+    expect(ciWorkflow).not.toContain('DOCKERHUB_USERNAME');
     expect(ciWorkflow).not.toContain('images: 1467078763/metapi');
 
-    expect(releaseWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
+    expect(releaseWorkflow).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
+    expect(releaseWorkflow).not.toContain('DOCKERHUB_IMAGE');
+    expect(releaseWorkflow).not.toContain('DOCKERHUB_USERNAME');
     expect(releaseWorkflow).not.toContain('1467078763/metapi');
+  });
+
+  it('reserves the GHCR latest tag for release workflows', () => {
+    const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+    expect(ciWorkflow).not.toContain('type=raw,value=latest');
+    expect(releaseWorkflow).toContain('type=raw,value=latest');
+  });
+
+  it('uses the Metapi Plus GHCR image in bundled deployment templates', () => {
+    const compose = readFileSync(resolve(process.cwd(), 'docker/docker-compose.yml'), 'utf8');
+    const deployHelper = readFileSync(resolve(process.cwd(), 'deploy/k3s/metapi-deploy-helper.yaml'), 'utf8');
+    const chartValues = readFileSync(resolve(process.cwd(), 'deploy/k3s/chart/values.yaml'), 'utf8');
+
+    expect(compose).toContain('image: ghcr.io/iazhan/metapi-plus:latest');
+    expect(compose).not.toContain('1467078763/metapi');
+    expect(deployHelper).toContain('image: ghcr.io/iazhan/metapi-plus:latest');
+    expect(deployHelper).not.toContain('1467078763/metapi');
+    expect(chartValues).toContain('repository: ghcr.io/iazhan/metapi-plus');
+    expect(chartValues).not.toContain('1467078763/metapi');
   });
 
   it('uses an armv7-capable node base image in the Dockerfile', () => {
