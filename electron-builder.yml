@@ -1,5 +1,5 @@
-appId: me.cita777.metapi.desktop
-productName: Metapi
+appId: io.github.iazhan.metapiplus.desktop
+productName: Metapi Plus
 artifactName: ${name}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
@@ -27,11 +27,11 @@ linux:
     - AppImage
     - deb
     - rpm
-  maintainer: cita-777 <cita-777@users.noreply.github.com>
+  maintainer: AZhan <46664740+iazhan@users.noreply.github.com>
 publish:
   provider: github
-  owner: cita-777
-  repo: metapi
+  owner: iazhan
+  repo: metapi-plus
   releaseType: release
   publishAutoUpdate: true
 nsis:

@@ -1,8 +1,8 @@
 services:
   - type: web
-    name: metapi
+    name: metapi-plus
     runtime: docker
-    repo: https://github.com/cita-777/metapi
+    repo: https://github.com/iazhan/metapi-plus
     dockerfilePath: ./docker/Dockerfile
     dockerContext: .
     plan: free

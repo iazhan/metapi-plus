@@ -1,6 +1,6 @@
 # 🚢 部署指南
 
-[返回文档中心](./README.md)
+[返回文档首页](/)
 
 ---
 
@@ -36,7 +36,7 @@
 如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
 
 - 查看当前运行版本
-- 检查 GitHub Releases / Docker Hub 的稳定版
+- 检查 GitHub Releases / GHCR 镜像的稳定版
 - 通过集群内 helper 手动触发一次升级
 
 请直接阅读：
@@ -55,7 +55,7 @@
 
 模板会自动完成：
 
-- 拉取 `1467078763/metapi:latest` 镜像
+- 拉取 `ghcr.io/iazhan/metapi-plus:latest` 镜像
 - 配置 HTTP 端口（4000）
 - 挂载持久化存储（`/app/data`）
 - 分配域名
@@ -75,7 +75,7 @@
 
 ## Render 一键部署（免费 24h 运行）
 
-<a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+<a href="https://render.com/deploy?repo=https://github.com/iazhan/metapi-plus">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 
@@ -120,7 +120,7 @@
 **方式二：手动创建**
 
 1. 在 [Render Dashboard](https://dashboard.render.com) 点击 **New → Web Service**
-2. 连接你的 GitHub 仓库（或使用公开仓库地址 `https://github.com/cita-777/metapi`）
+2. 连接你的 GitHub 仓库（或使用公开仓库地址 `https://github.com/iazhan/metapi-plus`）
 3. 配置：
    - **Environment**: Docker
    - **Dockerfile Path**: `./docker/Dockerfile`
@@ -161,7 +161,7 @@ Render 免费实例在 15 分钟无流量后会自动休眠。使用 UptimeRobot
 ### 标准步骤
 
 ```bash
-mkdir metapi && cd metapi
+mkdir metapi-plus && cd metapi-plus
 
 # 创建 docker-compose.yml（参见快速上手）
 # 设置环境变量
@@ -193,14 +193,14 @@ docker compose --env-file .env up -d
 ## Docker 命令部署
 
 ```bash
-docker run -d --name metapi \
+docker run -d --name metapi-plus \
   -p 4000:4000 \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  1467078763/metapi:latest
+  ghcr.io/iazhan/metapi-plus:latest
 ```
 
 > **路径说明：**

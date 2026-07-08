@@ -17,30 +17,24 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
+<a href="https://github.com/iazhan/metapi-plus/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/iazhan/metapi-plus?label=Release&logo=github&style=flat">
 </a><!--
---><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+--><a href="https://github.com/iazhan/metapi-plus/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/iazhan/metapi-plus?style=flat&logo=github&label=Stars">
 </a><!--
---><a href="https://deepwiki.com/cita-777/metapi">
-  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
-</a><!--
---><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">
-</a><!--
---><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Image" src="https://img.shields.io/badge/docker-1467078763%2Fmetapi-blue?logo=docker&style=flat">
+--><a href="https://github.com/iazhan/metapi-plus/pkgs/container/metapi-plus">
+  <img alt="Container" src="https://img.shields.io/badge/container-GHCR-blue?logo=github&style=flat">
 </a><!--
 --><a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><!--
---><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><!--
+--><img alt="Node.js" src="https://img.shields.io/badge/Node.js-25%2B-339933?logo=node.js&style=flat"><!--
 --><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><!--
 --><a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
 </a><!--
---><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+--><a href="https://render.com/deploy?repo=https://github.com/iazhan/metapi-plus">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -51,12 +45,12 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>Docs</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">Quick Start</a> ·
-  <a href="https://metapi.cita777.me/deployment">Deployment</a> ·
-  <a href="https://metapi.cita777.me/configuration">Configuration</a> ·
-  <a href="https://metapi.cita777.me/client-integration">Client Integration</a> ·
-  <a href="https://metapi.cita777.me/faq">FAQ</a> ·
+  <a href="docs/index.md"><strong>Docs</strong></a> ·
+  <a href="docs/getting-started.md">Quick Start</a> ·
+  <a href="docs/deployment.md">Deployment</a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="docs/client-integration.md">Client Integration</a> ·
+  <a href="docs/faq.md">FAQ</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -306,12 +300,12 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 ### Docker Compose (Recommended)
 
 ```bash
-mkdir metapi && cd metapi
+mkdir metapi-plus && cd metapi-plus
 
 cat > docker-compose.yml << 'EOF'
 services:
-  metapi:
-    image: 1467078763/metapi:latest
+  metapi-plus:
+    image: ghcr.io/iazhan/metapi-plus:latest
     ports:
       - "4000:4000"
     volumes:
@@ -339,14 +333,14 @@ docker compose up -d
 <summary><strong>One-line Docker command</strong></summary>
 
 ```bash
-docker run -d --name metapi \
+docker run -d --name metapi-plus \
   -p 4000:4000 \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  1467078763/metapi:latest
+  ghcr.io/iazhan/metapi-plus:latest
 ```
 
 </details>
@@ -392,14 +386,12 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | Category | Link | Description |
 | --- | --- | --- |
 | Docs Home | [docs/index.md](docs/index.md) | Publishable docs portal with nav/sidebar/search |
-| Docs Maintenance | [docs/README.md](docs/README.md) | Maintenance and contributor-oriented docs entry |
 | Quick Start | [docs/getting-started.md](docs/getting-started.md) | Get running in 10 minutes |
 | Deployment | [docs/deployment.md](docs/deployment.md) | Docker Compose, reverse proxy, upgrades |
 | Configuration | [docs/configuration.md](docs/configuration.md) | All environment variables and routing params |
 | Client Integration | [docs/client-integration.md](docs/client-integration.md) | Open WebUI / Cherry Studio / Cursor, etc. |
 | Operations | [docs/operations.md](docs/operations.md) | Backup, logging, health checks |
 | FAQ | [docs/faq.md](docs/faq.md) | Common errors and fixes |
-| FAQ/Tutorial Contribution | [docs/community/faq-tutorial-guidelines.md](docs/community/faq-tutorial-guidelines.md) | Templates and workflow for community knowledge |
 
 ---
 
@@ -553,9 +545,9 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 All forms of contribution are welcome!
 
-- Report bugs — [Submit an Issue](https://github.com/cita-777/metapi/issues)
-- Feature suggestions — [Start a Discussion](https://github.com/cita-777/metapi/issues)
-- Code contributions — [Submit a Pull Request](https://github.com/cita-777/metapi/pulls)
+- Report bugs — [Submit an Issue](https://github.com/iazhan/metapi-plus/issues)
+- Feature suggestions — [Start a Discussion](https://github.com/iazhan/metapi-plus/issues)
+- Code contributions — [Submit a Pull Request](https://github.com/iazhan/metapi-plus/pulls)
 - Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -590,7 +582,7 @@ Special thanks to all contributors:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=iazhan/metapi-plus&type=date&legend=top-left&v=2)](https://www.star-history.com/#iazhan/metapi-plus&type=date&legend=top-left)
 
 ---
 
