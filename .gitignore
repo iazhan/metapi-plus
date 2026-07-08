@@ -25,4 +25,8 @@ docker/.env
 # Local planning docs
 docs/plan/
 docs/plans/
+docs/agent-appendix.md
+docs/local/
+docs/dev-private/
 .ace-tool/
+.serena/
