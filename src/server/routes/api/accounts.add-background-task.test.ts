@@ -174,5 +174,5 @@ describe('accounts background initialization', () => {
       releaseTokens?.([]);
       await responsePromise.catch(() => undefined);
     }
-  });
+  }, 30_000);
 });

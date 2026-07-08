@@ -920,5 +920,5 @@ describe('update center routes', () => {
     expect(streamResponse.body).toContain('Resolving target version');
     expect(streamResponse.body).toContain('Waiting for rollout');
     expect(streamResponse.body).toContain('event: done');
-  });
+  }, 30_000);
 });

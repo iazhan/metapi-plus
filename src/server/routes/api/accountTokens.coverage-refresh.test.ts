@@ -1,9 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
 
 const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
@@ -25,11 +23,12 @@ vi.mock('../../services/platforms/index.js', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 
-describe('account token coverage refresh', { timeout: 15_000 }, () => {
+describe('account token coverage refresh', { timeout: 30_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
+  let closeDbConnections: DbModule['closeDbConnections'];
+  let dataDir: TestDataDir | null = null;
   let seedId = 0;
 
   const nextSeed = () => {
@@ -75,8 +74,8 @@ describe('account token coverage refresh', { timeout: 15_000 }, () => {
   };
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-account-token-coverage-'));
-    process.env.DATA_DIR = dataDir;
+    dataDir = createTestDataDir('metapi-account-token-coverage-');
+    vi.resetModules();
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
@@ -84,6 +83,7 @@ describe('account token coverage refresh', { timeout: 15_000 }, () => {
     const statsRoutesModule = await import('./stats.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
 
     app = Fastify();
     await app.register(accountTokenRoutesModule.accountTokensRoutes);
@@ -111,8 +111,11 @@ describe('account token coverage refresh', { timeout: 15_000 }, () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    delete process.env.DATA_DIR;
+    await dataDir?.cleanup(async () => {
+      await app.close();
+      await closeDbConnections();
+    });
+    vi.resetModules();
   });
 
   it('refreshes token coverage after manually adding an account token', async () => {

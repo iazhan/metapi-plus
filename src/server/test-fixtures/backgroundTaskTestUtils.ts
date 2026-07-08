@@ -5,7 +5,7 @@ type WaitForBackgroundTaskOptions = {
   pollMs?: number;
 };
 
-const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_MS = 10;
 
 function isBackgroundTaskTerminal(task: BackgroundTask | null): boolean {

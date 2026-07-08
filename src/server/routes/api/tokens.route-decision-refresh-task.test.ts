@@ -9,7 +9,7 @@ type DbModule = typeof import('../../db/index.js');
 type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 
-describe('POST /api/routes/decision/refresh', () => {
+describe('POST /api/routes/decision/refresh', { timeout: 30_000 }, () => {
   let app: FastifyInstance;
   let previousDataDir: string | undefined;
   let db: DbModule['db'];

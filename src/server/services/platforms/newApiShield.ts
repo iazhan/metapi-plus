@@ -3,6 +3,7 @@ import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 
 const SHIELD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
+const SHIELD_VM_TIMEOUT_MS = 1_000;
 
 export function buildNewApiCookieCandidates(token: string): string[] {
   const trimmed = (token || '').trim();
@@ -82,8 +83,8 @@ function parseChallengeXorSeed(html: string): string | null {
   try {
     const sandbox: Record<string, unknown> = { decodeURIComponent };
     createContext(sandbox);
-    runInContext(helperCode, sandbox, { timeout: 100 });
-    runInContext(rotateCode, sandbox, { timeout: 100 });
+    runInContext(helperCode, sandbox, { timeout: SHIELD_VM_TIMEOUT_MS });
+    runInContext(rotateCode, sandbox, { timeout: SHIELD_VM_TIMEOUT_MS });
     const decoder = sandbox.a0j;
     if (typeof decoder !== 'function') return null;
     const seed = (decoder as (index: number) => unknown)(0x115);

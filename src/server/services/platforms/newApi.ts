@@ -4,6 +4,8 @@ import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
 
+const SHIELD_VM_TIMEOUT_MS = 1_000;
+
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
 
@@ -428,8 +430,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
     try {
       const sandbox: Record<string, unknown> = { decodeURIComponent };
       createContext(sandbox);
-      runInContext(helperCode, sandbox, { timeout: 100 });
-      runInContext(rotateCode, sandbox, { timeout: 100 });
+      runInContext(helperCode, sandbox, { timeout: SHIELD_VM_TIMEOUT_MS });
+      runInContext(rotateCode, sandbox, { timeout: SHIELD_VM_TIMEOUT_MS });
       const decoder = sandbox['a0j'];
       if (typeof decoder !== 'function') return null;
       const seed = (decoder as (idx: number) => unknown)(0x115);
