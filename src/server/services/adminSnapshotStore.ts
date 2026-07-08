@@ -1,5 +1,6 @@
 import { and, eq, lt } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { upsertOnIntendedUniqueKey } from "../db/upsertHelpers.js";
 import type {
   PersistedSnapshotRecord,
   SnapshotPersistenceAdapter,
@@ -80,24 +81,23 @@ export async function writeAdminSnapshot<T>(
     staleUntil: record.staleUntil,
     updatedAt: new Date().toISOString(),
   };
+  const updateSet = {
+    payload: values.payload,
+    generatedAt: values.generatedAt,
+    expiresAt: values.expiresAt,
+    staleUntil: values.staleUntil,
+    updatedAt: values.updatedAt,
+  };
 
-  await (db
-    .insert(schema.adminSnapshots)
-    .values(values) as any)
-    .onConflictDoUpdate({
-      target: [
-        schema.adminSnapshots.namespace,
-        schema.adminSnapshots.snapshotKey,
-      ],
-      set: {
-        payload: values.payload,
-        generatedAt: values.generatedAt,
-        expiresAt: values.expiresAt,
-        staleUntil: values.staleUntil,
-        updatedAt: values.updatedAt,
-      },
-    })
-    .run();
+  await upsertOnIntendedUniqueKey({
+    table: schema.adminSnapshots,
+    values,
+    sqlitePostgresConflictTarget: [
+      schema.adminSnapshots.namespace,
+      schema.adminSnapshots.snapshotKey,
+    ],
+    set: updateSet,
+  });
 }
 
 export async function deleteExpiredAdminSnapshots(beforeIso?: string) {

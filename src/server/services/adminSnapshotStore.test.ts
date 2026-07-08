@@ -62,6 +62,45 @@ describe("adminSnapshotStore", () => {
     });
   });
 
+  it("updates existing snapshot rows for the same namespace and key", async () => {
+    const identity = { namespace: "dashboard-summary", key: "default" };
+
+    await writeAdminSnapshot(identity, {
+      payload: { totalBalance: 12.5, totalAccounts: 3 },
+      generatedAt: "2026-04-09T00:00:00.000Z",
+      expiresAt: "2026-04-09T00:00:10.000Z",
+      staleUntil: "2026-04-09T00:01:00.000Z",
+    });
+
+    const initialRows = await db.select().from(schema.adminSnapshots).all();
+    expect(initialRows).toHaveLength(1);
+    const initialRow = initialRows[0];
+
+    await writeAdminSnapshot(identity, {
+      payload: { totalBalance: 24, totalAccounts: 5 },
+      generatedAt: "2026-04-09T00:02:00.000Z",
+      expiresAt: "2026-04-09T00:02:10.000Z",
+      staleUntil: "2026-04-09T00:03:00.000Z",
+    });
+
+    const rows = await db.select().from(schema.adminSnapshots).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(initialRow?.id);
+    expect(rows[0]?.createdAt).toBe(initialRow?.createdAt);
+
+    const record = await readAdminSnapshot<{
+      totalBalance: number;
+      totalAccounts: number;
+    }>(identity);
+
+    expect(record).toEqual({
+      payload: { totalBalance: 24, totalAccounts: 5 },
+      generatedAt: "2026-04-09T00:02:00.000Z",
+      expiresAt: "2026-04-09T00:02:10.000Z",
+      staleUntil: "2026-04-09T00:03:00.000Z",
+    });
+  });
+
   it("prunes snapshot rows whose stale window has elapsed", async () => {
     await writeAdminSnapshot(
       { namespace: "dashboard-summary", key: "expired" },
