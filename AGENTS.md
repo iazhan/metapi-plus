@@ -72,3 +72,41 @@ make small, consistent changes without re-learning the codebase each time.
   the same area so the rule becomes executable.
 - Keep local planning files under `docs/plans/`. They are intentionally ignored
   by git and should not be treated as published documentation.
+
+## Commit Gate
+
+Before creating any local commit, run the full local verification suite unless
+the user explicitly narrows the scope after seeing the proposed risk tradeoff.
+
+Default full verification:
+
+```powershell
+git status --short --branch
+npm run typecheck
+npm test
+npm run build
+npm run docs:build
+npm run repo:drift-check
+git diff --check
+git diff --stat
+```
+
+If a change touches database schema, migrations, persistence, or runtime schema
+bootstrap, also run:
+
+```powershell
+npm run test:schema:parity
+npm run test:schema:upgrade
+npm run test:schema:runtime
+```
+
+If a change touches dependencies, lockfiles, release workflows, Docker images,
+or production runtime packages, also run:
+
+```powershell
+npm audit --omit=dev --audit-level=high
+```
+
+Before committing, report the changed files, verification commands and results,
+skipped checks with reasons, and remaining CI or environment risks. Do not
+create the commit until the user confirms after that report.
