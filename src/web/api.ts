@@ -1257,7 +1257,7 @@ export const api = {
       body: JSON.stringify({}),
     }),
   deployUpdateCenter: (data: {
-    source: "github-release" | "docker-hub-tag";
+    source: "github-release" | "container-tag";
     targetTag: string;
     targetDigest?: string | null;
   }) =>

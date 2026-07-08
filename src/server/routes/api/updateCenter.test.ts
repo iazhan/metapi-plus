@@ -9,13 +9,13 @@ import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/b
 
 const {
   fetchLatestStableGitHubReleaseMock,
-  fetchDockerHubTagCandidatesMock,
+  fetchContainerTagCandidatesMock,
   getUpdateCenterHelperStatusMock,
   streamUpdateCenterDeployMock,
   streamUpdateCenterRollbackMock,
 } = vi.hoisted(() => ({
   fetchLatestStableGitHubReleaseMock: vi.fn(),
-  fetchDockerHubTagCandidatesMock: vi.fn(),
+  fetchContainerTagCandidatesMock: vi.fn(),
   getUpdateCenterHelperStatusMock: vi.fn(),
   streamUpdateCenterDeployMock: vi.fn(),
   streamUpdateCenterRollbackMock: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock('../../services/updateCenterVersionService.js', async () => {
   return {
     ...actual,
     fetchLatestStableGitHubRelease: (...args: unknown[]) => fetchLatestStableGitHubReleaseMock(...args),
-    fetchDockerHubTagCandidates: (...args: unknown[]) => fetchDockerHubTagCandidatesMock(...args),
+    fetchContainerTagCandidates: (...args: unknown[]) => fetchContainerTagCandidatesMock(...args),
   };
 });
 
@@ -66,8 +66,8 @@ describe('update center routes', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -103,7 +103,7 @@ describe('update center routes', () => {
 
   beforeEach(async () => {
     fetchLatestStableGitHubReleaseMock.mockReset();
-    fetchDockerHubTagCandidatesMock.mockReset();
+    fetchContainerTagCandidatesMock.mockReset();
     getUpdateCenterHelperStatusMock.mockReset();
     streamUpdateCenterDeployMock.mockReset();
     streamUpdateCenterRollbackMock.mockReset();
@@ -127,10 +127,10 @@ describe('update center routes', () => {
       source: 'github-release',
       rawVersion: 'v1.3.0',
       normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+      url: 'https://github.com/iazhan/metapi-plus/releases/tag/v1.3.0',
     } as const;
     const dockerHubTag = {
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       rawVersion: 'latest',
       normalizedVersion: 'latest',
       tagName: 'latest',
@@ -141,7 +141,7 @@ describe('update center routes', () => {
     } as const;
     const dockerHubRecentTags = [
       {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         rawVersion: 'dev',
         normalizedVersion: 'dev',
         tagName: 'dev',
@@ -156,7 +156,7 @@ describe('update center routes', () => {
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '12',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: 'latest',
       imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       healthy: true,
@@ -166,14 +166,14 @@ describe('update center routes', () => {
           updatedAt: '2026-03-28T12:00:00Z',
           status: 'superseded',
           description: 'Rollback to stable digest',
-          imageRepository: '1467078763/metapi',
+          imageRepository: 'ghcr.io/iazhan/metapi-plus',
           imageTag: 'main',
           imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         },
       ],
     } as const;
     fetchLatestStableGitHubReleaseMock.mockResolvedValue(githubRelease);
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+    fetchContainerTagCandidatesMock.mockResolvedValue({
       primary: dockerHubTag,
       recentNonStable: dockerHubRecentTags,
     });
@@ -187,8 +187,8 @@ describe('update center routes', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -264,9 +264,9 @@ describe('update center routes', () => {
 
   it('returns partial status when a single version source lookup fails', async () => {
     fetchLatestStableGitHubReleaseMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+    fetchContainerTagCandidatesMock.mockResolvedValue({
       primary: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         rawVersion: '1.3.1',
         normalizedVersion: '1.3.1',
         url: null,
@@ -278,7 +278,7 @@ describe('update center routes', () => {
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '12',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: '1.2.3',
       healthy: true,
     });
@@ -355,7 +355,7 @@ describe('update center routes', () => {
     expect(invalidConfigResponse.statusCode).toBe(400);
     expect(invalidConfigResponse.json()).toMatchObject({
       success: false,
-      message: 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.',
+      message: 'Invalid defaultDeploySource. Expected container-tag/github-release.',
     });
 
     const invalidDeployResponse = await app.inject({
@@ -368,7 +368,7 @@ describe('update center routes', () => {
     expect(invalidDeployResponse.statusCode).toBe(400);
     expect(invalidDeployResponse.json()).toMatchObject({
       success: false,
-      message: 'Invalid source. Expected docker-hub-tag/github-release.',
+      message: 'Invalid source. Expected container-tag/github-release.',
     });
   });
 
@@ -377,14 +377,14 @@ describe('update center routes', () => {
       source: 'github-release',
       rawVersion: 'v1.3.0',
       normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+      url: 'https://github.com/iazhan/metapi-plus/releases/tag/v1.3.0',
     });
     getUpdateCenterHelperStatusMock.mockResolvedValue({
       ok: true,
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '12',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: '1.2.3',
       healthy: true,
     });
@@ -425,9 +425,9 @@ describe('update center routes', () => {
     await saveUpdateCenterRuntimeState({
       lastCheckedAt: '2026-03-31 09:00:00',
       lastCheckError: null,
-      lastResolvedSource: 'docker-hub-tag',
+      lastResolvedSource: 'container-tag',
       lastResolvedDisplayVersion: 'latest @ sha256:efb2ee655386',
-      lastResolvedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+      lastResolvedCandidateKey: 'container-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       lastNotifiedCandidateKey: null,
       lastNotifiedAt: null,
       statusSnapshot: {
@@ -435,14 +435,14 @@ describe('update center routes', () => {
           source: 'github-release',
           rawVersion: 'v1.3.0',
           normalizedVersion: '1.3.0',
-          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+          url: 'https://github.com/iazhan/metapi-plus/releases/tag/v1.3.0',
           tagName: 'v1.3.0',
           digest: null,
           displayVersion: '1.3.0',
           publishedAt: '2026-03-31T09:00:00Z',
         },
         dockerHubTag: {
-          source: 'docker-hub-tag',
+          source: 'container-tag',
           rawVersion: 'latest',
           normalizedVersion: 'latest',
           tagName: 'latest',
@@ -453,7 +453,7 @@ describe('update center routes', () => {
         },
         dockerHubRecentTags: [
           {
-            source: 'docker-hub-tag',
+            source: 'container-tag',
             rawVersion: 'dev',
             normalizedVersion: 'dev',
             tagName: 'dev',
@@ -468,7 +468,7 @@ describe('update center routes', () => {
           releaseName: 'metapi',
           namespace: 'ai',
           revision: '12',
-          imageRepository: '1467078763/metapi',
+          imageRepository: 'ghcr.io/iazhan/metapi-plus',
           imageTag: 'latest',
           imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
           healthy: true,
@@ -505,7 +505,7 @@ describe('update center routes', () => {
       },
     });
     expect(fetchLatestStableGitHubReleaseMock).not.toHaveBeenCalled();
-    expect(fetchDockerHubTagCandidatesMock).not.toHaveBeenCalled();
+    expect(fetchContainerTagCandidatesMock).not.toHaveBeenCalled();
     expect(getUpdateCenterHelperStatusMock).not.toHaveBeenCalled();
   });
 
@@ -518,11 +518,11 @@ describe('update center routes', () => {
       tagName: 'v1.3.1',
       displayVersion: '1.3.1',
       publishedAt: '2026-03-31T10:00:00Z',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
+      url: 'https://github.com/iazhan/metapi-plus/releases/tag/v1.3.1',
     });
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+    fetchContainerTagCandidatesMock.mockResolvedValue({
       primary: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         rawVersion: 'latest',
         normalizedVersion: 'latest',
         tagName: 'latest',
@@ -533,7 +533,7 @@ describe('update center routes', () => {
       },
       recentNonStable: [
         {
-          source: 'docker-hub-tag',
+          source: 'container-tag',
           rawVersion: 'dev-20260417-f67ade2',
           normalizedVersion: 'dev-20260417-f67ade2',
           tagName: 'dev-20260417-f67ade2',
@@ -549,7 +549,7 @@ describe('update center routes', () => {
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '13',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: 'latest',
       imageDigest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       healthy: true,
@@ -583,7 +583,7 @@ describe('update center routes', () => {
       },
     });
     expect(fetchLatestStableGitHubReleaseMock).toHaveBeenCalledTimes(1);
-    expect(fetchDockerHubTagCandidatesMock).toHaveBeenCalledTimes(1);
+    expect(fetchContainerTagCandidatesMock).toHaveBeenCalledTimes(1);
     expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
     expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
       lastResolvedSource: 'github-release',
@@ -672,8 +672,8 @@ describe('update center routes', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -702,7 +702,7 @@ describe('update center routes', () => {
 
     streamUpdateCenterDeployMock.mockResolvedValue({
       success: true,
-      targetSource: 'docker-hub-tag',
+      targetSource: 'container-tag',
       targetTag: 'latest',
       targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       previousRevision: '13',
@@ -715,7 +715,7 @@ describe('update center routes', () => {
       method: 'POST',
       url: '/api/update-center/deploy',
       payload: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'latest',
         targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       },
@@ -723,7 +723,7 @@ describe('update center routes', () => {
 
     expect(deployResponse.statusCode).toBe(202);
     expect(streamUpdateCenterDeployMock).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       targetTag: 'latest',
       targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
     }), expect.any(Function));
@@ -737,7 +737,7 @@ describe('update center routes', () => {
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '17',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: 'latest',
       imageDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       healthy: true,
@@ -747,7 +747,7 @@ describe('update center routes', () => {
       method: 'POST',
       url: '/api/update-center/deploy',
       payload: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'latest',
         targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       },
@@ -769,14 +769,14 @@ describe('update center routes', () => {
       releaseName: 'metapi',
       namespace: 'ai',
       revision: '17',
-      imageRepository: '1467078763/metapi',
+      imageRepository: 'ghcr.io/iazhan/metapi-plus',
       imageTag: '1.2.3',
       imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       healthy: true,
     });
     streamUpdateCenterDeployMock.mockResolvedValue({
       success: true,
-      targetSource: 'docker-hub-tag',
+      targetSource: 'container-tag',
       targetTag: '1.2.3',
       targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       previousRevision: '17',
@@ -789,7 +789,7 @@ describe('update center routes', () => {
       method: 'POST',
       url: '/api/update-center/deploy',
       payload: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: '1.2.3',
         targetDigest: 'sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
       },
@@ -807,7 +807,7 @@ describe('update center routes', () => {
 
     streamUpdateCenterDeployMock.mockResolvedValue({
       success: true,
-      targetSource: 'docker-hub-tag',
+      targetSource: 'container-tag',
       targetTag: 'latest',
       targetDigest: null,
       previousRevision: '13',
@@ -820,7 +820,7 @@ describe('update center routes', () => {
       method: 'POST',
       url: '/api/update-center/deploy',
       payload: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'latest',
         targetDigest: 'not-a-real-digest',
       },
@@ -872,7 +872,7 @@ describe('update center routes', () => {
       onLog?.('Waiting for rollout');
       return {
         success: true,
-        targetSource: 'docker-hub-tag',
+        targetSource: 'container-tag',
         targetTag: '1.3.1',
         targetDigest: null,
         previousRevision: '13',
@@ -886,7 +886,7 @@ describe('update center routes', () => {
       method: 'POST',
       url: '/api/update-center/deploy',
       payload: {
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetVersion: '1.3.1',
       },
     });

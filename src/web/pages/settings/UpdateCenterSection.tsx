@@ -6,7 +6,7 @@ import { useToast } from '../../components/Toast.js';
 import { useIsMobile } from '../../components/useIsMobile.js';
 import {
   buildUpdateReminder,
-  describeDockerDeployState,
+  describeContainerDeployState,
   describeGitHubDeployState,
 } from '../helpers/updateCenterPresentation.js';
 import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
@@ -23,7 +23,7 @@ type UpdateCenterStatus = {
     imageRepository: string;
     githubReleasesEnabled: boolean;
     dockerHubTagsEnabled: boolean;
-    defaultDeploySource: 'github-release' | 'docker-hub-tag';
+    defaultDeploySource: 'github-release' | 'container-tag';
   };
   githubRelease?: {
     normalizedVersion?: string;
@@ -75,7 +75,7 @@ type UpdateCenterStatus = {
   runtime?: {
     lastCheckedAt?: string | null;
     lastCheckError?: string | null;
-    lastResolvedSource?: 'github-release' | 'docker-hub-tag' | null;
+    lastResolvedSource?: 'github-release' | 'container-tag' | null;
     lastResolvedDisplayVersion?: string | null;
     lastResolvedCandidateKey?: string | null;
     lastNotifiedCandidateKey?: string | null;
@@ -89,7 +89,7 @@ const DEFAULT_CONFIG: NonNullable<UpdateCenterStatus['config']> = {
   namespace: 'default',
   releaseName: '',
   chartRef: '',
-  imageRepository: '1467078763/metapi',
+  imageRepository: 'ghcr.io/iazhan/metapi-plus',
   githubReleasesEnabled: true,
   dockerHubTagsEnabled: true,
   defaultDeploySource: 'github-release',
@@ -102,8 +102,8 @@ const DEPLOY_SOURCE_OPTIONS = [
     description: '优先跟踪仓库稳定版 release。',
   },
   {
-    value: 'docker-hub-tag',
-    label: 'Docker Hub Tags',
+    value: 'container-tag',
+    label: 'GHCR Tags',
     description: '适合直接跟随镜像标签推进部署。',
   },
 ] as const;
@@ -342,7 +342,7 @@ export default function UpdateCenterSection() {
   };
 
   const runDeploy = async (
-    source: 'github-release' | 'docker-hub-tag',
+    source: 'github-release' | 'container-tag',
     target: { tag?: string | null; digest?: string | null },
   ) => {
     const targetTag = String(target.tag || '').trim();
@@ -432,7 +432,7 @@ export default function UpdateCenterSection() {
     helperImageTag: status?.helper?.imageTag,
     candidate: status?.githubRelease,
   });
-  const dockerDeployState = describeDockerDeployState({
+  const dockerDeployState = describeContainerDeployState({
     enabled: config.enabled && config.dockerHubTagsEnabled,
     helperHealthy,
     helperError: status?.helper?.error,
@@ -482,7 +482,7 @@ export default function UpdateCenterSection() {
           </span>
         </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.55 }}>
-          在设置页里统一查看 GitHub Releases、Docker Hub 版本和 K3s helper 状态，避免部署信息散落在多个入口。
+          在设置页里统一查看 GitHub Releases、GHCR 版本和 K3s helper 状态，避免部署信息散落在多个入口。
         </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginTop: 6 }}>
           {updateReminder.detail}
@@ -588,7 +588,7 @@ export default function UpdateCenterSection() {
             style={{ width: 16, height: 16, marginTop: 2, accentColor: 'var(--color-primary)' }}
           />
           <span style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Docker Hub</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>GHCR</span>
             <span style={fieldHintStyle}>自动发现会保留稳定主候选，并额外列出最近的 dev / 分支 / sha 标签。</span>
           </span>
         </label>
@@ -623,7 +623,7 @@ export default function UpdateCenterSection() {
               value={config.defaultDeploySource}
               onChange={(value) => setConfig((prev) => ({
                 ...prev,
-                defaultDeploySource: value === 'docker-hub-tag' ? 'docker-hub-tag' : 'github-release',
+                defaultDeploySource: value === 'container-tag' ? 'container-tag' : 'github-release',
               }))}
               options={DEPLOY_SOURCE_OPTIONS.map((item) => ({ ...item }))}
             />
@@ -652,7 +652,7 @@ export default function UpdateCenterSection() {
               value={config.chartRef}
               onChange={(e) => setConfig((prev) => ({ ...prev, chartRef: e.target.value }))}
               style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-              placeholder="oci://ghcr.io/cita-777/charts/metapi"
+              placeholder="/opt/metapi-k3s/chart"
             />
           </label>
           <label>
@@ -661,7 +661,7 @@ export default function UpdateCenterSection() {
               value={config.imageRepository}
               onChange={(e) => setConfig((prev) => ({ ...prev, imageRepository: e.target.value }))}
               style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-              placeholder="1467078763/metapi"
+              placeholder="ghcr.io/iazhan/metapi-plus"
             />
           </label>
         </div>
@@ -737,7 +737,7 @@ export default function UpdateCenterSection() {
 
           <div style={sectionPanelStyle}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Docker Hub</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>GHCR</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <span className={getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).className}>
                   {getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).label}
@@ -745,7 +745,7 @@ export default function UpdateCenterSection() {
                 <span className={`${dockerDeployState.badgeClassName} ${dockerDeployState.highlight ? 'stat-value-glow' : ''}`.trim()}>
                   {dockerDeployState.badgeLabel}
                 </span>
-                {config.defaultDeploySource === 'docker-hub-tag' ? (
+                {config.defaultDeploySource === 'container-tag' ? (
                   <span className="badge badge-info">默认来源</span>
                 ) : null}
               </div>
@@ -765,16 +765,16 @@ export default function UpdateCenterSection() {
                 type="button"
                 onClick={() => {
                   if (!helperHealthy) return;
-                  void runDeploy('docker-hub-tag', {
+                  void runDeploy('container-tag', {
                     tag: status?.dockerHubTag?.tagName || status?.dockerHubTag?.normalizedVersion || '',
                     digest: status?.dockerHubTag?.digest || null,
                   });
                 }}
                 disabled={!canDeployDocker}
-                className={config.defaultDeploySource === 'docker-hub-tag' ? 'btn btn-primary' : 'btn btn-ghost'}
-                style={config.defaultDeploySource === 'docker-hub-tag' ? undefined : { border: '1px solid var(--color-border)' }}
+                className={config.defaultDeploySource === 'container-tag' ? 'btn btn-primary' : 'btn btn-ghost'}
+                style={config.defaultDeploySource === 'container-tag' ? undefined : { border: '1px solid var(--color-border)' }}
               >
-                部署 Docker Hub 标签
+                部署 GHCR 标签
               </button>
               {status?.dockerHubTag?.tagName ? (
                 <button
@@ -794,7 +794,7 @@ export default function UpdateCenterSection() {
             </div>
             <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12, marginBottom: 12 }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
-                最近非稳定 Docker 标签
+                最近非稳定 容器标签
               </div>
               <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
                 自动列出最近推送的 dev / 分支 / sha 标签；点部署即可直接使用，不必手动输入 tag 和 digest。
@@ -805,7 +805,7 @@ export default function UpdateCenterSection() {
                     const candidateTag = String(candidate.tagName || '').trim();
                     const candidateDigest = String(candidate.digest || '').trim();
                     const candidateLabel = candidate.displayVersion || candidate.normalizedVersion || candidateTag;
-                    const candidateDeployState = describeDockerDeployState({
+                    const candidateDeployState = describeContainerDeployState({
                       enabled: config.enabled && config.dockerHubTagsEnabled,
                       helperHealthy,
                       helperError: status?.helper?.error,
@@ -845,7 +845,7 @@ export default function UpdateCenterSection() {
                             title={candidateDeployState.reason}
                             onClick={() => {
                               if (!canDeployCandidate || !candidateTag) return;
-                              void runDeploy('docker-hub-tag', {
+                              void runDeploy('container-tag', {
                                 tag: candidateTag,
                                 digest: candidateDigest || null,
                               });
@@ -873,13 +873,13 @@ export default function UpdateCenterSection() {
                 </div>
               ) : (
                 <div style={fieldHintStyle}>
-                  暂未发现最近的 dev / 分支 / sha 标签；仍可在下方手动填写任意 Docker 标签。
+                  暂未发现最近的 dev / 分支 / sha 标签；仍可在下方手动填写任意 容器标签。
                 </div>
               )}
             </div>
             <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12 }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
-                手动部署 Docker Hub 标签
+                手动部署 GHCR 标签
               </div>
               <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
                 自动发现已经覆盖最近的非稳定标签；如果你要部署更老或更特殊的 tag，仍可直接在这里填写。
@@ -913,13 +913,13 @@ export default function UpdateCenterSection() {
                   disabled={!canDeployManualDocker}
                   onClick={() => {
                     if (!canDeployManualDocker) return;
-                    void runDeploy('docker-hub-tag', {
+                    void runDeploy('container-tag', {
                       tag: manualDockerTag,
                       digest: manualDockerDigest || null,
                     });
                   }}
                 >
-                  部署自定义 Docker 标签
+                  部署自定义 容器标签
                 </button>
                 <span style={fieldHintStyle}>
                   digest 选填；如果 chart 当前锁定了旧 digest，建议把 tag 和 digest 一起填写。

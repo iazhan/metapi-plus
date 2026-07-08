@@ -111,7 +111,7 @@ export function describeGitHubDeployState(input: {
   };
 }
 
-export function describeDockerDeployState(input: {
+export function describeContainerDeployState(input: {
   enabled: boolean;
   helperHealthy: boolean;
   helperError?: string | null;
@@ -185,7 +185,7 @@ export function describeDockerDeployState(input: {
       kind: 'new-version',
       badgeClassName: 'badge badge-success',
       badgeLabel: '发现新版本',
-      reason: 'Docker Hub 已出现更高版本，可直接发起部署。',
+      reason: 'GHCR 已出现更高版本，可直接发起部署。',
       canDeploy: true,
       highlight: true,
     };
@@ -222,6 +222,8 @@ export function describeDockerDeployState(input: {
     highlight: false,
   };
 }
+
+export const describeDockerDeployState = describeContainerDeployState;
 
 export function buildUpdateReminder(input: {
   currentVersion?: string | null;
@@ -260,10 +262,10 @@ export function buildUpdateReminder(input: {
       label: candidate.kind === 'new-digest' ? '发现新 digest' : '发现新版本',
       badgeClassName: 'badge badge-success',
       detail: candidate.kind === 'new-digest'
-        ? 'Docker Hub 的 alias tag 已指向新 digest，可按需部署。'
+        ? 'GHCR 的 alias tag 已指向新 digest，可按需部署。'
         : candidate.source === 'github-release'
           ? `GitHub 稳定版 ${normalizeString(input.githubRelease?.displayVersion || input.githubRelease?.normalizedVersion)} 已可部署。`
-          : `Docker Hub ${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)} 已可部署。`,
+          : `GHCR ${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)} 已可部署。`,
       highlight: true,
     };
   }

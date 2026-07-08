@@ -56,8 +56,8 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -107,7 +107,7 @@ describe('UpdateCenterSection', () => {
             updatedAt: '2026-03-29T12:00:00Z',
             status: 'deployed',
             description: 'Upgrade complete',
-            imageRepository: '1467078763/metapi',
+            imageRepository: 'ghcr.io/iazhan/metapi-plus',
             imageTag: 'latest',
             imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
           },
@@ -116,7 +116,7 @@ describe('UpdateCenterSection', () => {
             updatedAt: '2026-03-28T12:00:00Z',
             status: 'superseded',
             description: 'Rollback to stable digest',
-            imageRepository: '1467078763/metapi',
+            imageRepository: 'ghcr.io/iazhan/metapi-plus',
             imageTag: 'main',
             imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           },
@@ -125,7 +125,7 @@ describe('UpdateCenterSection', () => {
             updatedAt: '2026-03-27T12:00:00Z',
             status: 'superseded',
             description: 'Earlier stable release',
-            imageRepository: '1467078763/metapi',
+            imageRepository: 'ghcr.io/iazhan/metapi-plus',
             imageTag: '1.2.2',
             imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           },
@@ -150,8 +150,8 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://updated-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -164,8 +164,8 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -279,7 +279,7 @@ describe('UpdateCenterSection', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('Docker Hub Tags')
+        && collectText(node).includes('GHCR Tags')
       ));
 
       await act(async () => {
@@ -301,7 +301,7 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://updated-helper.ai.svc.cluster.local:9850',
         githubReleasesEnabled: false,
         dockerHubTagsEnabled: false,
-        defaultDeploySource: 'docker-hub-tag',
+        defaultDeploySource: 'container-tag',
       }));
 
       const deployButton = root.root.find((node) => (
@@ -344,8 +344,8 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
         defaultDeploySource: 'github-release',
@@ -389,7 +389,7 @@ describe('UpdateCenterSection', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('btn')
-        && collectText(node).includes('部署 Docker Hub 标签')
+        && collectText(node).includes('部署 GHCR 标签')
       ));
 
       expect(githubDeployButton.props.disabled).toBe(true);
@@ -406,7 +406,7 @@ describe('UpdateCenterSection', () => {
     }
   });
 
-  it('deploys manual Docker Hub tags so dev and branch images are reachable from the UI', async () => {
+  it('deploys manual GHCR tags so dev and branch images are reachable from the UI', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -441,7 +441,7 @@ describe('UpdateCenterSection', () => {
       const customDeployButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).includes('部署自定义 Docker 标签')
+        && collectText(node).includes('部署自定义 容器标签')
       ));
 
       expect(customDeployButton.props.disabled).toBe(false);
@@ -452,7 +452,7 @@ describe('UpdateCenterSection', () => {
       await flushMicrotasks();
 
       expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'dev-20260417-f67ade2',
         targetDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       });
@@ -462,7 +462,7 @@ describe('UpdateCenterSection', () => {
     }
   });
 
-  it('deploys auto-discovered recent non-stable Docker Hub tags without manual input', async () => {
+  it('deploys auto-discovered recent non-stable GHCR tags without manual input', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -494,7 +494,7 @@ describe('UpdateCenterSection', () => {
       await flushMicrotasks();
 
       expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'dev-20260417-f67ade2',
         targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       });
@@ -512,11 +512,11 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
-        defaultDeploySource: 'docker-hub-tag',
+        defaultDeploySource: 'container-tag',
       },
       githubRelease: {
         normalizedVersion: '1.3.0',
@@ -555,9 +555,9 @@ describe('UpdateCenterSection', () => {
       runtime: {
         lastCheckedAt: '2026-03-30 20:30:00',
         lastCheckError: null,
-        lastResolvedSource: 'docker-hub-tag',
+        lastResolvedSource: 'container-tag',
         lastResolvedDisplayVersion: 'dev',
-        lastResolvedCandidateKey: 'docker-hub-tag:dev@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        lastResolvedCandidateKey: 'container-tag:dev@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         lastNotifiedCandidateKey: null,
         lastNotifiedAt: null,
       },
@@ -599,7 +599,7 @@ describe('UpdateCenterSection', () => {
       await flushMicrotasks();
 
       expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         targetTag: 'dev-20260417-next',
         targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       });
@@ -652,7 +652,7 @@ describe('UpdateCenterSection', () => {
     }
   });
 
-  it('blocks Docker Hub deploys when the current helper image already matches the target digest', async () => {
+  it('blocks GHCR deploys when the current helper image already matches the target digest', async () => {
     apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
       currentVersion: '1.2.3',
       config: {
@@ -660,11 +660,11 @@ describe('UpdateCenterSection', () => {
         helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
         namespace: 'ai',
         releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
+        chartRef: '/opt/metapi-k3s/chart',
+        imageRepository: 'ghcr.io/iazhan/metapi-plus',
         githubReleasesEnabled: true,
         dockerHubTagsEnabled: true,
-        defaultDeploySource: 'docker-hub-tag',
+        defaultDeploySource: 'container-tag',
       },
       githubRelease: {
         normalizedVersion: '1.3.0',
@@ -704,7 +704,7 @@ describe('UpdateCenterSection', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('btn')
-        && collectText(node).includes('部署 Docker Hub 标签')
+        && collectText(node).includes('部署 GHCR 标签')
       ));
 
       expect(dockerDeployButton.props.disabled).toBe(true);

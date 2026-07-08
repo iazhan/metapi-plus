@@ -10,7 +10,8 @@ export type StableSemVer = {
   patch: number;
 };
 
-export type UpdateCenterVersionSource = 'github-release' | 'docker-hub-tag';
+export type UpdateCenterVersionSource = 'github-release' | 'container-tag';
+export type LegacyUpdateCenterVersionSource = UpdateCenterVersionSource | 'docker-hub-tag';
 
 export type UpdateCenterVersionCandidate = {
   source: UpdateCenterVersionSource;
@@ -32,24 +33,41 @@ export type GitHubReleaseRecord = {
   name?: string | null;
 };
 
-export type DockerHubTagRecord = {
+export type ContainerTagRecord = {
   name?: string | null;
   tag_last_pushed?: string | null;
   last_updated?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
   digest?: string | null;
+  url?: string | null;
 };
 
-export type DockerHubTagCandidates = {
+export type GhcrPackageVersionRecord = {
+  name?: string | null;
+  html_url?: string | null;
+  package_html_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  metadata?: {
+    container?: {
+      tags?: string[];
+      digest?: string | null;
+    } | null;
+  } | null;
+};
+
+export type ContainerTagCandidates = {
   primary: UpdateCenterVersionCandidate | null;
   recentNonStable: UpdateCenterVersionCandidate[];
 };
 
 const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
-const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cita-777/metapi/releases';
-const DOCKER_HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/1467078763/metapi/tags?page_size=100';
+const GITHUB_RELEASES_URL = 'https://api.github.com/repos/iazhan/metapi-plus/releases';
+const GHCR_PACKAGE_VERSIONS_URL = 'https://api.github.com/users/iazhan/packages/container/metapi-plus/versions?per_page=100';
 const UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS = 5_000;
-const PREFERRED_DOCKER_HUB_TAG_ALIASES = ['latest', 'main'] as const;
-const MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS = 5;
+const PREFERRED_CONTAINER_TAG_ALIASES = ['latest', 'main'] as const;
+const MAX_RECENT_NON_STABLE_CONTAINER_TAGS = 5;
 
 async function fetchJsonWithTimeout(url: string, init: UndiciRequestInit, timeoutLabel: string): Promise<unknown> {
   const controller = new AbortController();
@@ -130,7 +148,7 @@ export function selectLatestStableGitHubRelease(
   };
 }
 
-function normalizeDockerHubTagRecord(input: string | DockerHubTagRecord): DockerHubTagRecord {
+function normalizeContainerTagRecord(input: string | ContainerTagRecord): ContainerTagRecord {
   if (typeof input === 'string') {
     return {
       name: input,
@@ -139,19 +157,19 @@ function normalizeDockerHubTagRecord(input: string | DockerHubTagRecord): Docker
   return input;
 }
 
-function normalizeDockerHubTagName(input: string | null | undefined): string {
+function normalizeContainerTagName(input: string | null | undefined): string {
   return String(input || '').trim();
 }
 
-function isPreferredDockerHubAlias(input: string | null | undefined): boolean {
-  const tag = normalizeDockerHubTagName(input);
-  return PREFERRED_DOCKER_HUB_TAG_ALIASES.includes(tag as typeof PREFERRED_DOCKER_HUB_TAG_ALIASES[number]);
+function isPreferredContainerAlias(input: string | null | undefined): boolean {
+  const tag = normalizeContainerTagName(input);
+  return PREFERRED_CONTAINER_TAG_ALIASES.includes(tag as typeof PREFERRED_CONTAINER_TAG_ALIASES[number]);
 }
 
-function isStableDockerHubTag(input: string | null | undefined): boolean {
-  const tag = normalizeDockerHubTagName(input);
+function isStableContainerTag(input: string | null | undefined): boolean {
+  const tag = normalizeContainerTagName(input);
   if (!tag) return false;
-  return isPreferredDockerHubAlias(tag) || !!parseStableSemVer(tag);
+  return isPreferredContainerAlias(tag) || !!parseStableSemVer(tag);
 }
 
 function normalizeDockerDigest(input: string | null | undefined): string | null {
@@ -159,20 +177,20 @@ function normalizeDockerDigest(input: string | null | undefined): string | null 
   return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : null;
 }
 
-function getDockerHubTagPublishedAt(record: DockerHubTagRecord): string | null {
-  const value = String(record.tag_last_pushed || record.last_updated || '').trim();
+function getContainerTagPublishedAt(record: ContainerTagRecord): string | null {
+  const value = String(record.tag_last_pushed || record.last_updated || record.updated_at || record.created_at || '').trim();
   return value || null;
 }
 
-function getDockerHubTagPublishedTimestamp(record: DockerHubTagRecord): number {
-  const publishedAt = getDockerHubTagPublishedAt(record);
+function getContainerTagPublishedTimestamp(record: ContainerTagRecord): number {
+  const publishedAt = getContainerTagPublishedAt(record);
   if (!publishedAt) return Number.NEGATIVE_INFINITY;
   const timestamp = Date.parse(publishedAt);
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
-function getRecentNonStableDockerHubPriority(input: string | null | undefined): number {
-  const tag = normalizeDockerHubTagName(input).toLowerCase();
+function getRecentNonStableContainerPriority(input: string | null | undefined): number {
+  const tag = normalizeContainerTagName(input).toLowerCase();
   if (!tag) return 99;
   if (tag === 'dev') return 0;
   if (tag.startsWith('dev-')) return 1;
@@ -185,38 +203,38 @@ function toShortDigest(digest: string | null | undefined): string | null {
   return digest.slice(0, 'sha256:'.length + 12);
 }
 
-function buildDockerHubVersionCandidate(
-  record: DockerHubTagRecord,
+function buildContainerVersionCandidate(
+  record: ContainerTagRecord,
   normalizedVersion: string,
 ): UpdateCenterVersionCandidate | null {
   const rawVersion = String(record.name || '').trim();
   if (!rawVersion) return null;
   const digest = normalizeDockerDigest(record.digest);
   return {
-    source: 'docker-hub-tag',
+    source: 'container-tag',
     rawVersion,
     normalizedVersion,
-    url: null,
+    url: record.url || null,
     tagName: rawVersion,
     digest,
     displayVersion: digest ? `${rawVersion} @ ${toShortDigest(digest)}` : rawVersion,
-    publishedAt: getDockerHubTagPublishedAt(record),
+    publishedAt: getContainerTagPublishedAt(record),
   };
 }
 
-export function selectLatestDockerHubTag(tags: Array<string | DockerHubTagRecord>): UpdateCenterVersionCandidate | null {
+export function selectLatestContainerTag(tags: Array<string | ContainerTagRecord>): UpdateCenterVersionCandidate | null {
   const records = tags
-    .map((tag) => normalizeDockerHubTagRecord(tag))
+    .map((tag) => normalizeContainerTagRecord(tag))
     .filter((record) => String(record.name || '').trim());
 
-  for (const alias of PREFERRED_DOCKER_HUB_TAG_ALIASES) {
+  for (const alias of PREFERRED_CONTAINER_TAG_ALIASES) {
     const record = records.find((entry) => String(entry.name || '').trim() === alias);
     if (!record) continue;
-    const candidate = buildDockerHubVersionCandidate(record, alias);
+    const candidate = buildContainerVersionCandidate(record, alias);
     if (candidate) return candidate;
   }
 
-  let selected: { record: DockerHubTagRecord; semver: StableSemVer } | null = null;
+  let selected: { record: ContainerTagRecord; semver: StableSemVer } | null = null;
 
   for (const record of records) {
     const semver = parseStableSemVer(record.name);
@@ -228,45 +246,70 @@ export function selectLatestDockerHubTag(tags: Array<string | DockerHubTagRecord
 
   if (!selected) return null;
 
-  return buildDockerHubVersionCandidate(selected.record, selected.semver.normalized);
+  return buildContainerVersionCandidate(selected.record, selected.semver.normalized);
 }
 
-export function selectRecentNonStableDockerHubTags(
-  tags: Array<string | DockerHubTagRecord>,
-  limit = MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS,
+export function selectRecentNonStableContainerTags(
+  tags: Array<string | ContainerTagRecord>,
+  limit = MAX_RECENT_NON_STABLE_CONTAINER_TAGS,
 ): UpdateCenterVersionCandidate[] {
   const records = tags
-    .map((tag) => normalizeDockerHubTagRecord(tag))
-    .filter((record) => normalizeDockerHubTagName(record.name))
-    .filter((record) => !isStableDockerHubTag(record.name));
+    .map((tag) => normalizeContainerTagRecord(tag))
+    .filter((record) => normalizeContainerTagName(record.name))
+    .filter((record) => !isStableContainerTag(record.name));
 
-  const deduped = new Map<string, DockerHubTagRecord>();
+  const deduped = new Map<string, ContainerTagRecord>();
   for (const record of records) {
-    const tagName = normalizeDockerHubTagName(record.name);
+    const tagName = normalizeContainerTagName(record.name);
     const previous = deduped.get(tagName);
-    if (!previous || getDockerHubTagPublishedTimestamp(record) > getDockerHubTagPublishedTimestamp(previous)) {
+    if (!previous || getContainerTagPublishedTimestamp(record) > getContainerTagPublishedTimestamp(previous)) {
       deduped.set(tagName, record);
     }
   }
 
   return Array.from(deduped.values())
     .sort((a, b) => {
-      const priorityDelta = getRecentNonStableDockerHubPriority(a.name) - getRecentNonStableDockerHubPriority(b.name);
+      const priorityDelta = getRecentNonStableContainerPriority(a.name) - getRecentNonStableContainerPriority(b.name);
       if (priorityDelta !== 0) return priorityDelta;
-      const publishedDelta = getDockerHubTagPublishedTimestamp(b) - getDockerHubTagPublishedTimestamp(a);
+      const publishedDelta = getContainerTagPublishedTimestamp(b) - getContainerTagPublishedTimestamp(a);
       if (publishedDelta !== 0) return publishedDelta;
-      return normalizeDockerHubTagName(a.name).localeCompare(normalizeDockerHubTagName(b.name));
+      return normalizeContainerTagName(a.name).localeCompare(normalizeContainerTagName(b.name));
     })
     .slice(0, Math.max(0, limit))
-    .map((record) => buildDockerHubVersionCandidate(record, normalizeDockerHubTagName(record.name)))
+    .map((record) => buildContainerVersionCandidate(record, normalizeContainerTagName(record.name)))
     .filter((candidate): candidate is UpdateCenterVersionCandidate => !!candidate);
 }
 
-export function selectDockerHubTagCandidates(tags: Array<string | DockerHubTagRecord>): DockerHubTagCandidates {
+export function selectContainerTagCandidates(tags: Array<string | ContainerTagRecord>): ContainerTagCandidates {
   return {
-    primary: selectLatestDockerHubTag(tags),
-    recentNonStable: selectRecentNonStableDockerHubTags(tags),
+    primary: selectLatestContainerTag(tags),
+    recentNonStable: selectRecentNonStableContainerTags(tags),
   };
+}
+
+export const selectLatestDockerHubTag = selectLatestContainerTag;
+export const selectRecentNonStableDockerHubTags = selectRecentNonStableContainerTags;
+export const selectDockerHubTagCandidates = selectContainerTagCandidates;
+
+function expandGhcrPackageVersions(versions: GhcrPackageVersionRecord[]): ContainerTagRecord[] {
+  const records: ContainerTagRecord[] = [];
+  for (const version of versions) {
+    const tags = Array.isArray(version.metadata?.container?.tags)
+      ? version.metadata.container.tags
+      : [];
+    for (const tag of tags) {
+      const name = normalizeContainerTagName(tag);
+      if (!name) continue;
+      records.push({
+        name,
+        digest: version.metadata?.container?.digest || null,
+        created_at: version.created_at || null,
+        updated_at: version.updated_at || null,
+        url: version.package_html_url || version.html_url || null,
+      });
+    }
+  }
+  return records;
 }
 
 export function resolvePreferredDeploySource(input: {
@@ -284,25 +327,30 @@ export async function fetchLatestStableGitHubRelease(): Promise<UpdateCenterVers
   const releases = await fetchJsonWithTimeout(GITHUB_RELEASES_URL, {
     headers: {
       accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
       'user-agent': 'metapi-update-center/1.0',
     },
   }, 'GitHub releases lookup') as GitHubReleaseRecord[];
   return selectLatestStableGitHubRelease(Array.isArray(releases) ? releases : []);
 }
 
-export async function fetchLatestDockerHubTag(): Promise<UpdateCenterVersionCandidate | null> {
-  return (await fetchDockerHubTagCandidates()).primary;
+export async function fetchLatestContainerTag(): Promise<UpdateCenterVersionCandidate | null> {
+  return (await fetchContainerTagCandidates()).primary;
 }
 
-export async function fetchDockerHubTagCandidates(): Promise<DockerHubTagCandidates> {
-  const payload = await fetchJsonWithTimeout(DOCKER_HUB_TAGS_URL, {
+export async function fetchContainerTagCandidates(): Promise<ContainerTagCandidates> {
+  const payload = await fetchJsonWithTimeout(GHCR_PACKAGE_VERSIONS_URL, {
     headers: {
-      accept: 'application/json',
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
       'user-agent': 'metapi-update-center/1.0',
     },
-  }, 'Docker Hub tag lookup') as { results?: DockerHubTagRecord[] };
-  return selectDockerHubTagCandidates(Array.isArray(payload?.results) ? payload.results : []);
+  }, 'GHCR container tag lookup') as GhcrPackageVersionRecord[];
+  return selectContainerTagCandidates(Array.isArray(payload) ? expandGhcrPackageVersions(payload) : []);
 }
+
+export const fetchLatestDockerHubTag = fetchLatestContainerTag;
+export const fetchDockerHubTagCandidates = fetchContainerTagCandidates;
 
 export function getCurrentRuntimeVersion(): string {
   try {

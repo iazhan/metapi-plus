@@ -14,15 +14,15 @@ vi.mock('undici', async () => {
 
 import {
   compareStableSemVer,
-  fetchDockerHubTagCandidates,
-  fetchLatestDockerHubTag,
+  fetchContainerTagCandidates,
+  fetchLatestContainerTag,
   fetchLatestStableGitHubRelease,
   parseStableSemVer,
   resolvePreferredDeploySource,
-  selectDockerHubTagCandidates,
-  selectLatestDockerHubTag,
+  selectContainerTagCandidates,
+  selectLatestContainerTag,
   selectLatestStableGitHubRelease,
-  selectRecentNonStableDockerHubTags,
+  selectRecentNonStableContainerTags,
 } from './updateCenterVersionService.js';
 
 describe('update center version service', () => {
@@ -116,9 +116,9 @@ describe('update center version service', () => {
     });
   });
 
-  describe('selectLatestDockerHubTag', () => {
+  describe('selectLatestContainerTag', () => {
     it('prefers release aliases ahead of semver tags', () => {
-      const latest = selectLatestDockerHubTag([
+      const latest = selectLatestContainerTag([
         'latest',
         'main',
         'v1.2.3-beta.1',
@@ -130,14 +130,14 @@ describe('update center version service', () => {
       expect(latest).toMatchObject({
         rawVersion: 'latest',
         normalizedVersion: 'latest',
-        source: 'docker-hub-tag',
+        source: 'container-tag',
       });
     });
   });
 
-  describe('selectRecentNonStableDockerHubTags', () => {
-    it('returns recent non-stable docker tags with dev-like tags prioritized ahead of generic branch tags', () => {
-      const candidates = selectRecentNonStableDockerHubTags([
+  describe('selectRecentNonStableContainerTags', () => {
+    it('returns recent non-stable container tags with dev-like tags prioritized ahead of generic branch tags', () => {
+      const candidates = selectRecentNonStableContainerTags([
         {
           name: 'feature-login',
           digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
@@ -183,9 +183,9 @@ describe('update center version service', () => {
     });
   });
 
-  describe('selectDockerHubTagCandidates', () => {
+  describe('selectContainerTagCandidates', () => {
     it('returns both the stable primary candidate and recent non-stable candidates from one tag list', () => {
-      const candidates = selectDockerHubTagCandidates([
+      const candidates = selectContainerTagCandidates([
         {
           name: 'latest',
           digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -224,7 +224,7 @@ describe('update center version service', () => {
           url: 'https://example.com/release',
         },
         dockerHubTag: {
-          source: 'docker-hub-tag',
+          source: 'container-tag',
           rawVersion: '1.10.1',
           normalizedVersion: '1.10.1',
           url: null,
@@ -268,7 +268,7 @@ describe('update center version service', () => {
         normalizedVersion: '1.10.0',
         url: 'https://example.com/latest',
       });
-      expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/repos/cita-777/metapi/releases');
+      expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/repos/iazhan/metapi-plus/releases');
     });
 
     it('maps aborted GitHub lookups to a timeout error', async () => {
@@ -280,62 +280,123 @@ describe('update center version service', () => {
     });
   });
 
-  describe('fetchLatestDockerHubTag', () => {
+  describe('fetchLatestContainerTag', () => {
     it('prefers alias tags like latest and includes digest metadata', async () => {
-      fetchMock.mockResolvedValue(new Response(JSON.stringify({
-        results: [
-          {
-            name: 'latest',
-            digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-            tag_last_pushed: '2026-03-29T11:54:35.591877Z',
+      fetchMock.mockResolvedValue(new Response(JSON.stringify([
+        {
+          name: 'latest-sha',
+          created_at: '2026-03-29T11:54:35.591877Z',
+          updated_at: '2026-03-29T11:54:35.591877Z',
+          metadata: {
+            container: {
+              tags: ['latest'],
+            },
           },
-          {
-            name: 'v1.2.3-rc.1',
+          package_html_url: 'https://github.com/iazhan/metapi-plus/pkgs/container/metapi-plus/1',
+        },
+        {
+          name: 'v1.2.3-rc.1',
+          metadata: {
+            container: {
+              tags: ['v1.2.3-rc.1'],
+            },
           },
-          {
-            name: 'v1.2.3',
-            digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
-            tag_last_pushed: '2026-03-28T11:54:35.591877Z',
+        },
+        {
+          name: 'v1.2.3-sha',
+          created_at: '2026-03-28T11:54:35.591877Z',
+          metadata: {
+            container: {
+              tags: ['v1.2.3'],
+            },
           },
-          {
-            name: '1.10.0',
-            digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
-            tag_last_pushed: '2026-03-27T11:54:35.591877Z',
+        },
+        {
+          name: '1.10.0-sha',
+          created_at: '2026-03-27T11:54:35.591877Z',
+          metadata: {
+            container: {
+              tags: ['1.10.0'],
+            },
           },
-        ],
-      }), {
+        },
+      ]), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }));
 
-      const latest = await fetchLatestDockerHubTag();
+      const latest = await fetchLatestContainerTag();
       expect(latest).toMatchObject({
-        source: 'docker-hub-tag',
+        source: 'container-tag',
         rawVersion: 'latest',
         normalizedVersion: 'latest',
         tagName: 'latest',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-        displayVersion: 'latest @ sha256:efb2ee655386',
+        digest: null,
+        displayVersion: 'latest',
         publishedAt: '2026-03-29T11:54:35.591877Z',
+        url: 'https://github.com/iazhan/metapi-plus/pkgs/container/metapi-plus/1',
       });
-      expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/v2/repositories/1467078763/metapi/tags');
+      expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/users/iazhan/packages/container/metapi-plus/versions');
     });
 
-    it('falls back to the highest stable semver tag when no alias tags are present', async () => {
-      fetchMock.mockResolvedValue(new Response(JSON.stringify({
-        results: [
-          { name: 'sha-b9ae85e' },
-          { name: 'v1.2.3' },
-          { name: '1.10.0', digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
-        ],
-      }), {
+    it('accepts GHCR digest metadata when GitHub includes it in the container payload', async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify([
+        {
+          name: 'latest-sha',
+          created_at: '2026-03-29T11:54:35.591877Z',
+          metadata: {
+            container: {
+              tags: ['latest'],
+              digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+            },
+          },
+        },
+      ]), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }));
 
-      const latest = await fetchLatestDockerHubTag();
+      const latest = await fetchLatestContainerTag();
       expect(latest).toMatchObject({
-        source: 'docker-hub-tag',
+        source: 'container-tag',
+        rawVersion: 'latest',
+        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+        displayVersion: 'latest @ sha256:efb2ee655386',
+      });
+    });
+
+    it('falls back to the highest stable semver tag when no alias tags are present', async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify([
+        {
+          metadata: {
+            container: {
+              tags: ['sha-b9ae85e'],
+            },
+          },
+        },
+        {
+          metadata: {
+            container: {
+              tags: ['v1.2.3'],
+            },
+          },
+        },
+        {
+          metadata: {
+            container: {
+              tags: ['1.10.0'],
+              digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            },
+          },
+        },
+      ]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+      const latest = await fetchLatestContainerTag();
+      expect(latest).toMatchObject({
+        source: 'container-tag',
         rawVersion: '1.10.0',
         normalizedVersion: '1.10.0',
         tagName: '1.10.0',
@@ -345,37 +406,74 @@ describe('update center version service', () => {
     });
   });
 
-  describe('fetchDockerHubTagCandidates', () => {
-    it('returns the stable docker candidate plus recent non-stable tags from one lookup', async () => {
-      fetchMock.mockResolvedValue(new Response(JSON.stringify({
-        results: [
+  describe('fetchContainerTagCandidates', () => {
+    it('returns the stable container candidate plus recent non-stable tags from one GHCR lookup', async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify([
           {
-            name: 'latest',
-            digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-            tag_last_pushed: '2026-03-29T11:54:35.591877Z',
+            created_at: '2026-03-29T11:54:35.591877Z',
+            metadata: {
+              container: {
+                tags: ['latest'],
+                digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+              },
+            },
           },
           {
-            name: 'dev',
-            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            tag_last_pushed: '2026-03-30T11:54:35.591877Z',
+            created_at: '2026-03-30T11:54:35.591877Z',
+            metadata: {
+              container: {
+                tags: ['dev'],
+                digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              },
+            },
           },
           {
-            name: 'sha-f67ade2',
-            digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-            tag_last_pushed: '2026-03-30T10:54:35.591877Z',
+            created_at: '2026-03-30T10:54:35.591877Z',
+            metadata: {
+              container: {
+                tags: ['sha-f67ade2'],
+                digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              },
+            },
           },
-        ],
-      }), {
+        ]), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }));
 
-      const candidates = await fetchDockerHubTagCandidates();
+      const candidates = await fetchContainerTagCandidates();
       expect(candidates.primary).toMatchObject({
         tagName: 'latest',
       });
       expect(candidates.recentNonStable.map((candidate) => candidate.tagName)).toEqual([
         'dev',
+        'sha-f67ade2',
+      ]);
+    });
+
+    it('expands every tag on a GHCR package version so aliases and branch tags stay discoverable', async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify([
+        {
+          created_at: '2026-03-30T10:54:35.591877Z',
+          metadata: {
+            container: {
+              tags: ['latest', 'dev-20260330-f67ade2', 'sha-f67ade2'],
+              digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            },
+          },
+        },
+      ]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+      const candidates = await fetchContainerTagCandidates();
+      expect(candidates.primary).toMatchObject({
+        tagName: 'latest',
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      });
+      expect(candidates.recentNonStable.map((candidate) => candidate.tagName)).toEqual([
+        'dev-20260330-f67ade2',
         'sha-f67ade2',
       ]);
     });

@@ -2,7 +2,7 @@ import { config as runtimeConfig } from '../config.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { listBackgroundTasks } from './backgroundTaskService.js';
 import {
-  fetchDockerHubTagCandidates,
+  fetchContainerTagCandidates,
   fetchLatestStableGitHubRelease,
   getCurrentRuntimeVersion,
   type UpdateCenterVersionCandidate,
@@ -153,7 +153,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
 
   const [githubLookup, dockerLookup, helperLookup, runtime] = await Promise.all([
     settleOptional(config.githubReleasesEnabled, async () => await fetchLatestStableGitHubRelease()),
-    settleOptional(config.dockerHubTagsEnabled, async () => await fetchDockerHubTagCandidates()),
+    settleOptional(config.dockerHubTagsEnabled, async () => await fetchContainerTagCandidates()),
     settleOptional(!!config.helperBaseUrl, async () => {
       if (!helperToken) {
         throw new Error('DEPLOY_HELPER_TOKEN is required');

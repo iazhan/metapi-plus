@@ -46,9 +46,9 @@ describe('updateCenterReminder shared logic', () => {
         digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       },
     })).toEqual(expect.objectContaining({
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       kind: 'new-digest',
-      candidateKey: 'docker-hub-tag:1.2.3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      candidateKey: 'container-tag:1.2.3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     }));
   });
 
@@ -67,9 +67,9 @@ describe('updateCenterReminder shared logic', () => {
         digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       },
     })).toEqual(expect.objectContaining({
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       kind: 'new-digest',
-      candidateKey: 'docker-hub-tag:1.2.3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      candidateKey: 'container-tag:1.2.3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     }));
   });
 
@@ -88,9 +88,9 @@ describe('updateCenterReminder shared logic', () => {
         digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       },
     })).toEqual(expect.objectContaining({
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       kind: 'new-digest',
-      candidateKey: 'docker-hub-tag:latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      candidateKey: 'container-tag:latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     }));
   });
 
@@ -136,9 +136,9 @@ describe('updateCenterReminder shared logic', () => {
       digest: null,
     })).toBe('github-release:v1.3.0');
 
-    expect(buildUpdateReminderCandidateKey('docker-hub-tag', {
+    expect(buildUpdateReminderCandidateKey('container-tag', {
       tagName: 'latest',
       digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-    })).toBe('docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35');
+    })).toBe('container-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35');
   });
 });

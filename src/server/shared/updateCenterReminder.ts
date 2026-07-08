@@ -11,7 +11,7 @@ export type UpdateHelperRuntimeLike = {
 };
 
 export type UpdateReminderCandidate = {
-  source: 'github-release' | 'docker-hub-tag';
+  source: 'github-release' | 'container-tag';
   kind: 'new-version' | 'new-digest';
   candidateKey: string;
   displayVersion: string;
@@ -88,13 +88,13 @@ export function isSameImageTarget(
 }
 
 export function buildUpdateReminderCandidateKey(
-  source: 'github-release' | 'docker-hub-tag',
+  source: 'github-release' | 'container-tag',
   candidate: { tagName?: string | null; digest?: string | null },
 ): string {
   const tagName = normalizeString(candidate.tagName);
   const digest = normalizeDigest(candidate.digest);
   if (!tagName) return '';
-  if (source === 'docker-hub-tag' && digest) {
+  if (source === 'container-tag' && digest) {
     return `${source}:${tagName}@${digest}`;
   }
   return `${source}:${tagName}`;
@@ -136,9 +136,9 @@ export function resolveUpdateReminderCandidate(input: {
   const dockerVersionCompare = compareStableVersions(input.currentVersion, dockerCandidateVersion || dockerTag);
   if (dockerVersionCompare === -1) {
     return {
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       kind: 'new-version',
-      candidateKey: buildUpdateReminderCandidateKey('docker-hub-tag', { tagName: dockerTag, digest: dockerDigest || null }),
+      candidateKey: buildUpdateReminderCandidateKey('container-tag', { tagName: dockerTag, digest: dockerDigest || null }),
       displayVersion: normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion || dockerTag),
       tagName: dockerTag,
       digest: dockerDigest || null,
@@ -148,9 +148,9 @@ export function resolveUpdateReminderCandidate(input: {
   const helperDigest = normalizeDigest(input.helper?.imageDigest);
   if (dockerDigest && helperDigest && hasSameImageTag(input.helper?.imageTag, dockerTag) && helperDigest !== dockerDigest) {
     return {
-      source: 'docker-hub-tag',
+      source: 'container-tag',
       kind: 'new-digest',
-      candidateKey: buildUpdateReminderCandidateKey('docker-hub-tag', { tagName: dockerTag, digest: dockerDigest }),
+      candidateKey: buildUpdateReminderCandidateKey('container-tag', { tagName: dockerTag, digest: dockerDigest }),
       displayVersion: normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion || dockerTag),
       tagName: dockerTag,
       digest: dockerDigest,

@@ -35,12 +35,13 @@ function writeSseEvent(reply: { raw: NodeJS.WritableStream & { write: (chunk: st
 }
 
 function toDeployInput(body: Record<string, unknown>): UpdateHelperDeployInput {
+  const rawSource = String(body.source || '').trim();
   return {
     namespace: String(body.namespace || '').trim(),
     releaseName: String(body.releaseName || '').trim(),
     chartRef: String(body.chartRef || '').trim(),
     imageRepository: String(body.imageRepository || '').trim(),
-    targetSource: body.source === 'docker-hub-tag' ? 'docker-hub-tag' : 'github-release',
+    targetSource: rawSource === 'container-tag' || rawSource === 'docker-hub-tag' ? 'container-tag' : 'github-release',
     targetTag: String(body.targetTag || body.targetVersion || '').trim(),
     targetDigest: String(body.targetDigest || '').trim() || null,
   };

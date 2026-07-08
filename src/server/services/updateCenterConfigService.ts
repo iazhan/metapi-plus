@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import type { UpdateCenterVersionSource } from './updateCenterVersionService.js';
+import type { LegacyUpdateCenterVersionSource, UpdateCenterVersionSource } from './updateCenterVersionService.js';
 
 export type UpdateCenterConfig = {
   enabled: boolean;
@@ -25,7 +25,7 @@ export function getDefaultUpdateCenterConfig(): UpdateCenterConfig {
     namespace: 'default',
     releaseName: '',
     chartRef: '',
-    imageRepository: '1467078763/metapi',
+    imageRepository: 'ghcr.io/iazhan/metapi-plus',
     githubReleasesEnabled: true,
     dockerHubTagsEnabled: true,
     defaultDeploySource: 'github-release',
@@ -44,9 +44,7 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 export function normalizeUpdateCenterConfig(input: unknown): UpdateCenterConfig {
   const defaults = getDefaultUpdateCenterConfig();
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const defaultDeploySource = record.defaultDeploySource === 'docker-hub-tag'
-    ? 'docker-hub-tag'
-    : 'github-release';
+  const defaultDeploySource = normalizeUpdateCenterVersionSource(record.defaultDeploySource);
 
   return {
     enabled: normalizeBoolean(record.enabled, defaults.enabled),
@@ -59,6 +57,12 @@ export function normalizeUpdateCenterConfig(input: unknown): UpdateCenterConfig 
     dockerHubTagsEnabled: normalizeBoolean(record.dockerHubTagsEnabled, defaults.dockerHubTagsEnabled),
     defaultDeploySource,
   };
+}
+
+export function normalizeUpdateCenterVersionSource(input: unknown): UpdateCenterVersionSource {
+  const source = String(input || '').trim() as LegacyUpdateCenterVersionSource;
+  if (source === 'container-tag' || source === 'docker-hub-tag') return 'container-tag';
+  return 'github-release';
 }
 
 export async function loadUpdateCenterConfig(): Promise<UpdateCenterConfig> {

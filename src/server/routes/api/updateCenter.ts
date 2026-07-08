@@ -16,6 +16,7 @@ import {
   getDefaultUpdateCenterConfig,
   loadUpdateCenterConfig,
   normalizeUpdateCenterConfig,
+  normalizeUpdateCenterVersionSource,
   saveUpdateCenterConfig,
   type UpdateCenterConfig,
 } from '../../services/updateCenterConfigService.js';
@@ -124,11 +125,9 @@ export async function updateCenterRoutes(app: FastifyInstance) {
     }
     const helperToken = getUpdateCenterHelperToken();
 
-    const source = body.source === 'docker-hub-tag'
-      ? 'docker-hub-tag'
-      : body.source === 'github-release'
-        ? 'github-release'
-        : config.defaultDeploySource;
+    const source = body.source
+      ? normalizeUpdateCenterVersionSource(body.source)
+      : config.defaultDeploySource;
     const targetTag = String(body.targetTag || body.targetVersion || '').trim();
     const targetDigest = normalizeUpdateCenterTargetDigest(body.targetDigest);
     if (!targetTag) {

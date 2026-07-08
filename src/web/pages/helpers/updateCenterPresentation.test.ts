@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildUpdateReminder,
-  describeDockerDeployState,
+  describeContainerDeployState,
 } from './updateCenterPresentation.js';
 
 describe('updateCenterPresentation', () => {
@@ -21,7 +21,7 @@ describe('updateCenterPresentation', () => {
   });
 
   it('treats a same-version Docker target with a different digest as a real new-digest deploy', () => {
-    const state = describeDockerDeployState({
+    const state = describeContainerDeployState({
       enabled: true,
       helperHealthy: true,
       currentVersion: '1.2.3',
@@ -42,7 +42,7 @@ describe('updateCenterPresentation', () => {
   });
 
   it('treats semver tags with and without a v prefix as the same Docker digest target', () => {
-    const state = describeDockerDeployState({
+    const state = describeContainerDeployState({
       enabled: true,
       helperHealthy: true,
       currentVersion: '1.2.3',
@@ -62,7 +62,7 @@ describe('updateCenterPresentation', () => {
   });
 
   it('treats alias tags like latest as a new digest deploy target when the digest changes', () => {
-    const state = describeDockerDeployState({
+    const state = describeContainerDeployState({
       enabled: true,
       helperHealthy: true,
       currentVersion: '1.2.3',

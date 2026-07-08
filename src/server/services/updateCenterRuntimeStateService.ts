@@ -45,7 +45,8 @@ function normalizeNullableString(value: unknown): string | null {
 }
 
 function normalizeNullableSource(value: unknown): UpdateCenterVersionSource | null {
-  return value === 'docker-hub-tag' || value === 'github-release' ? value : null;
+  if (value === 'container-tag' || value === 'docker-hub-tag') return 'container-tag';
+  return value === 'github-release' ? value : null;
 }
 
 function normalizeVersionCandidate(input: unknown): UpdateCenterVersionCandidate | null {
