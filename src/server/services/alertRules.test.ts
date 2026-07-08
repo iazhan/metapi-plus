@@ -34,6 +34,23 @@ describe('alertRules', () => {
     })).toBe(false);
   });
 
+  it('does not treat request validation, capability, or billing failures as token expiration', () => {
+    expect(isTokenExpiredError({
+      status: 400,
+      message: "Error code: 400 - {'error': {'code': 'invalid_argument', 'message': 'input token limit is 202752', 'type': 'invalid_request_error'}}",
+    })).toBe(false);
+
+    expect(isTokenExpiredError({
+      status: 401,
+      message: 'Model minimax-m3-free is not supported for format openai',
+    })).toBe(false);
+
+    expect(isTokenExpiredError({
+      status: 401,
+      message: 'No payment method. Add a payment method here: https://example.com/billing',
+    })).toBe(false);
+  });
+
   it('appends rebind hint for invalid access token messages', () => {
     expect(appendSessionTokenRebindHint('无权进行此操作，access token 无效'))
       .toContain('请在中转站重新生成系统访问令牌后重新绑定账号');

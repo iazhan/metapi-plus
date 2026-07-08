@@ -20,10 +20,31 @@ function containsHttpStatus(message: string | null | undefined, status: number):
   return new RegExp(`(?:^|\\b)(?:http\\s*)?${status}(?:\\b|:)`, 'i').test(message);
 }
 
+function isRequestValidationFailure(text: string): boolean {
+  return (
+    text.includes('invalid_argument') ||
+    text.includes('invalid_request_error') ||
+    text.includes('input token limit') ||
+    text.includes('context length') ||
+    text.includes('maximum context')
+  );
+}
+
+function isCapabilityOrBillingFailure(text: string): boolean {
+  return (
+    /model\s+.+\s+is\s+not\s+supported/.test(text) ||
+    text.includes('not supported for format') ||
+    text.includes('no payment method') ||
+    text.includes('payment method') ||
+    text.includes('billing')
+  );
+}
+
 export function isTokenExpiredError(input: { status?: number; message?: string | null }): boolean {
   const rawMessage = input.message || '';
   const text = (input.message || '').toLowerCase();
   if (isEndpointDispatchDeniedMessage(rawMessage)) return false;
+  if (text && (isRequestValidationFailure(text) || isCapabilityOrBillingFailure(text))) return false;
   if (input.status === 401 || containsHttpStatus(rawMessage, 401)) return true;
   if (!text) return false;
 
