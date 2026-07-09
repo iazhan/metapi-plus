@@ -5,7 +5,7 @@
 **中转站的中转站 — 将分散的 AI 中转站聚合为一个统一网关**
 
 <p>
-把你在各处注册的 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API 等站点，
+把你在各处注册的 New API / One API / OneHub / DoneHub / Veloera / Sub2API 等站点，
 <br>
 汇聚成 <strong>一个 API Key、一个入口</strong>，自动发现模型、智能路由、成本最优。
 </p>
@@ -66,10 +66,12 @@
 
 **Metapi Plus** 作为这些中转站之上的**元聚合层（Meta-Aggregation Layer）**，把多个站点统一到 **一个入口（可按项目配置多个下游 API Key）**——下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）即可无感接入全部模型。当前支持的上游范围已经不止传统聚合面板，还包括：
 
-- 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[AnyRouter](https://anyrouter.top)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
+- 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
 - 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA
 - 官方预设：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope
 - OAuth 连接：Codex、Claude、Gemini CLI、Antigravity
+
+AnyRouter 这类 New API 搭建站点请选择 `new-api`，旧配置中的 `anyrouter` 会自动兼容映射到 `new-api`。
 
 详细接法见 [上游接入](./docs/upstream-integration.md) 与 [OAuth 管理](./docs/oauth.md)。
 
@@ -190,7 +192,6 @@
 | **OneHub**    | `onehub`    | One API 增强分支     |
 | **DoneHub**   | `done-hub`  | OneHub 增强分支      |
 | **Veloera**   | `veloera`   | API 网关平台         |
-| **AnyRouter** | `anyrouter` | 通用路由平台         |
 | **Sub2API**   | `sub2api`   | 订阅制中转平台       |
 
 各平台适配器覆盖模型枚举、余额查询、Token 管理、代理接入等通用能力；登录、签到、用户信息等能力按平台而异。

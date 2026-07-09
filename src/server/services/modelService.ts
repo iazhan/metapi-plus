@@ -34,6 +34,7 @@ import {
   discoverCodexModelsFromCloud,
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
 import {
   isUsageLimitRateLimitFailure,
@@ -186,8 +187,8 @@ function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
 function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string, platform?: string | null) {
   const raw = String(fallback || '').trim();
   if (looksLikeHtmlJsonParseError(raw) || looksLikeShieldChallenge(raw)) {
-    const normalizedPlatform = String(platform || '').trim().toLowerCase();
-    if (normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter') {
+    const normalizedPlatform = normalizePlatformAlias(platform);
+    if (normalizedPlatform === 'new-api') {
       return '模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型';
     }
     return '模型获取失败：站点返回了网页而不是 JSON 响应';

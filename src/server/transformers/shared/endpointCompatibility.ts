@@ -1,4 +1,5 @@
 import type { DownstreamFormat } from './normalized.js';
+import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 
 export type CompatibilityEndpoint = 'chat' | 'messages' | 'responses';
 export type CompatibilityEndpointPreference = DownstreamFormat | 'responses';
@@ -25,7 +26,7 @@ function asTrimmedString(value: unknown): string {
 }
 
 function normalizePlatformName(platform: unknown): string {
-  return asTrimmedString(platform).toLowerCase();
+  return normalizePlatformAlias(asTrimmedString(platform));
 }
 
 function isClaudeFamilyModel(modelName: string): boolean {
@@ -225,7 +226,7 @@ export function shouldPreferResponsesAfterLegacyChatError(
   if (input.currentEndpoint !== 'chat') return false;
 
   const sitePlatform = normalizePlatformName(input.sitePlatform);
-  if (sitePlatform === 'openai' || sitePlatform === 'claude' || sitePlatform === 'gemini' || sitePlatform === 'anyrouter') {
+  if (sitePlatform === 'openai' || sitePlatform === 'claude' || sitePlatform === 'gemini') {
     return false;
   }
 

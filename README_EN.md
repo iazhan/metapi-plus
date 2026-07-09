@@ -5,7 +5,7 @@
 **A relay for relays — aggregate scattered AI relay stations into one unified gateway**
 
 <p>
-Bring together all your New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API sites
+Bring together all your New API / One API / OneHub / DoneHub / Veloera / Sub2API sites
 <br>
 into <strong>one API Key, one endpoint</strong>, with automatic model discovery, smart routing, and cost optimization.
 </p>
@@ -84,8 +84,9 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - [OneHub](https://github.com/MartialBE/one-hub)
 - [DoneHub](https://github.com/deanxv/done-hub)
 - [Veloera](https://github.com/Veloera/Veloera)
-- [AnyRouter](https://anyrouter.top) — Universal routing platform
 - [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
+
+AnyRouter-style deployments should use the `new-api` platform. Existing `anyrouter` configuration is kept as a legacy alias for `new-api`.
 
 | Pain Point | How Metapi Solves It |
 | --- | --- |
@@ -176,7 +177,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 &emsp;• Format Conversion — transparent bidirectional OpenAI ⇄ Claude conversion
 &emsp;• Auto Check-in · Balance Management · Alerts & Notifications · Data Dashboard
 &emsp;↓
-**Upstream Platforms** (New API · One API · OneHub · DoneHub · Veloera · AnyRouter · Sub2API …)
+**Upstream Platforms** (New API · One API · OneHub · DoneHub · Veloera · Sub2API …)
 
 ---
 
@@ -211,7 +212,6 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | **OneHub** | `onehub` | Enhanced One API fork |
 | **DoneHub** | `done-hub` | Enhanced OneHub fork |
 | **Veloera** | `veloera` | API gateway platform |
-| **AnyRouter** | `anyrouter` | Universal routing platform |
 | **Sub2API** | `sub2api` | Subscription-based relay |
 
 Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.

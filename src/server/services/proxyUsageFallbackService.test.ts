@@ -189,8 +189,8 @@ describe('proxyUsageFallbackService', () => {
     expect(shouldLookupSelfLog('new-api', { promptTokens: 12, completionTokens: 3, totalTokens: 15 })).toBe(false);
   });
 
-  it('always enables self-log lookup for anyrouter to recover exact billing metadata', () => {
+  it('treats legacy anyrouter self-log lookup like new-api', () => {
     expect(shouldLookupSelfLog('anyrouter', { promptTokens: 0, completionTokens: 0, totalTokens: 0 })).toBe(true);
-    expect(shouldLookupSelfLog('anyrouter', { promptTokens: 12, completionTokens: 3, totalTokens: 15 })).toBe(true);
+    expect(shouldLookupSelfLog('anyrouter', { promptTokens: 12, completionTokens: 3, totalTokens: 15 })).toBe(false);
   });
 });

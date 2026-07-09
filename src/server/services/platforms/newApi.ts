@@ -852,6 +852,17 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return payload.data.map((m: any) => m?.id).filter(Boolean);
   }
 
+  private async getOpenAiModelsByBearer(baseUrl: string, token: string): Promise<string[]> {
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return this.extractOpenAiModels(res);
+    } catch {
+      return [];
+    }
+  }
+
   private async getOpenAiModelsViaShieldCookie(baseUrl: string, token: string): Promise<string[]> {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
@@ -869,20 +880,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   private async getOpenAiModels(baseUrl: string, token: string): Promise<string[]> {
-    const shouldTryShieldCookie = this.platformName === 'anyrouter' || token.includes('=');
+    const shouldTryShieldCookie = token.includes('=');
     if (shouldTryShieldCookie) {
       const shieldModels = await this.getOpenAiModelsViaShieldCookie(baseUrl, token);
       if (shieldModels.length > 0) return shieldModels;
     }
 
-    try {
-      const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return this.extractOpenAiModels(res);
-    } catch {
-      return [];
-    }
+    return this.getOpenAiModelsByBearer(baseUrl, token);
   }
 
   private async discoverUserId(baseUrl: string, accessToken: string): Promise<number | null> {
@@ -990,7 +994,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
+    const openAiModels = await this.getOpenAiModelsByBearer(baseUrl, token);
     if (openAiModels.length > 0) {
       return { tokenType: 'apikey', models: openAiModels };
     }

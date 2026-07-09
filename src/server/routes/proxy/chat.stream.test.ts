@@ -3358,10 +3358,10 @@ describe('chat proxy stream behavior', () => {
     expect(targetUrl).toContain('/v1/messages');
   });
 
-  it('forces anyrouter platform to prefer /v1/messages even when catalog says openai', async () => {
+  it('routes legacy anyrouter platform with new-api endpoint semantics', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
-      site: { name: 'anyrouter-site', url: 'https://anyrouter.example.com', platform: 'anyrouter' },
+      site: { name: 'legacy-anyrouter-site', url: 'https://anyrouter.example.com', platform: 'anyrouter' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
@@ -3378,12 +3378,17 @@ describe('chat proxy stream behavior', () => {
     });
 
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      id: 'msg_anyrouter',
-      type: 'message',
+      id: 'chat_legacy_anyrouter',
+      object: 'chat.completion',
       model: 'upstream-gpt',
-      content: [{ type: 'text', text: 'anyrouter prefers messages' }],
-      stop_reason: 'end_turn',
-      usage: { input_tokens: 6, output_tokens: 2, total_tokens: 8 },
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'legacy anyrouter uses new-api chat semantics' },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 6, completion_tokens: 2, total_tokens: 8 },
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -3393,7 +3398,7 @@ describe('chat proxy stream behavior', () => {
       method: 'POST',
       url: '/v1/chat/completions',
       payload: {
-        model: 'claude-haiku-4-5-20251001',
+        model: 'gpt-4o',
         stream: false,
         messages: [{ role: 'user', content: 'hello' }],
       },
@@ -3401,11 +3406,11 @@ describe('chat proxy stream behavior', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body?.choices?.[0]?.message?.content).toContain('anyrouter prefers messages');
+    expect(body?.choices?.[0]?.message?.content).toContain('legacy anyrouter uses new-api chat semantics');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
-    expect(targetUrl).toContain('/v1/messages');
+    expect(targetUrl).toContain('/v1/chat/completions');
   });
 
   it('prefers /v1/responses on openai platform for claude-family models on /v1/chat/completions', async () => {

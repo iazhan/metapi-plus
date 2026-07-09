@@ -9,6 +9,7 @@ import {
   buildEndpointCapabilityProfile,
 } from './upstreamEndpointRuntimeMemory.js';
 import type { DownstreamFormat } from '../transformers/shared/normalized.js';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 
 export type EndpointPreference = DownstreamFormat | 'responses';
 export type EndpointDerivationHints = {
@@ -36,7 +37,7 @@ function asTrimmedString(value: unknown): string {
 }
 
 function normalizePlatformName(platform: unknown): string {
-  return asTrimmedString(platform).toLowerCase();
+  return normalizePlatformAlias(asTrimmedString(platform));
 }
 
 function normalizeUrlPathname(pathname: string): string {
@@ -186,7 +187,6 @@ export async function resolveUpstreamEndpointCandidates(
   if (
     hints?.requiresNativeResponsesFileUrl
     && sitePlatform !== 'claude'
-    && sitePlatform !== 'anyrouter'
   ) {
     return ['responses'];
   }
@@ -223,18 +223,6 @@ export async function resolveUpstreamEndpointCandidates(
     hasDocument: hasNonImageFileInput,
     hasRemoteDocumentUrl: false,
   };
-
-  if (sitePlatform === 'anyrouter') {
-    if (hasNonImageFileInput) {
-      return finalizeCandidates(downstreamFormat === 'responses'
-        ? ['responses', 'messages', 'chat']
-        : ['messages', 'responses', 'chat']);
-    }
-    if (downstreamFormat === 'responses') {
-      return finalizeCandidates(['responses', 'messages', 'chat']);
-    }
-    return finalizeCandidates(['messages', 'chat', 'responses']);
-  }
 
   const preferred = preferredEndpointOrder(
     downstreamFormat,

@@ -33,7 +33,6 @@ export const PLATFORM_ENDPOINT_FALLBACK_MAP: Record<string, string[]> = {
   cliproxyapi: ['openai'],
   claude: ['anthropic'],
   gemini: ['gemini'],
-  anyrouter: ['openai', 'anthropic'],
 };
 
 export const PLATFORM_ALIASES: Record<string, string> = {
@@ -41,6 +40,7 @@ export const PLATFORM_ALIASES: Record<string, string> = {
   google: 'gemini',
   'new api': 'new-api',
   newapi: 'new-api',
+  anyrouter: 'new-api',
   'one api': 'one-api',
   oneapi: 'one-api',
 };

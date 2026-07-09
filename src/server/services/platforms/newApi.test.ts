@@ -4,7 +4,6 @@ import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
-import { AnyRouterAdapter } from './anyrouter.js';
 
 interface RequestSnapshot {
   method: string;
@@ -30,7 +29,7 @@ const SHIELD_LOGIN_COOKIE = 'challenge-seed';
 const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
 const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
 const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
-const OPENAI_MODELS_SHIELDED_TOKEN = 'openai-models-shielded-token';
+const OPENAI_MODELS_SHIELDED_TOKEN = 'session=openai-models-shielded-token';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
 ).toString('base64');
@@ -73,6 +72,21 @@ describe('NewApiAdapter', () => {
       });
 
       if (req.url === '/v1/models') {
+        if (
+          typeof req.headers.authorization === 'string'
+          && req.headers.authorization === `Bearer ${COOKIE_SESSION_TOKEN}`
+          && typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(`session=${COOKIE_SESSION_TOKEN}`)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            data: [
+              { id: 'cookie-visible-model' },
+            ],
+          }));
+          return;
+        }
+
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${OPENAI_MODELS_SHIELDED_TOKEN}`) {
           const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
           if (!cookieHeader.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`)) {
@@ -85,7 +99,7 @@ describe('NewApiAdapter', () => {
           }
           if (
             !cookieHeader.includes(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`)
-            || !cookieHeader.includes(`session=${OPENAI_MODELS_SHIELDED_TOKEN}`)
+            || !cookieHeader.includes(OPENAI_MODELS_SHIELDED_TOKEN)
           ) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { message: 'missing shield cookie context' } }));
@@ -577,8 +591,8 @@ describe('NewApiAdapter', () => {
     ).toBe(true);
   });
 
-  it('reuses shield cookie retry when anyrouter /v1/models returns challenge html', async () => {
-    const adapter = new AnyRouterAdapter();
+  it('reuses shield cookie retry when new-api /v1/models returns challenge html for cookie credentials', async () => {
+    const adapter = new NewApiAdapter();
     const models = await adapter.getModels(baseUrl, OPENAI_MODELS_SHIELDED_TOKEN);
 
     expect(models).toEqual(['claude-sonnet-4-5-20250929', 'claude-opus-4-6']);
@@ -587,7 +601,7 @@ describe('NewApiAdapter', () => {
         (r) =>
           r.url === '/v1/models'
           && typeof r.headers.cookie === 'string'
-          && r.headers.cookie.includes(`session=${OPENAI_MODELS_SHIELDED_TOKEN}`),
+          && r.headers.cookie.includes(OPENAI_MODELS_SHIELDED_TOKEN),
       ),
     ).toBe(true);
     expect(
@@ -607,7 +621,7 @@ describe('NewApiAdapter', () => {
     expect(token).toBe('api-key-from-token-list');
   });
 
-  it('solves anyrouter acw challenge for account-password login', async () => {
+  it('solves acw challenge for account-password login', async () => {
     const adapter = new NewApiAdapter();
     const result = await adapter.login(baseUrl, SHIELD_LOGIN_USERNAME, SHIELD_LOGIN_PASSWORD);
 
@@ -641,7 +655,7 @@ describe('NewApiAdapter', () => {
     expect(result.accessToken || '').toContain(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`);
   });
 
-  it('detects cookie session values as session cookies for anyrouter-like deployments', async () => {
+  it('detects cookie session values as session cookies for new-api variants', async () => {
     const adapter = new NewApiAdapter();
     const result = await adapter.verifyToken(baseUrl, COOKIE_SESSION_TOKEN);
 
@@ -651,6 +665,21 @@ describe('NewApiAdapter', () => {
     expect(
       requests.some((r) => r.url === '/api/user/self' && typeof r.headers.cookie === 'string' && r.headers.cookie.includes(`session=${COOKIE_SESSION_TOKEN}`)),
     ).toBe(true);
+  });
+
+  it('does not classify new-api cookie sessions as api keys via cookie model discovery', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.verifyToken(baseUrl, COOKIE_SESSION_TOKEN);
+
+    expect(result.tokenType).toBe('session');
+    expect(result.userInfo?.username).toBe('cookie-user');
+    expect(result.apiToken).toBe('cookie-api-key');
+    expect(
+      requests.some((r) => r.url === '/v1/models' && typeof r.headers.authorization === 'string' && r.headers.authorization === `Bearer ${COOKIE_SESSION_TOKEN}`),
+    ).toBe(true);
+    expect(
+      requests.some((r) => r.url === '/v1/models' && typeof r.headers.cookie === 'string' && r.headers.cookie.includes(`session=${COOKIE_SESSION_TOKEN}`)),
+    ).toBe(false);
   });
 
   it('auto-probes New-Api-User for cookie sessions when header is required', async () => {
@@ -680,7 +709,7 @@ describe('NewApiAdapter', () => {
     ).toBe(true);
   });
 
-  it('solves anyrouter acw challenge and probes user id from session payload', async () => {
+  it('solves acw challenge and probes user id from session payload', async () => {
     const adapter = new NewApiAdapter();
     const result = await adapter.verifyToken(baseUrl, COOKIE_SHIELDED_TOKEN);
 
@@ -700,7 +729,7 @@ describe('NewApiAdapter', () => {
     ).toBe(true);
   });
 
-  it('extracts gob-encoded user id from anyrouter session cookie when reading balance', async () => {
+  it('extracts gob-encoded user id from session cookie when reading balance', async () => {
     const adapter = new NewApiAdapter();
     const balance = await adapter.getBalance(baseUrl, COOKIE_GOB_USER_TOKEN);
 
@@ -746,7 +775,7 @@ describe('NewApiAdapter', () => {
   });
 
   it('prefers post-challenge cookie failure over raw html parse error when reading balance', async () => {
-    const adapter = new AnyRouterAdapter();
+    const adapter = new NewApiAdapter();
 
     await expect(adapter.getBalance(baseUrl, BALANCE_SHIELD_FAILURE_TOKEN)).rejects
       .toThrow('无权进行此操作，未登录且未提供 access token');

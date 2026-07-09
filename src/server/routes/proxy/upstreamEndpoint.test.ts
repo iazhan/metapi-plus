@@ -694,17 +694,33 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(order).toEqual(['responses', 'chat', 'messages']);
   });
 
-  it('keeps anyrouter messages-first special case', async () => {
+  it('treats legacy anyrouter platform as new-api endpoint selection', async () => {
+    const newApiOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'upstream-gpt',
+      'openai',
+    );
     const openaiOrder = await resolveUpstreamEndpointCandidates(
       {
         ...baseContext,
         site: { ...baseContext.site, platform: 'anyrouter' },
       },
-      'claude-opus-4-6',
+      'upstream-gpt',
       'openai',
     );
-    expect(openaiOrder).toEqual(['messages', 'chat', 'responses']);
+    expect(openaiOrder).toEqual(newApiOrder);
 
+    const newApiClaudeOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'claude-opus-4-6',
+      'claude',
+    );
     const claudeOrder = await resolveUpstreamEndpointCandidates(
       {
         ...baseContext,
@@ -713,8 +729,16 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'claude-opus-4-6',
       'claude',
     );
-    expect(claudeOrder).toEqual(['messages', 'chat', 'responses']);
+    expect(claudeOrder).toEqual(newApiClaudeOrder);
 
+    const newApiResponsesOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'claude-opus-4-6',
+      'responses',
+    );
     const responsesOrder = await resolveUpstreamEndpointCandidates(
       {
         ...baseContext,
@@ -723,7 +747,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'claude-opus-4-6',
       'responses',
     );
-    expect(responsesOrder).toEqual(['responses', 'messages', 'chat']);
+    expect(responsesOrder).toEqual(newApiResponsesOrder);
   });
 
   it('prefers native responses endpoints for claude-family models when encrypted reasoning is explicitly requested', async () => {

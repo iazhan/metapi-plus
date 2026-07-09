@@ -17,7 +17,6 @@ describe('payload rule platform options', () => {
       'gemini',
       'gemini-cli',
       'antigravity',
-      'anyrouter',
       'done-hub',
       'one-hub',
       'veloera',

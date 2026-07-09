@@ -1,4 +1,5 @@
 import { minimatch } from 'minimatch';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 
 export type PayloadRuleModel = {
   name: string;
@@ -200,7 +201,7 @@ function normalizePayloadFilterRules(value: unknown): PayloadFilterRule[] {
 
 function modelRuleMatches(rule: PayloadRuleModel, protocol: string, candidates: string[]): boolean {
   if (!rule.name || candidates.length <= 0) return false;
-  const ruleProtocol = asTrimmedString(rule.protocol).toLowerCase();
+  const ruleProtocol = normalizePlatformAlias(rule.protocol);
   if (ruleProtocol && protocol && ruleProtocol !== protocol) return false;
   return candidates.some((candidate) => minimatch(candidate, rule.name, { nocase: true }));
 }
@@ -423,7 +424,7 @@ export function applyPayloadRules(input: {
     || rules.filter.length > 0;
   if (!hasAnyRules) return input.payload;
 
-  const protocol = asTrimmedString(input.protocol).toLowerCase();
+  const protocol = normalizePlatformAlias(input.protocol);
   const original = cloneJsonValue(input.payload);
   const output = cloneJsonValue(input.payload);
   const appliedDefaults = new Set<string>();

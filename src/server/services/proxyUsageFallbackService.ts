@@ -5,6 +5,7 @@ import {
   fetchJsonWithShieldCookieRetry,
 } from './platforms/newApiShield.js';
 import { withExplicitProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 
 const SELF_LOG_FETCH_TIMEOUT_MS = 8_000;
 const SELF_LOG_PAGE_SIZE = 20;
@@ -13,9 +14,9 @@ const MATCH_LOOKAHEAD_MS = 120_000;
 const MATCH_MAX_CREATED_DELTA_MS = 90_000;
 const MATCH_MAX_LATENCY_DELTA_MS = 12_000;
 const QUOTA_PER_UNIT = 500_000;
-const SUPPORTED_USAGE_FALLBACK_PLATFORMS = new Set(['done-hub', 'one-hub', 'new-api', 'anyrouter', 'sub2api']);
-const ALWAYS_LOOKUP_SELF_LOG_PLATFORMS = new Set(['done-hub', 'one-hub', 'anyrouter', 'sub2api']);
-const PLATFORM_REQUIRES_USER_HEADER = new Set(['new-api', 'anyrouter']);
+const SUPPORTED_USAGE_FALLBACK_PLATFORMS = new Set(['done-hub', 'one-hub', 'new-api', 'sub2api']);
+const ALWAYS_LOOKUP_SELF_LOG_PLATFORMS = new Set(['done-hub', 'one-hub', 'sub2api']);
+const PLATFORM_REQUIRES_USER_HEADER = new Set(['new-api']);
 
 interface ProxyUsage {
   promptTokens: number;
@@ -153,7 +154,7 @@ export function shouldLookupSelfLog(
   usage: ProxyUsage,
   upstreamUsagePresent?: boolean,
 ): boolean {
-  const normalizedPlatform = String(platform || '').toLowerCase();
+  const normalizedPlatform = normalizePlatformAlias(platform);
   if (!SUPPORTED_USAGE_FALLBACK_PLATFORMS.has(normalizedPlatform)) return false;
   if (ALWAYS_LOOKUP_SELF_LOG_PLATFORMS.has(normalizedPlatform)) return true;
   const normalizedUsage = normalizeUsage(usage);
@@ -357,7 +358,7 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
   }, SELF_LOG_FETCH_TIMEOUT_MS);
 
   try {
-    const platform = String(input.site.platform || '').toLowerCase();
+    const platform = normalizePlatformAlias(input.site.platform);
     if (platform === 'sub2api') {
       const query = new URLSearchParams({
         page: '1',
@@ -386,10 +387,7 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
       }
     }
 
-    const pageSizeParam = String(input.site.platform || '').toLowerCase() === 'anyrouter'
-      ? 'page_size'
-      : 'size';
-    const query = `p=0&page=1&${pageSizeParam}=${SELF_LOG_PAGE_SIZE}&order=-created_at`;
+    const query = `p=0&page=1&size=${SELF_LOG_PAGE_SIZE}&order=-created_at`;
     const url = `${baseUrl}/api/log/self?${query}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
@@ -401,7 +399,7 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
       }
     }
 
-    const shouldTryShieldCookie = platform === 'anyrouter' || token.includes('=');
+    const shouldTryShieldCookie = token.includes('=');
     if (shouldTryShieldCookie) {
       for (const cookie of buildNewApiCookieCandidates(token)) {
         const result = await fetchJsonWithShieldCookieRetry(url, {
@@ -549,7 +547,7 @@ export async function resolveProxyUsageWithSelfLogFallback(
     usageSource: fallbackUsageSource,
   };
 
-  const platform = String(input.site.platform || '').toLowerCase();
+  const platform = normalizePlatformAlias(input.site.platform);
   if (!shouldLookupSelfLog(platform, normalizedUsage, hasUpstreamUsage)) {
     return fallback;
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyPayloadRulesConfig, parsePayloadRulesConfigInput } from './payloadRules.js';
+import { applyPayloadRules, createEmptyPayloadRulesConfig, parsePayloadRulesConfigInput } from './payloadRules.js';
 
 describe('parsePayloadRulesConfigInput', () => {
   it('accepts CPA-style dashed raw keys and normalizes them to camelCase sections', () => {
@@ -84,6 +84,34 @@ describe('parsePayloadRulesConfigInput', () => {
     expect(result).toEqual({
       success: false,
       message: 'Payload 规则包含未知分组：unexpected',
+    });
+  });
+});
+
+describe('applyPayloadRules', () => {
+  it('matches legacy anyrouter rule protocols against new-api requests', () => {
+    const payload = applyPayloadRules({
+      rules: {
+        ...createEmptyPayloadRulesConfig(),
+        override: [
+          {
+            models: [{ name: 'gpt-*', protocol: 'anyrouter' }],
+            params: {
+              temperature: 0.2,
+            },
+          },
+        ],
+      },
+      payload: {
+        model: 'gpt-4o',
+        temperature: 1,
+      },
+      modelName: 'gpt-4o',
+      protocol: 'new-api',
+    });
+
+    expect(payload).toMatchObject({
+      temperature: 0.2,
     });
   });
 });

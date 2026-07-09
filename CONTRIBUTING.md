@@ -181,7 +181,7 @@ Types / 类型:
 
 Examples / 示例:
 ```
-feat: add AnyRouter platform adapter
+feat: add provider capability hints
 fix: handle empty model list in dashboard
 docs: update Docker deployment guide
 refactor: extract route selection logic

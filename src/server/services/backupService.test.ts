@@ -1161,6 +1161,41 @@ describe('backupService', () => {
     expect(settings.some((row) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
   });
 
+  it('imports legacy anyrouter platform names as new-api sites', async () => {
+    const payload = {
+      timestamp: Date.now(),
+      accounts: {
+        accounts: [
+          {
+            site_url: 'https://legacy-panel.example.com',
+            site_type: 'custom anyrouter panel',
+            site_name: 'legacy-anyrouter-site',
+            username: 'legacy-user',
+            authType: 'session',
+            account_info: {
+              id: 7788,
+              username: 'legacy-user',
+              access_token: 'legacy-session-token',
+            },
+            created_at: '2026-02-01T00:00:00.000Z',
+            updated_at: '2026-02-02T00:00:00.000Z',
+          },
+        ],
+      },
+    } as Record<string, unknown>;
+
+    const result = await backupService.importBackup(payload);
+    expect(result.allImported).toBe(true);
+    expect(result.sections.accounts).toBe(true);
+
+    const sites = await db.select().from(schema.sites).all();
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({
+      name: 'legacy-anyrouter-site',
+      platform: 'new-api',
+    });
+  });
+
   it('imports ALL-API-Hub V2 backups into native offline connections and summaries', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockImplementation(async () => {

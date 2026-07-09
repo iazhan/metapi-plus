@@ -6,11 +6,11 @@ const { fetchMock, withSiteProxyRequestInitMock } = vi.hoisted(() => ({
   withSiteProxyRequestInitMock: vi.fn(),
 }));
 
-const ANYROUTER_CHALLENGE_HTML = readFileSync(
+const NEW_API_CHALLENGE_HTML = readFileSync(
   new URL('./platforms/__fixtures__/anyrouter-challenge.html', import.meta.url),
   'utf8',
 );
-const ANYROUTER_CHALLENGE_ACW = '699dbedad126579b6bc0ebb91eaae8d7af3548b5';
+const NEW_API_CHALLENGE_ACW = '699dbedad126579b6bc0ebb91eaae8d7af3548b5';
 
 vi.mock('undici', () => ({
   fetch: (...args: unknown[]) => fetchMock(...args),
@@ -22,16 +22,16 @@ vi.mock('./siteProxy.js', () => ({
 
 import { fetchModelPricingCatalog } from './modelPricingService.js';
 
-describe('modelPricingService anyrouter pricing', () => {
+describe('modelPricingService new-api pricing shield retry', () => {
   beforeEach(() => {
     fetchMock.mockReset();
     withSiteProxyRequestInitMock.mockReset();
     withSiteProxyRequestInitMock.mockImplementation(async (_url: string, init: Record<string, unknown>) => init);
   });
 
-  it('reuses anyrouter shield challenge flow when fetching pricing', async () => {
+  it('reuses shield challenge flow for cookie-style new-api credentials when fetching pricing', async () => {
     fetchMock
-      .mockResolvedValueOnce(new Response(ANYROUTER_CHALLENGE_HTML, {
+      .mockResolvedValueOnce(new Response(NEW_API_CHALLENGE_HTML, {
         status: 200,
         headers: {
           'content-type': 'text/html; charset=utf-8',
@@ -58,11 +58,11 @@ describe('modelPricingService anyrouter pricing', () => {
       site: {
         id: 902,
         url: 'https://anyrouter.example.com',
-        platform: 'anyrouter',
+        platform: 'new-api',
       },
       account: {
         id: 77,
-        accessToken: 'challenge-seed',
+        accessToken: 'session=challenge-seed',
       },
       modelName: 'claude-haiku-4-5-20251001',
       totalTokens: 0,
@@ -77,6 +77,6 @@ describe('modelPricingService anyrouter pricing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain('session=challenge-seed');
     expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain('cdn_sec_tc=challenge-seed');
-    expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`);
+    expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain(`acw_sc__v2=${NEW_API_CHALLENGE_ACW}`);
   });
 });

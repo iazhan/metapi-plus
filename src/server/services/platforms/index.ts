@@ -1,5 +1,4 @@
 import type { PlatformAdapter } from './base.js';
-import { AnyRouterAdapter } from './anyrouter.js';
 import { NewApiAdapter } from './newApi.js';
 import { OneApiAdapter } from './oneApi.js';
 import { VeloeraAdapter } from './veloera.js';
@@ -25,7 +24,6 @@ const adapters: PlatformAdapter[] = [
   new GeminiCliAdapter(),
   new AntigravityAdapter(),
   new CliProxyApiAdapter(),
-  new AnyRouterAdapter(),
   new DoneHubAdapter(),
   new OneHubAdapter(),
   new VeloeraAdapter(),
@@ -44,7 +42,6 @@ export function getAdapter(platform: string): PlatformAdapter | undefined {
 }
 
 const titleFirstPlatforms = new Set<string>([
-  'anyrouter',
   'done-hub',
   'one-hub',
   'veloera',

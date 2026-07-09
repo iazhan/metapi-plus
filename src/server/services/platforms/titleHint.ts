@@ -1,7 +1,6 @@
 import { stripTrailingSlashes } from '../urlNormalization.js';
 
 export type TitleHintPlatform =
-  | 'anyrouter'
   | 'done-hub'
   | 'one-hub'
   | 'veloera'
@@ -15,7 +14,7 @@ type TitleRule = {
 };
 
 const TITLE_RULES: TitleRule[] = [
-  { platform: 'anyrouter', regex: /\bany\s*router\b/i },
+  { platform: 'new-api', regex: /\bany\s*router\b/i },
   { platform: 'done-hub', regex: /\bdone[-_ ]?hub\b/i },
   { platform: 'one-hub', regex: /\bone[-_ ]?hub\b/i },
   { platform: 'veloera', regex: /\bveloera\b/i },

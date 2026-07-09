@@ -599,16 +599,16 @@ function normalizeLegacyPlatform(raw: string): string {
   const supported = new Set([
     'new-api',
     'one-api',
-    'anyrouter',
     'one-hub',
     'done-hub',
     'sub2api',
     'veloera',
   ]);
   if (supported.has(value)) return value;
+  if (value === 'anyrouter') return 'new-api';
 
   if (value.includes('wong')) return 'new-api';
-  if (value.includes('anyrouter')) return 'anyrouter';
+  if (value.includes('anyrouter')) return 'new-api';
   if (value.includes('done')) return 'done-hub';
 
   return 'new-api';

@@ -10,7 +10,7 @@
 
 Metapi 当前支持三类上游接入方式：
 
-1. **中转聚合平台** — New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API / CPA 等
+1. **中转聚合平台** — New API / One API / OneHub / DoneHub / Veloera / Sub2API / CPA 等
 2. **官方 API 端点** — OpenAI / Claude (Anthropic) / Gemini (Google) 直连
 3. **官方预设与 OAuth 连接** — Coding Plan / DeepSeek / Moonshot / MiniMax / ModelScope 等官方兼容入口，以及 Codex / Claude / Gemini CLI / Antigravity 的浏览器授权登录
 
@@ -50,7 +50,7 @@ Metapi 当前支持三类上游接入方式：
 
 ### New API
 
-**适用平台：** New API 及其衍生版本（AnyRouter、VO-API、Super-API、RIX-API、Neo-API 等）
+**适用平台：** New API 及其衍生版本（例如 AnyRouter、VO-API、Super-API、RIX-API、Neo-API 等），平台类型统一选择 `new-api`。
 
 #### 站点配置
 
@@ -66,7 +66,7 @@ Metapi 当前支持三类上游接入方式：
 
 New API 支持三种凭证类型：
 
-##### 1. 用户名密码登录（推荐 AnyRouter 使用）
+##### 1. 用户名密码登录
 
 - **适用场景：** 有完整账号权限，需要自动签到、余额查询、账号令牌管理
 - **填写方式：**
@@ -82,7 +82,7 @@ New API 支持三种凭证类型：
     - Session Cookie：**（最不推荐）**
     - 可通过浏览器 F12 获取 ![Session Cookie 获取](./screenshots/session-cookie-f12.png)
     - 一般为如下格式：`session=MTczNjQxMjM0NXxEdi1CQUFFQ180SUFBUkFCRUFBQVB2LUNBQUVHYzNSeWFXNW5EQThBRFhObGMzTnBiMjVmZEdGaWJHVUdjM1J5YVc1bkRBSUFBQT09fGRlYWRiZWVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWY=`
-    - 系统访问令牌和用户 ID **（推荐非 AnyRouter 的其他 New API 站点使用）**
+    - 系统访问令牌和用户 ID **（推荐优先使用）**
     - ![](./screenshots/account-management.png)
 - **自动解析：** 系统自动识别凭证类型并提取用户信息
 
@@ -504,7 +504,7 @@ Metapi 支持自动识别站点类型，当前检测优先级如下：
 | `generativelanguage.googleapis.com` | Gemini |
 | `chatgpt.com/backend-api/codex` | Codex |
 | `127.0.0.1:8317` / `localhost:8317` / `cliproxy` | CLIProxyAPI / CPA |
-| `anyrouter` | AnyRouter |
+| `anyrouter` | New API |
 | `donehub` / `done-hub` | DoneHub |
 | `onehub` / `one-hub` | OneHub |
 | `veloera` | Veloera |

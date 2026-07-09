@@ -7,6 +7,7 @@ import {
 
 describe('platformIdentity', () => {
   it('normalizes shared platform aliases', () => {
+    expect(normalizePlatformAlias('anyrouter')).toBe('new-api');
     expect(normalizePlatformAlias('chatgpt-codex')).toBe('codex');
     expect(normalizePlatformAlias('anti-gravity')).toBe('antigravity');
     expect(normalizePlatformAlias('one api')).toBe('one-api');
@@ -20,6 +21,7 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://generativelanguage.googleapis.com/v1beta')).toBe('gemini');
     expect(detectPlatformByUrlHint('https://cloudcode-pa.googleapis.com')).toBe('gemini-cli');
     expect(detectPlatformByUrlHint('http://127.0.0.1:8317/v1/models')).toBe('cliproxyapi');
+    expect(detectPlatformByUrlHint('https://anyrouter.top')).toBe('new-api');
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 });

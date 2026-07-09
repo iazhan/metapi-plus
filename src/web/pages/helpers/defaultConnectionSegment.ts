@@ -1,9 +1,10 @@
+import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
+
 export type InitialConnectionSegment = 'session' | 'apikey';
 
 const SESSION_FIRST_PLATFORMS = new Set([
   'new-api',
   'one-api',
-  'anyrouter',
   'veloera',
   'one-hub',
   'done-hub',
@@ -19,7 +20,7 @@ const API_KEY_FIRST_PLATFORMS = new Set([
 ]);
 
 export function resolveInitialConnectionSegment(platform?: string | null): InitialConnectionSegment {
-  const normalized = String(platform || '').trim().toLowerCase();
+  const normalized = normalizePlatformAlias(platform);
   if (SESSION_FIRST_PLATFORMS.has(normalized)) return 'session';
   if (API_KEY_FIRST_PLATFORMS.has(normalized)) return 'apikey';
   return 'apikey';

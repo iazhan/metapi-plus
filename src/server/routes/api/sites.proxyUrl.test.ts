@@ -122,6 +122,62 @@ describe('sites proxy settings', () => {
     expect((duplicate.json() as { error?: string }).error).toContain('already exists');
   });
 
+  it('normalizes legacy anyrouter platform to new-api when creating and updating sites', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'legacy-anyrouter-site',
+        url: 'https://legacy-anyrouter.example.com',
+        platform: 'anyrouter',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      platform: 'new-api',
+    });
+
+    const site = created.json() as { id: number };
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        platform: ' ANYROUTER ',
+      },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      platform: 'new-api',
+    });
+  });
+
+  it('checks create conflicts after normalizing legacy anyrouter platform to new-api', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'new-api-site',
+        url: 'https://alias-conflict.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'legacy-anyrouter-duplicate',
+        url: 'https://alias-conflict.example.com/',
+        platform: 'anyrouter',
+      },
+    });
+
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+  });
+
   it('rejects invalid useSystemProxy flag', async () => {
     const response = await app.inject({
       method: 'POST',

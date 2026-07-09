@@ -38,9 +38,9 @@ async function withHttpServer(
 }
 
 describe('getAdapter platform aliases', () => {
-  it('returns dedicated anyrouter adapter for anyrouter alias', () => {
+  it('maps legacy anyrouter alias to the new-api adapter', () => {
     const adapter = getAdapter('anyrouter');
-    expect(adapter?.platformName).toBe('anyrouter');
+    expect(adapter?.platformName).toBe('new-api');
   });
 
   it('handles case-insensitive platform strings', () => {
@@ -68,9 +68,9 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
   });
 
-  it('detects anyrouter URL before generic new-api adapter', async () => {
+  it('detects anyrouter URLs as new-api sites', async () => {
     const adapter = await detectPlatform('https://anyrouter.top');
-    expect(adapter?.platformName).toBe('anyrouter');
+    expect(adapter?.platformName).toBe('new-api');
   });
 
   it('detects done-hub URL before generic adapters', async () => {

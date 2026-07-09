@@ -19,6 +19,7 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -104,7 +105,7 @@ function normalizeCanonicalSiteUrl(value: string): string {
 
 function normalizeSitePlatform(value: string | undefined): string | null {
   if (value === undefined) return null;
-  const normalized = value.trim().toLowerCase();
+  const normalized = normalizePlatformAlias(value);
   return normalized || null;
 }
 

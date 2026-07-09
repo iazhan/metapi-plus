@@ -15,7 +15,7 @@
 | 方式 | 特点 | 适用场景 |
 |------|------|----------|
 | **Access Token（系统访问令牌）** | 稳定、适合长期使用、适合多账号 | 标准 New API / One API / OneHub / DoneHub / Veloera 等面板站 |
-| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、AnyRouter 一类魔改站点、特殊兜底场景 |
+| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、部分 New API 变体站点、特殊兜底场景 |
 | **API Key** | 最简单，适合代理调用 | OpenAI / Claude / Gemini 兼容入口、CPA、各类官方预设 |
 | **OAuth** | 不手填普通凭证，走浏览器授权 | Codex、Claude、Gemini CLI、Antigravity |
 
@@ -51,9 +51,9 @@
 
 这时不要再把它当成“账号管理里的一条普通 Session”去处理，直接看 [OAuth 管理](/oauth)。
 
-### Q: AnyRouter 这类魔改站点为什么更容易报错？
+### Q: AnyRouter 这类 New API 变体站点应该怎么接？
 
-**A:** AnyRouter 在 Metapi 中按 NewAPI 兼容站点处理，但不少实例会隐藏 Access Token 入口，或额外加登录盾。建议：
+**A:** 请选择 `new-api` 平台。AnyRouter 不再作为独立平台维护，Metapi 会把旧配置中的 `anyrouter` 兼容映射到 `new-api`。这类站点中有些实例会隐藏 Access Token 入口，或额外加登录盾。建议：
 
 1. 如果站点后台能生成系统访问令牌，优先用 Session 模式 + Access Token
 2. 如果没有 Access Token 入口，或验证时被盾/认证页拦截，再改用 Cookie 导入

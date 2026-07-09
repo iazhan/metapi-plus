@@ -22,6 +22,7 @@ import {
   isSub2ApiPlatform,
 } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -70,10 +71,9 @@ const LOG_PAGE_SIZE = 100;
 const LOG_MAX_PAGES = 6;
 
 function supportsTodayIncomeLogFallback(platform?: string | null): boolean {
-  const normalized = (platform || '').toLowerCase();
+  const normalized = normalizePlatformAlias(platform);
   return (
     normalized === 'new-api' ||
-    normalized === 'anyrouter' ||
     normalized === 'one-api' ||
     normalized === 'veloera'
   );

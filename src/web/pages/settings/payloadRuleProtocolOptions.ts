@@ -10,7 +10,6 @@ export const PAYLOAD_RULE_PROTOCOL_OPTIONS: Array<{ value: string; label: string
   { value: 'gemini', label: 'Gemini' },
   { value: 'gemini-cli', label: 'Gemini CLI' },
   { value: 'antigravity', label: 'Antigravity' },
-  { value: 'anyrouter', label: 'AnyRouter' },
   { value: 'done-hub', label: 'Done Hub' },
   { value: 'one-hub', label: 'One Hub' },
   { value: 'veloera', label: 'Veloera' },
