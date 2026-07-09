@@ -70,6 +70,56 @@ describe('sites proxy settings', () => {
     expect(payload.globalWeight).toBe(1.5);
   });
 
+  it('stores the Responses image generation compatibility switch when creating and updating a site', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'responses-compat-site',
+        url: 'https://responses-compat.example.com',
+        platform: 'new-api',
+        responsesStripImageGenerationEnabled: true,
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    const createdPayload = created.json() as {
+      id: number;
+      responsesStripImageGenerationEnabled?: boolean;
+    };
+    expect(createdPayload.responsesStripImageGenerationEnabled).toBe(true);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${createdPayload.id}`,
+      payload: {
+        responsesStripImageGenerationEnabled: false,
+      },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    const updatedPayload = updated.json() as {
+      responsesStripImageGenerationEnabled?: boolean;
+    };
+    expect(updatedPayload.responsesStripImageGenerationEnabled).toBe(false);
+  });
+
+  it('rejects invalid Responses image generation compatibility switch values', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'responses-compat-site',
+        url: 'https://invalid-responses-compat.example.com',
+        platform: 'new-api',
+        responsesStripImageGenerationEnabled: 'yes',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid responsesStripImageGenerationEnabled');
+  });
+
   it('returns a conflict response when the same platform and url already exist', async () => {
     const first = await app.inject({
       method: 'POST',

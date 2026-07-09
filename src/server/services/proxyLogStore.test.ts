@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   hasProxyLogBillingDetailsColumnMock,
   hasProxyLogClientColumnsMock,
+  hasProxyLogCompatibilityNotesColumnMock,
   hasProxyLogDownstreamApiKeyIdColumnMock,
   hasProxyLogStreamTimingColumnsMock,
   dbInsertMock,
@@ -12,6 +13,7 @@ const {
 } = vi.hoisted(() => ({
   hasProxyLogBillingDetailsColumnMock: vi.fn(),
   hasProxyLogClientColumnsMock: vi.fn(),
+  hasProxyLogCompatibilityNotesColumnMock: vi.fn(),
   hasProxyLogDownstreamApiKeyIdColumnMock: vi.fn(),
   hasProxyLogStreamTimingColumnsMock: vi.fn(),
   dbInsertMock: vi.fn(),
@@ -34,6 +36,7 @@ const {
     totalTokens: 'total_tokens',
     estimatedCost: 'estimated_cost',
     billingDetails: 'billing_details',
+    compatibilityNotes: 'compatibility_notes',
     clientFamily: 'client_family',
     clientAppId: 'client_app_id',
     clientAppName: 'client_app_name',
@@ -53,16 +56,23 @@ vi.mock('../db/index.js', () => ({
   },
   hasProxyLogBillingDetailsColumn: (...args: unknown[]) => hasProxyLogBillingDetailsColumnMock(...args),
   hasProxyLogClientColumns: (...args: unknown[]) => hasProxyLogClientColumnsMock(...args),
+  hasProxyLogCompatibilityNotesColumn: (...args: unknown[]) => hasProxyLogCompatibilityNotesColumnMock(...args),
   hasProxyLogDownstreamApiKeyIdColumn: (...args: unknown[]) => hasProxyLogDownstreamApiKeyIdColumnMock(...args),
   hasProxyLogStreamTimingColumns: (...args: unknown[]) => hasProxyLogStreamTimingColumnsMock(...args),
 }));
 
-import { insertProxyLog, parseProxyLogBillingDetails, withProxyLogSelectFields } from './proxyLogStore.js';
+import {
+  insertProxyLog,
+  parseProxyLogBillingDetails,
+  parseProxyLogCompatibilityNotes,
+  withProxyLogSelectFields,
+} from './proxyLogStore.js';
 
 describe('proxyLogStore', () => {
   beforeEach(() => {
     hasProxyLogBillingDetailsColumnMock.mockReset();
     hasProxyLogClientColumnsMock.mockReset();
+    hasProxyLogCompatibilityNotesColumnMock.mockReset();
     hasProxyLogDownstreamApiKeyIdColumnMock.mockReset();
     hasProxyLogStreamTimingColumnsMock.mockReset();
     dbInsertMock.mockReset();
@@ -70,6 +80,7 @@ describe('proxyLogStore', () => {
     dbInsertRunMock.mockReset();
     hasProxyLogBillingDetailsColumnMock.mockResolvedValue(false);
     hasProxyLogClientColumnsMock.mockResolvedValue(false);
+    hasProxyLogCompatibilityNotesColumnMock.mockResolvedValue(false);
     hasProxyLogDownstreamApiKeyIdColumnMock.mockResolvedValue(false);
     hasProxyLogStreamTimingColumnsMock.mockResolvedValue(false);
 
@@ -113,6 +124,21 @@ describe('proxyLogStore', () => {
     expect(runner.mock.calls[1][0].fields.firstByteLatencyMs).toBeUndefined();
   });
 
+  it('retries proxy log selects without compatibility notes when the column is missing', async () => {
+    hasProxyLogCompatibilityNotesColumnMock.mockResolvedValue(true);
+    const runner = vi.fn()
+      .mockRejectedValueOnce(new Error('column proxy_logs.compatibility_notes does not exist'))
+      .mockResolvedValueOnce([{ id: 1 }]);
+
+    await expect(withProxyLogSelectFields(runner)).resolves.toEqual([{ id: 1 }]);
+
+    expect(runner).toHaveBeenCalledTimes(2);
+    expect(runner.mock.calls[0][0].includeCompatibilityNotes).toBe(true);
+    expect(runner.mock.calls[0][0].fields.compatibilityNotes).toBe('compatibility_notes');
+    expect(runner.mock.calls[1][0].includeCompatibilityNotes).toBe(false);
+    expect(runner.mock.calls[1][0].fields.compatibilityNotes).toBeUndefined();
+  });
+
   it('accepts parsed billing details objects for helper-level callers', () => {
     expect(parseProxyLogBillingDetails({
       source: 'pricing',
@@ -120,6 +146,20 @@ describe('proxyLogStore', () => {
     })).toEqual({
       source: 'pricing',
       usd: 1.25,
+    });
+  });
+
+  it('accepts parsed compatibility notes objects for helper-level callers', () => {
+    expect(parseProxyLogCompatibilityNotes({
+      responsesStripImageGeneration: {
+        enabled: true,
+        removed: 2,
+      },
+    })).toEqual({
+      responsesStripImageGeneration: {
+        enabled: true,
+        removed: 2,
+      },
     });
   });
 
@@ -195,6 +235,63 @@ describe('proxyLogStore', () => {
       clientAppName: 'Cherry Studio',
       clientConfidence: 'exact',
     });
+  });
+
+  it('writes compatibility notes when the schema supports them', async () => {
+    hasProxyLogCompatibilityNotesColumnMock.mockResolvedValue(true);
+
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      },
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(1);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      compatibilityNotes: JSON.stringify({
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      }),
+    });
+  });
+
+  it('retries proxy log inserts without compatibility notes when the column is missing', async () => {
+    hasProxyLogCompatibilityNotesColumnMock.mockResolvedValue(true);
+    dbInsertRunMock
+      .mockRejectedValueOnce(new Error('column proxy_logs.compatibility_notes does not exist'))
+      .mockResolvedValueOnce(undefined);
+
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 1,
+        },
+      },
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(2);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      compatibilityNotes: JSON.stringify({
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 1,
+        },
+      }),
+    });
+    expect(dbInsertValuesMock.mock.calls[1][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+    });
+    expect(dbInsertValuesMock.mock.calls[1][0].compatibilityNotes).toBeUndefined();
   });
 
   it('preserves null token fields instead of coercing unknown usage to zero', async () => {

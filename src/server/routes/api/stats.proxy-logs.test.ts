@@ -117,6 +117,12 @@ describe("stats proxy logs routes", () => {
           estimatedCost: 0.2,
           createdAt: timestamps[1],
           billingDetails: JSON.stringify({ id: "failed-gpt" }),
+          compatibilityNotes: JSON.stringify({
+            responsesStripImageGeneration: {
+              enabled: true,
+              removed: 2,
+            },
+          }),
         },
         {
           accountId: account.id,
@@ -188,6 +194,12 @@ describe("stats proxy logs routes", () => {
     expect(body.items[0]?.clientConfidence).toBe(null);
     expect(body.items[0]?.isStream).toBe(false);
     expect(body.items[0]?.firstByteLatencyMs).toBe(12);
+    expect(body.items[0]?.compatibilityNotes).toEqual({
+      responsesStripImageGeneration: {
+        enabled: true,
+        removed: 2,
+      },
+    });
     expect(body.items[0]).not.toHaveProperty("billingDetails");
     expect(body.clientOptions).toEqual([
       { value: "family:codex", label: "协议 · Codex" },
@@ -259,6 +271,12 @@ describe("stats proxy logs routes", () => {
           breakdown: { totalCost: 0.12 },
           usage: { promptTokens: 100, completionTokens: 20 },
         }),
+        compatibilityNotes: JSON.stringify({
+          responsesStripImageGeneration: {
+            enabled: true,
+            removed: 1,
+          },
+        }),
       })
       .run();
 
@@ -283,6 +301,7 @@ describe("stats proxy logs routes", () => {
       isStream: boolean | null;
       firstByteLatencyMs: number | null;
       billingDetails: Record<string, unknown> | null;
+      compatibilityNotes: Record<string, unknown> | null;
     };
 
     expect(body.id).toBe(logId);
@@ -300,6 +319,12 @@ describe("stats proxy logs routes", () => {
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
+    });
+    expect(body.compatibilityNotes).toEqual({
+      responsesStripImageGeneration: {
+        enabled: true,
+        removed: 1,
+      },
     });
   });
 

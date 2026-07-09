@@ -1,6 +1,6 @@
 {
   "name": "metapi-plus",
-  "version": "1.3.7",
+  "version": "1.4.0",
   "description": "Community-maintained Metapi fork for AI API aggregation platforms",
   "main": "dist/desktop/main.js",
   "keywords": [
@@ -57,16 +57,16 @@
     "verify:local": "tsx scripts/dev/local-ci.ts verify",
     "ci:local": "tsx scripts/dev/local-ci.ts ci",
     "readme:contributors": "tsx scripts/dev/update-readme-contributors.ts",
-    "test:schema:unit": "vitest run --root . src/server/db/schemaContract.test.ts src/server/db/schemaArtifactGenerator.test.ts src/server/db/schemaIntrospection.test.ts src/server/db/schemaParity.test.ts",
-    "test:schema:parity": "vitest run --root . src/server/db/schemaParity.live.test.ts",
-    "test:schema:upgrade": "vitest run --root . src/server/db/schemaUpgrade.live.test.ts",
-    "test:schema:runtime": "vitest run --root . src/server/db/runtimeSchemaBootstrap.live.test.ts",
+    "test:schema:unit": "tsx scripts/dev/run-vitest-isolated.ts run --root . src/server/db/schemaContract.test.ts src/server/db/schemaArtifactGenerator.test.ts src/server/db/schemaIntrospection.test.ts src/server/db/schemaParity.test.ts",
+    "test:schema:parity": "tsx scripts/dev/run-vitest-isolated.ts run --root . src/server/db/schemaParity.live.test.ts",
+    "test:schema:upgrade": "tsx scripts/dev/run-vitest-isolated.ts run --root . src/server/db/schemaUpgrade.live.test.ts",
+    "test:schema:runtime": "tsx scripts/dev/run-vitest-isolated.ts run --root . src/server/db/runtimeSchemaBootstrap.live.test.ts",
     "smoke:db": "tsx scripts/dev/db-smoke.ts",
     "smoke:db:sqlite": "tsx scripts/dev/db-smoke.ts --db-type sqlite",
     "smoke:db:mysql": "tsx scripts/dev/db-smoke.ts --db-type mysql",
     "smoke:db:postgres": "tsx scripts/dev/db-smoke.ts --db-type postgres",
-    "test": "vitest run --root .",
-    "test:watch": "vitest --root ."
+    "test": "tsx scripts/dev/run-vitest-isolated.ts run --root .",
+    "test:watch": "tsx scripts/dev/run-vitest-isolated.ts --root ."
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

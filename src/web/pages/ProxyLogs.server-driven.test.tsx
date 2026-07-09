@@ -30,6 +30,12 @@ function collectText(node: ReactTestInstance): string {
   }).join('');
 }
 
+function childInstances(node: ReactTestInstance): ReactTestInstance[] {
+  return (node.children || []).filter(
+    (child): child is ReactTestInstance => typeof child !== 'string',
+  );
+}
+
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
@@ -78,6 +84,12 @@ function buildListResponse(overrides?: Partial<{
         downstreamKeyName: '移动端灰度',
         downstreamKeyGroupName: '项目A',
         downstreamKeyTags: ['VIP', '灰度'],
+        compatibilityNotes: {
+          responsesStripImageGeneration: {
+            enabled: true,
+            removed: 2,
+          },
+        },
       },
     ],
     total: 1,
@@ -179,6 +191,12 @@ describe('ProxyLogs server-driven page', () => {
       downstreamKeyName: '移动端灰度',
       downstreamKeyGroupName: '项目A',
       downstreamKeyTags: ['VIP', '灰度'],
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 0,
+        },
+      },
       billingDetails: {
         breakdown: {
           inputPerMillion: 1,
@@ -283,6 +301,102 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('下游 Key: 移动端灰度');
       expect(text).toContain('流式');
       expect(text).toContain('首字');
+      expect(text).toContain('Codex兼容');
+      expect(text).not.toContain('Codex 兼容：移除 2 项 image generation 声明');
+
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      const inlineStatusRows = row.findAll((node) => {
+        if (node.type !== 'div') return false;
+        const badgeTexts = childInstances(node)
+          .filter((child) => String(child.props.className || '').includes('badge'))
+          .map((child) => collectText(child));
+        return (
+          badgeTexts.includes('流式') &&
+          badgeTexts.some((badgeText) => badgeText.startsWith('首字')) &&
+          badgeTexts.includes('Codex兼容')
+        );
+      });
+      expect(inlineStatusRows).toHaveLength(1);
+
+      await act(async () => {
+        row.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+      expect(collectText(root.root)).toContain('Codex 兼容：已开启，本次无需处理');
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+    }
+  });
+
+  it('keeps proxy log detail expandable when billing details are incomplete', async () => {
+    apiMock.getProxyLogDetail.mockResolvedValueOnce({
+      id: 101,
+      createdAt: '2026-03-09 16:00:00',
+      modelRequested: 'gpt-4o',
+      modelActual: 'gpt-4o',
+      status: 'success',
+      latencyMs: 120,
+      firstByteLatencyMs: 35,
+      isStream: true,
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      retryCount: 0,
+      estimatedCost: 1.23,
+      username: 'tester',
+      siteName: 'main-site',
+      clientFamily: 'codex',
+      clientAppId: 'cherry_studio',
+      clientAppName: 'Cherry Studio',
+      clientConfidence: 'heuristic',
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      },
+      billingDetails: {
+        usageSource: 'seed',
+        pricing: {
+          modelRatio: 1,
+          completionRatio: 1,
+          cacheRatio: 0.2,
+          cacheCreationRatio: 1.25,
+          groupRatio: 1,
+        },
+        upstreamPath: '/v1/responses',
+      },
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => {
+        row.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('日志详情');
+      expect(text).toContain('Codex 兼容：移除 2 项 image generation 声明');
+      expect(text).toContain('计费过程');
+      expect(text).toContain('无详细计费拆分');
     } finally {
       await act(async () => {
         root?.unmount();

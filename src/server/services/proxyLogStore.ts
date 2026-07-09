@@ -3,9 +3,17 @@ import {
   schema,
   hasProxyLogBillingDetailsColumn,
   hasProxyLogClientColumns,
+  hasProxyLogCompatibilityNotesColumn,
   hasProxyLogDownstreamApiKeyIdColumn,
   hasProxyLogStreamTimingColumns,
 } from '../db/index.js';
+
+export type ProxyLogCompatibilityNotes = {
+  responsesStripImageGeneration?: {
+    enabled: boolean;
+    removed: number;
+  };
+};
 
 export type ProxyLogInsertInput = {
   routeId?: number | null;
@@ -24,6 +32,7 @@ export type ProxyLogInsertInput = {
   totalTokens?: number | null;
   estimatedCost?: number | null;
   billingDetails?: unknown;
+  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
   clientFamily?: string | null;
   clientAppId?: string | null;
   clientAppName?: string | null;
@@ -71,15 +80,23 @@ function buildProxyLogStreamTimingSelectFields() {
   };
 }
 
+function buildProxyLogCompatibilityNotesSelectFields() {
+  return {
+    compatibilityNotes: schema.proxyLogs.compatibilityNotes,
+  };
+}
+
 function buildProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
+  includeCompatibilityNotes?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
   return {
     ...buildProxyLogCoreSelectFields(),
     ...(options?.includeStreamTimingFields ? buildProxyLogStreamTimingSelectFields() : {}),
     ...(options?.includeClientFields ? buildProxyLogClientSelectFields() : {}),
+    ...(options?.includeCompatibilityNotes ? buildProxyLogCompatibilityNotesSelectFields() : {}),
     ...(options?.includeBillingDetails ? { billingDetails: schema.proxyLogs.billingDetails } : {}),
   };
 }
@@ -93,6 +110,7 @@ export type ProxyLogSelectFields = ReturnType<typeof buildProxyLogSelectFields>;
 export type ResolvedProxyLogSelectFields = {
   includeBillingDetails: boolean;
   includeClientFields: boolean;
+  includeCompatibilityNotes: boolean;
   includeStreamTimingFields: boolean;
   fields: ProxyLogSelectFields;
 };
@@ -100,22 +118,27 @@ export type ResolvedProxyLogSelectFields = {
 export async function resolveProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
+  includeCompatibilityNotes?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
   const includeBillingDetails = options?.includeBillingDetails === true
     && await hasProxyLogBillingDetailsColumn();
   const includeClientFields = options?.includeClientFields !== false
     && await hasProxyLogClientColumns();
+  const includeCompatibilityNotes = options?.includeCompatibilityNotes !== false
+    && await hasProxyLogCompatibilityNotesColumn();
   const includeStreamTimingFields = options?.includeStreamTimingFields !== false
     && await hasProxyLogStreamTimingColumns();
 
   return {
     includeBillingDetails,
     includeClientFields,
+    includeCompatibilityNotes,
     includeStreamTimingFields,
     fields: buildProxyLogSelectFields({
       includeBillingDetails,
       includeClientFields,
+      includeCompatibilityNotes,
       includeStreamTimingFields,
     }),
   };
@@ -123,7 +146,12 @@ export async function resolveProxyLogSelectFields(options?: {
 
 export async function withProxyLogSelectFields<T>(
   runner: (selection: ResolvedProxyLogSelectFields) => Promise<T>,
-  options?: { includeBillingDetails?: boolean; includeClientFields?: boolean; includeStreamTimingFields?: boolean },
+  options?: {
+    includeBillingDetails?: boolean;
+    includeClientFields?: boolean;
+    includeCompatibilityNotes?: boolean;
+    includeStreamTimingFields?: boolean;
+  },
 ): Promise<T> {
   let selection = await resolveProxyLogSelectFields(options);
 
@@ -135,10 +163,12 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: false,
           includeClientFields: selection.includeClientFields,
+          includeCompatibilityNotes: selection.includeCompatibilityNotes,
           includeStreamTimingFields: selection.includeStreamTimingFields,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: false,
             includeClientFields: selection.includeClientFields,
+            includeCompatibilityNotes: selection.includeCompatibilityNotes,
             includeStreamTimingFields: selection.includeStreamTimingFields,
           }),
         };
@@ -149,10 +179,28 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: selection.includeBillingDetails,
           includeClientFields: false,
+          includeCompatibilityNotes: selection.includeCompatibilityNotes,
           includeStreamTimingFields: selection.includeStreamTimingFields,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: selection.includeBillingDetails,
             includeClientFields: false,
+            includeCompatibilityNotes: selection.includeCompatibilityNotes,
+            includeStreamTimingFields: selection.includeStreamTimingFields,
+          }),
+        };
+        continue;
+      }
+
+      if (selection.includeCompatibilityNotes && isMissingProxyLogCompatibilityNotesColumnError(error)) {
+        selection = {
+          includeBillingDetails: selection.includeBillingDetails,
+          includeClientFields: selection.includeClientFields,
+          includeCompatibilityNotes: false,
+          includeStreamTimingFields: selection.includeStreamTimingFields,
+          fields: buildProxyLogSelectFields({
+            includeBillingDetails: selection.includeBillingDetails,
+            includeClientFields: selection.includeClientFields,
+            includeCompatibilityNotes: false,
             includeStreamTimingFields: selection.includeStreamTimingFields,
           }),
         };
@@ -163,10 +211,12 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: selection.includeBillingDetails,
           includeClientFields: selection.includeClientFields,
+          includeCompatibilityNotes: selection.includeCompatibilityNotes,
           includeStreamTimingFields: false,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: selection.includeBillingDetails,
             includeClientFields: selection.includeClientFields,
+            includeCompatibilityNotes: selection.includeCompatibilityNotes,
             includeStreamTimingFields: false,
           }),
         };
@@ -187,6 +237,21 @@ export function parseProxyLogBillingDetails(value: unknown): Record<string, unkn
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseProxyLogCompatibilityNotes(value: unknown): ProxyLogCompatibilityNotes | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as ProxyLogCompatibilityNotes;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as ProxyLogCompatibilityNotes
       : null;
   } catch {
     return null;
@@ -240,6 +305,17 @@ export function isMissingProxyLogClientColumnsError(error: unknown): boolean {
     );
 }
 
+export function isMissingProxyLogCompatibilityNotesColumnError(error: unknown): boolean {
+  const lowered = normalizeProxyLogStoreErrorMessage(error);
+  return lowered.includes('compatibility_notes')
+    && (
+      lowered.includes('does not exist')
+      || lowered.includes('unknown column')
+      || lowered.includes('no such column')
+      || lowered.includes('has no column named')
+    );
+}
+
 export function isMissingProxyLogStreamTimingColumnsError(error: unknown): boolean {
   const lowered = normalizeProxyLogStoreErrorMessage(error);
   const hasStreamTimingColumnReference = [
@@ -277,8 +353,13 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
   const serializedBillingDetails = input.billingDetails == null
     ? null
     : JSON.stringify(input.billingDetails);
+  const serializedCompatibilityNotes = input.compatibilityNotes == null
+    ? null
+    : JSON.stringify(input.compatibilityNotes);
   const includeBillingDetails = serializedBillingDetails !== null
     && await hasProxyLogBillingDetailsColumn();
+  const includeCompatibilityNotes = serializedCompatibilityNotes !== null
+    && await hasProxyLogCompatibilityNotesColumn();
   const includeDownstreamApiKeyId = input.downstreamApiKeyId != null
     && await hasProxyLogDownstreamApiKeyIdColumn();
   const requestedClientFields = [
@@ -294,6 +375,7 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
     && await hasProxyLogStreamTimingColumns();
 
   let allowBillingDetails = includeBillingDetails;
+  let allowCompatibilityNotes = includeCompatibilityNotes;
   let allowDownstreamApiKeyId = includeDownstreamApiKeyId;
   let allowClientFields = includeClientFields;
   let allowStreamTimingFields = includeStreamTimingFields;
@@ -308,6 +390,7 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
         }
         : {}),
       ...(allowBillingDetails ? { billingDetails: serializedBillingDetails } : {}),
+      ...(allowCompatibilityNotes ? { compatibilityNotes: serializedCompatibilityNotes } : {}),
       ...(allowDownstreamApiKeyId ? { downstreamApiKeyId: input.downstreamApiKeyId } : {}),
       ...(allowClientFields
         ? {
@@ -330,6 +413,11 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
 
       if (allowDownstreamApiKeyId && isMissingDownstreamApiKeyIdColumnError(error)) {
         allowDownstreamApiKeyId = false;
+        continue;
+      }
+
+      if (allowCompatibilityNotes && isMissingProxyLogCompatibilityNotesColumnError(error)) {
+        allowCompatibilityNotes = false;
         continue;
       }
 

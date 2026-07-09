@@ -70,6 +70,19 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
       postgres: 'UPDATE "sites" SET "global_weight" = 1 WHERE "global_weight" IS NULL OR "global_weight" <= 0',
     },
   },
+  {
+    column: 'responses_strip_image_generation_enabled',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN responses_strip_image_generation_enabled integer NOT NULL DEFAULT 0;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `responses_strip_image_generation_enabled` BOOLEAN NOT NULL DEFAULT FALSE',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "responses_strip_image_generation_enabled" BOOLEAN NOT NULL DEFAULT FALSE',
+    },
+    normalizeSql: {
+      sqlite: 'UPDATE sites SET responses_strip_image_generation_enabled = 0 WHERE responses_strip_image_generation_enabled IS NULL;',
+      mysql: 'UPDATE `sites` SET `responses_strip_image_generation_enabled` = FALSE WHERE `responses_strip_image_generation_enabled` IS NULL',
+      postgres: 'UPDATE "sites" SET "responses_strip_image_generation_enabled" = FALSE WHERE "responses_strip_image_generation_enabled" IS NULL',
+    },
+  },
 ];
 
 export const SITE_TABLE_COMPATIBILITY_SPECS: SiteTableCompatibilitySpec[] = [

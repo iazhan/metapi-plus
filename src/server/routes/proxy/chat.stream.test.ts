@@ -20,10 +20,14 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   estimatedCostFromQuota: 0,
   recoveredFromSelfLog: false,
 }));
+const dbInsertValuesMock = vi.fn();
 const dbInsertMock = vi.fn((_arg?: any) => ({
-  values: () => ({
+  values: (value?: any) => {
+    dbInsertValuesMock(value);
+    return {
     run: () => undefined,
-  }),
+    };
+  },
 }));
 
 vi.mock('undici', async () => {
@@ -72,6 +76,11 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: vi.fn(async () => undefined),
+  recordOauthQuotaResetHint: vi.fn(async () => undefined),
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -94,6 +103,7 @@ vi.mock('../../db/index.js', () => ({
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
+  hasProxyLogCompatibilityNotesColumn: async () => true,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
@@ -134,6 +144,7 @@ describe('chat proxy stream behavior', () => {
     fetchModelPricingCatalogMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
+    dbInsertValuesMock.mockClear();
     resetUpstreamEndpointRuntimeState();
 
     selectChannelMock.mockReturnValue({
@@ -1848,6 +1859,114 @@ describe('chat proxy stream behavior', () => {
     expect(forwardedBody.metadata).toEqual({ session_id: 'abc123' });
     expect(forwardedBody.reasoning).toEqual({ effort: 'high' });
     expect(forwardedBody.include).toEqual(['reasoning.encrypted_content']);
+  });
+
+  it('logs Responses image generation compatibility notes when the site switch strips declarations', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        name: 'responses-compat-site',
+        url: 'https://upstream.example.com',
+        platform: 'new-api',
+        responsesStripImageGenerationEnabled: true,
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_compat_log',
+      object: 'response',
+      status: 'completed',
+      model: 'upstream-gpt',
+      output_text: 'ok',
+      output: [],
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'draw later',
+        tools: [
+          { type: 'web_search_preview' },
+          { type: 'image_generation' },
+          { name: 'preview_image_generation' },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [_targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.tools).toEqual([{ type: 'web_search_preview' }]);
+    expect(dbInsertValuesMock).toHaveBeenCalledWith(expect.objectContaining({
+      compatibilityNotes: JSON.stringify({
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      }),
+    }));
+  });
+
+  it('logs Responses image generation compatibility notes when the upstream request fails', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        name: 'responses-compat-failure-site',
+        url: 'https://upstream.example.com',
+        platform: 'new-api',
+        responsesStripImageGenerationEnabled: true,
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        message: 'Image generation is not enabled for this group',
+        type: 'upstream_error',
+      },
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'draw later',
+        tools: [
+          { type: 'web_search_preview' },
+          { type: 'image_generation' },
+          { name: 'preview_image_generation' },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const [_targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.tools).toEqual([{ type: 'web_search_preview' }]);
+    expect(dbInsertValuesMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      compatibilityNotes: JSON.stringify({
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      }),
+    }));
   });
 
   it('retries /v1/responses without metadata when upstream returns empty upstream_error', async () => {

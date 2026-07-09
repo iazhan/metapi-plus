@@ -478,6 +478,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       isPinned,
       sortOrder,
       globalWeight,
+      responsesStripImageGenerationEnabled,
       apiEndpoints,
     } = createBody;
     const normalizedStatus = normalizeSiteStatus(status);
@@ -507,6 +508,15 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedGlobalWeight = normalizeGlobalWeight(globalWeight);
     if (globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
+    }
+    const normalizedResponsesStripImageGenerationEnabled = normalizePinnedFlag(responsesStripImageGenerationEnabled);
+    if (
+      responsesStripImageGenerationEnabled !== undefined
+      && normalizedResponsesStripImageGenerationEnabled === null
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid responsesStripImageGenerationEnabled value. Expected boolean.',
+      });
     }
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(customHeaders);
     if (!normalizedCustomHeaders.valid) {
@@ -566,6 +576,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           isPinned: normalizedPinned ?? false,
           sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
           globalWeight: normalizedGlobalWeight ?? 1,
+          responsesStripImageGenerationEnabled: normalizedResponsesStripImageGenerationEnabled ?? false,
         }).run();
         const siteId = getInsertedRowId(siteInsert);
         if (siteId && normalizedApiEndpoints.present && normalizedApiEndpoints.apiEndpoints.length > 0) {
@@ -648,6 +659,17 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
+    const normalizedResponsesStripImageGenerationEnabled = normalizePinnedFlag(
+      body.responsesStripImageGenerationEnabled,
+    );
+    if (
+      body.responsesStripImageGenerationEnabled !== undefined
+      && normalizedResponsesStripImageGenerationEnabled === null
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid responsesStripImageGenerationEnabled value. Expected boolean.',
+      });
+    }
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(body.customHeaders);
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
@@ -689,6 +711,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
+    if (body.responsesStripImageGenerationEnabled !== undefined) {
+      updates.responsesStripImageGenerationEnabled = normalizedResponsesStripImageGenerationEnabled;
+    }
     const anyBody = body as Record<string, unknown>;
     if (anyBody.postRefreshProbeEnabled !== undefined) updates.postRefreshProbeEnabled = anyBody.postRefreshProbeEnabled === true || anyBody.postRefreshProbeEnabled === 1;
     if (anyBody.postRefreshProbeModel !== undefined) updates.postRefreshProbeModel = String(anyBody.postRefreshProbeModel || '').trim();

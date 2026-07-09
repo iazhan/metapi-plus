@@ -51,6 +51,7 @@ let sqliteConnection: Database.Database | null = null;
 let mysqlPool: mysql.Pool | null = null;
 let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
+let proxyLogCompatibilityNotesColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
 let proxyLogStreamTimingColumnsAvailable: boolean | null = null;
@@ -620,6 +621,18 @@ function ensureProxyLogBillingDetailsSchema() {
   proxyLogBillingDetailsColumnAvailable = true;
 }
 
+function ensureProxyLogCompatibilityNotesSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'compatibility_notes')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN compatibility_notes text;');
+  }
+
+  proxyLogCompatibilityNotesColumnAvailable = true;
+}
+
 function ensureProxyLogDownstreamApiKeyIdSchema() {
   if (!tableExists('proxy_logs')) {
     return;
@@ -763,6 +776,72 @@ export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
     }
     proxyLogBillingDetailsColumnAvailable = false;
     console.warn('[db] failed to ensure proxy_logs.billing_details column', error);
+    return false;
+  }
+}
+
+export async function hasProxyLogCompatibilityNotesColumn(): Promise<boolean> {
+  if (proxyLogCompatibilityNotesColumnAvailable !== null) {
+    return proxyLogCompatibilityNotesColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogCompatibilityNotesColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'compatibility_notes');
+    return proxyLogCompatibilityNotesColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['compatibility_notes']);
+    proxyLogCompatibilityNotesColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogCompatibilityNotesColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'compatibility_notes'],
+  );
+  proxyLogCompatibilityNotesColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogCompatibilityNotesColumnAvailable;
+}
+
+export async function ensureProxyLogCompatibilityNotesColumn(): Promise<boolean> {
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogCompatibilityNotesSchema();
+    proxyLogCompatibilityNotesColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'compatibility_notes');
+    return proxyLogCompatibilityNotesColumnAvailable;
+  }
+
+  if (await hasProxyLogCompatibilityNotesColumn()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      await executeLegacyCompat(
+        (statement) => mysqlPool!.query(statement).then(() => undefined),
+        'ALTER TABLE `proxy_logs` ADD COLUMN `compatibility_notes` TEXT NULL',
+      );
+    } else {
+      if (!pgPool) return false;
+      await executeLegacyCompat(
+        (statement) => pgPool!.query(statement).then(() => undefined),
+        'ALTER TABLE "proxy_logs" ADD COLUMN "compatibility_notes" TEXT',
+      );
+    }
+    proxyLogCompatibilityNotesColumnAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogCompatibilityNotesColumnAvailable = true;
+      return true;
+    }
+    proxyLogCompatibilityNotesColumnAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs.compatibility_notes column', error);
     return false;
   }
 }
@@ -1103,6 +1182,7 @@ export async function ensureProxyLogStreamTimingColumns(): Promise<boolean> {
 
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
+  proxyLogCompatibilityNotesColumnAvailable = null;
   proxyLogDownstreamApiKeyIdColumnAvailable = null;
   proxyLogClientColumnsAvailable = null;
   proxyLogStreamTimingColumnsAvailable = null;
@@ -1366,6 +1446,7 @@ function initSqliteDb() {
   ensureRouteGroupingSchema();
   ensureDownstreamApiKeySchema();
   ensureProxyLogBillingDetailsSchema();
+  ensureProxyLogCompatibilityNotesSchema();
   ensureProxyLogClientSchema();
   ensureProxyVideoTaskSchema();
   ensureProxyFileSchema();

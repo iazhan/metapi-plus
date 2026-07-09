@@ -125,6 +125,37 @@ describe('upstreamRequestBuilder', () => {
     expect(request.body.store).toBe(false);
   });
 
+  it('strips Responses image generation declarations when the site compatibility switch is enabled', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'new-api',
+      siteUrl: 'https://example.com',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.2',
+        input: 'hello',
+        tools: [
+          { type: 'web_search_preview' },
+          { type: 'image_generation' },
+          { name: 'custom_image_generation_tool' },
+        ],
+      },
+      responsesStripImageGenerationEnabled: true,
+    });
+
+    expect(request.body.tools).toEqual([{ type: 'web_search_preview' }]);
+    expect(request.compatibilityNotes).toEqual({
+      responsesStripImageGeneration: {
+        enabled: true,
+        removed: 2,
+      },
+    });
+  });
+
   it('overrides downstream Accept so responses transport mode wins', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',

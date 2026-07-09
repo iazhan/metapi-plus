@@ -482,6 +482,14 @@ export type ProxyLogListItem = {
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCost?: number | null;
+  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
+};
+
+export type ProxyLogCompatibilityNotes = {
+  responsesStripImageGeneration?: {
+    enabled?: boolean;
+    removed?: number;
+  } | null;
 };
 
 export type ProxyLogDetail = ProxyLogListItem & {

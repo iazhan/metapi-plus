@@ -54,6 +54,7 @@ const BOOTSTRAP_OWNED_LEGACY_COLUMNS = [
   'downstream_api_keys.group_name',
   'downstream_api_keys.tags',
   'proxy_logs.billing_details',
+  'proxy_logs.compatibility_notes',
   'proxy_logs.is_stream',
   'proxy_logs.first_byte_latency_ms',
   'proxy_logs.client_family',

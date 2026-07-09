@@ -1371,6 +1371,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "compatibility_notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2112,6 +2118,12 @@
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": "0",
+          "primaryKey": false
+        },
+        "responses_strip_image_generation_enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
           "primaryKey": false
         }
       }

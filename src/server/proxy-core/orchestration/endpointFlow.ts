@@ -13,6 +13,12 @@ export type BuiltEndpointRequest = {
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  compatibilityNotes?: {
+    responsesStripImageGeneration?: {
+      enabled: boolean;
+      removed: number;
+    };
+  } | null;
   runtime?: {
     executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
     modelName?: string;
@@ -53,12 +59,14 @@ export type EndpointFlowResult =
     ok: true;
     upstream: Awaited<ReturnType<typeof fetch>>;
     upstreamPath: string;
+    request: BuiltEndpointRequest;
   }
   | {
     ok: false;
     status: number;
     errText: string;
     rawErrText?: string;
+    request?: BuiltEndpointRequest;
   };
 
 export type ExecuteEndpointFlowInput = {
@@ -111,6 +119,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   let finalStatus = 0;
   let finalErrText = 'unknown error';
   let finalRawErrText: string | undefined;
+  let finalRequest: BuiltEndpointRequest | undefined;
 
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
@@ -151,6 +160,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         ok: true,
         upstream: response,
         upstreamPath: request.path,
+        request,
       };
     }
 
@@ -176,6 +186,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status || 408;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalRequest = baseContext.request;
       if (input.disableCrossProtocolFallback) {
         break;
       }
@@ -207,6 +218,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
           ok: true,
           upstream: recovered.upstream,
           upstreamPath: recovered.upstreamPath,
+          request: recoveredRequest,
         };
       }
     }
@@ -226,6 +238,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalRequest = baseContext.request;
       break;
     }
     const shouldAbortRemainingEndpoints = !isLastEndpoint && !!input.shouldAbortRemainingEndpoints?.({
@@ -236,6 +249,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      finalRequest = baseContext.request;
       break;
     }
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
@@ -250,6 +264,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     finalStatus = response.status;
     finalErrText = errText;
     finalRawErrText = rawErrText;
+    finalRequest = baseContext.request;
     break;
   }
 
@@ -258,5 +273,6 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     status: finalStatus || 502,
     errText: finalErrText || 'unknown error',
     rawErrText: finalRawErrText,
+    request: finalRequest,
   };
 }

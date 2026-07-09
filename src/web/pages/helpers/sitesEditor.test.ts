@@ -26,6 +26,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        responsesStripImageGenerationEnabled: true,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -48,6 +49,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        responsesStripImageGenerationEnabled: true,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -69,6 +71,7 @@ describe('buildSiteSaveAction', () => {
         apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
+        responsesStripImageGenerationEnabled: false,
       },
     );
 
@@ -85,6 +88,7 @@ describe('buildSiteSaveAction', () => {
         apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
+        responsesStripImageGenerationEnabled: false,
       },
     });
   });
@@ -103,6 +107,7 @@ describe('buildSiteSaveAction', () => {
           apiEndpoints: [],
           customHeaders: '',
           globalWeight: 1,
+          responsesStripImageGenerationEnabled: false,
         },
       ),
     ).toThrow('editingSiteId is required in edit mode');
@@ -132,6 +137,7 @@ describe('buildSiteSaveAction', () => {
     expect(emptySiteForm().customHeaders).toEqual([emptySiteCustomHeader()]);
     expect(emptySiteForm().apiEndpoints).toEqual([emptySiteApiEndpoint()]);
     expect(emptySiteForm().proxyUrl).toBe('');
+    expect(emptySiteForm().responsesStripImageGenerationEnabled).toBe(false);
     expect(siteFormFromSite(legacySite)).not.toHaveProperty('apiKey');
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
@@ -144,6 +150,9 @@ describe('buildSiteSaveAction', () => {
         lastFailureReason: 'HTTP 502',
       },
     ]);
+    expect(siteFormFromSite({
+      responsesStripImageGenerationEnabled: true,
+    }).responsesStripImageGenerationEnabled).toBe(true);
   });
 
   it('parses custom headers json into key value rows', () => {

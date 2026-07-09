@@ -25,6 +25,7 @@ import { estimateRewardWithTodayIncomeFallback } from "../../services/todayIncom
 import {
   getProxyLogBaseSelectFields,
   parseProxyLogBillingDetails,
+  parseProxyLogCompatibilityNotes,
   withProxyLogSelectFields,
 } from "../../services/proxyLogStore.js";
 import {
@@ -570,7 +571,10 @@ function buildSiteAvailabilitySummaries(
 
 function mapProxyLogRow(
   row: {
-    proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+    proxy_logs: Record<string, unknown> & {
+      billingDetails?: string | null;
+      compatibilityNotes?: string | null;
+    };
     accounts: { username?: string | null } | null;
     sites: {
       id?: number | null;
@@ -594,6 +598,9 @@ function mapProxyLogRow(
   );
   return {
     ...row.proxy_logs,
+    compatibilityNotes: parseProxyLogCompatibilityNotes(
+      row.proxy_logs.compatibilityNotes,
+    ),
     isStream:
       row.proxy_logs.isStream == null ? null : Boolean(row.proxy_logs.isStream),
     firstByteLatencyMs:
@@ -757,7 +764,10 @@ export async function statsRoutes(app: FastifyInstance) {
       },
       { includeBillingDetails: false },
     )) as Array<{
-      proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+      proxy_logs: Record<string, unknown> & {
+        billingDetails?: string | null;
+        compatibilityNotes?: string | null;
+      };
       accounts: { username?: string | null } | null;
       sites: {
         id?: number | null;
@@ -1004,6 +1014,7 @@ export async function statsRoutes(app: FastifyInstance) {
         | {
             proxy_logs: Record<string, unknown> & {
               billingDetails?: string | null;
+              compatibilityNotes?: string | null;
             };
             accounts: { username?: string | null } | null;
             sites: {

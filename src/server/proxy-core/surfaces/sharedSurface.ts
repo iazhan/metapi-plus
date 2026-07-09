@@ -10,7 +10,7 @@ import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import { resolveProxyLogBilling } from '../../services/proxyBilling.js';
 import type { DownstreamClientContext } from '../downstreamClientContext.js';
-import { insertProxyLog } from '../../services/proxyLogStore.js';
+import { insertProxyLog, type ProxyLogCompatibilityNotes } from '../../services/proxyLogStore.js';
 import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
@@ -202,6 +202,7 @@ export async function writeSurfaceProxyLog(input: {
   totalTokens?: number | null;
   estimatedCost?: number;
   billingDetails?: unknown;
+  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
   upstreamPath?: string | null;
   usageSource?: 'upstream' | 'self-log' | 'unknown' | null;
   clientContext?: DownstreamClientContext | null;
@@ -237,6 +238,7 @@ export async function writeSurfaceProxyLog(input: {
       totalTokens: input.totalTokens ?? null,
       estimatedCost: input.estimatedCost ?? 0,
       billingDetails: input.billingDetails ?? null,
+      ...(input.compatibilityNotes ? { compatibilityNotes: input.compatibilityNotes } : {}),
       clientFamily: input.clientContext?.clientKind || null,
       clientAppId: input.clientContext?.clientAppId || null,
       clientAppName: input.clientContext?.clientAppName || null,
@@ -337,6 +339,7 @@ export async function recordSurfaceSuccess(input: {
   firstByteLatencyMs?: number | null;
   latencyMs: number;
   retryCount: number;
+  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
   upstreamPath?: string | null;
   logSuccess: (args: {
     selected: SurfaceSelectedChannel;
@@ -354,6 +357,7 @@ export async function recordSurfaceSuccess(input: {
     usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
     billingDetails?: unknown;
+    compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     upstreamPath?: string | null;
   }) => Promise<void>;
   recordDownstreamCost?: (estimatedCost: number) => void;
@@ -449,6 +453,7 @@ export async function recordSurfaceSuccess(input: {
     usageSource: resolvedUsage.usageSource,
     estimatedCost,
     billingDetails,
+    ...(input.compatibilityNotes ? { compatibilityNotes: input.compatibilityNotes } : {}),
     upstreamPath: input.upstreamPath,
   });
 
@@ -491,6 +496,7 @@ export function createSurfaceFailureToolkit(input: {
     usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
     billingDetails?: unknown;
+    compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     upstreamPath?: string | null;
   }) => {
     await writeSurfaceProxyLog({
@@ -511,6 +517,7 @@ export function createSurfaceFailureToolkit(input: {
       usageSource: args.usageSource,
       estimatedCost: args.estimatedCost,
       billingDetails: args.billingDetails,
+      compatibilityNotes: args.compatibilityNotes ?? null,
       upstreamPath: args.upstreamPath,
       clientContext: input.clientContext,
       downstreamApiKeyId: input.downstreamApiKeyId,
@@ -542,6 +549,7 @@ export function createSurfaceFailureToolkit(input: {
       firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     }): Promise<SurfaceFailureOutcome> {
       const rawErrText = args.rawErrText || args.errText;
       await tokenRouter.recordFailure(args.selected.channel.id, {
@@ -559,6 +567,7 @@ export function createSurfaceFailureToolkit(input: {
         latencyMs: args.latencyMs,
         errorMessage: args.errText,
         retryCount: args.retryCount,
+        compatibilityNotes: args.compatibilityNotes ?? null,
       });
       runBestEffort('record oauth quota reset hint', () => recordOauthQuotaResetHint({
         accountId: args.selected.account.id,
@@ -610,6 +619,7 @@ export function createSurfaceFailureToolkit(input: {
       completionTokens?: number | null;
       totalTokens?: number | null;
       upstreamPath?: string | null;
+      compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
         status: args.failure.status,
@@ -629,6 +639,7 @@ export function createSurfaceFailureToolkit(input: {
         promptTokens: args.promptTokens,
         completionTokens: args.completionTokens,
         totalTokens: args.totalTokens,
+        compatibilityNotes: args.compatibilityNotes ?? null,
         upstreamPath: args.upstreamPath,
       });
 
@@ -663,6 +674,7 @@ export function createSurfaceFailureToolkit(input: {
       firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
         errorText: args.errorMessage,
@@ -678,6 +690,7 @@ export function createSurfaceFailureToolkit(input: {
         latencyMs: args.latencyMs,
         errorMessage: args.errorMessage,
         retryCount: args.retryCount,
+        compatibilityNotes: args.compatibilityNotes ?? null,
       });
 
       const retry = maybeRetry(args.retryCount);
@@ -715,6 +728,7 @@ export function createSurfaceFailureToolkit(input: {
       upstreamPath?: string | null;
       httpStatus?: number;
       runtimeFailureStatus?: number | null;
+      compatibilityNotes?: ProxyLogCompatibilityNotes | null;
     }) {
       const errorMessage = args.errorMessage || 'stream processing failed';
       if (typeof args.runtimeFailureStatus === 'number') {
@@ -742,6 +756,7 @@ export function createSurfaceFailureToolkit(input: {
         promptTokens: args.promptTokens,
         completionTokens: args.completionTokens,
         totalTokens: args.totalTokens,
+        compatibilityNotes: args.compatibilityNotes ?? null,
         upstreamPath: args.upstreamPath,
       });
     },

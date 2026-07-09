@@ -107,6 +107,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function getRequestCompatibilityNotes(request?: BuiltEndpointRequest | null) {
+  return request?.compatibilityNotes ?? null;
+}
+
+function getErrorCompatibilityNotes(error: unknown): BuiltEndpointRequest['compatibilityNotes'] | null {
+  if (!isRecord(error)) return null;
+  return isRecord(error.compatibilityNotes)
+    ? error.compatibilityNotes as BuiltEndpointRequest['compatibilityNotes']
+    : null;
+}
+
 function getCodexSessionHeaderValue(headers: Record<string, string>): string {
   const normalizedEntries = Object.entries(headers).map(([rawKey, rawValue]) => [
     rawKey.trim().toLowerCase(),
@@ -567,6 +578,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             openaiBody: openAiBody,
             downstreamFormat: 'responses',
             responsesOriginalBody,
+            responsesStripImageGenerationEnabled: selected.site.responsesStripImageGenerationEnabled === true,
             downstreamHeaders: request.headers as Record<string, unknown>,
             providerHeaders: buildProviderHeaders(),
             codexExplicitSessionId: codexSessionId || null,
@@ -596,6 +608,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             headers: requestHeaders,
             body: requestBody,
             runtime: endpointRequest.runtime,
+            compatibilityNotes: endpointRequest.compatibilityNotes,
           };
         };
         const baseDispatchRequest = createSurfaceDispatchRequest({
@@ -808,6 +821,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               latencyMs: Date.now() - startTime,
               errorMessage: ctx.errText,
               retryCount,
+              compatibilityNotes: getRequestCompatibilityNotes(ctx.request),
             });
           },
         });
@@ -859,8 +873,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
             const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
               status: result.status || 502,
               rawErrText: result.rawErrText || result.errText || 'unknown error',
-            }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
+            }) as SiteApiEndpointRequestError & {
+              siteApiEndpointUpstreamFailure?: boolean;
+              compatibilityNotes?: BuiltEndpointRequest['compatibilityNotes'];
+            };
             upstreamFailure.siteApiEndpointUpstreamFailure = true;
+            upstreamFailure.compatibilityNotes = getRequestCompatibilityNotes(result.request);
             throw upstreamFailure;
           }
           return result;
@@ -868,6 +886,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
         const upstream = endpointResult.upstream;
         const successfulUpstreamPath = endpointResult.upstreamPath;
+        const compatibilityNotes = getRequestCompatibilityNotes(endpointResult.request);
         const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
         const finalizeStreamSuccess = async (
           parsedUsage: UsageSummary,
@@ -889,6 +908,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               latencyMs: latency,
               retryCount,
               upstreamPath: successfulUpstreamPath,
+              compatibilityNotes,
               logSuccess: failureToolkit.log,
               recordDownstreamCost: (estimatedCost) => {
                 recordDownstreamCostUsage(request, estimatedCost);
@@ -975,6 +995,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   completionTokens: parsedUsage.completionTokens,
                   totalTokens: parsedUsage.totalTokens,
                   upstreamPath: successfulUpstreamPath,
+                  compatibilityNotes,
                 });
                 await finalizeDebugFailure(502, {
                   error: {
@@ -1030,6 +1051,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 completionTokens: parsedUsage.completionTokens,
                 totalTokens: parsedUsage.totalTokens,
                 upstreamPath: successfulUpstreamPath,
+                compatibilityNotes,
 	              });
 	              const terminalFailureOutcome = failureOutcome.action === 'retry'
 	                ? (canRetryChannelSelection(retryCount, forcedChannelId)
@@ -1067,6 +1089,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 totalTokens: parsedUsage.totalTokens,
                 upstreamPath: successfulUpstreamPath,
                 runtimeFailureStatus: 502,
+                compatibilityNotes,
               });
               await finalizeDebugFailure(502, {
                 error: {
@@ -1152,6 +1175,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   totalTokens: parsedUsage.totalTokens,
                   upstreamPath: successfulUpstreamPath,
                   runtimeFailureStatus: 502,
+                  compatibilityNotes,
                 });
                 await finalizeDebugFailure(502, {
                   error: {
@@ -1218,6 +1242,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               totalTokens: parsedUsage.totalTokens,
               upstreamPath: successfulUpstreamPath,
               runtimeFailureStatus: 502,
+              compatibilityNotes,
             });
             await finalizeDebugFailure(502, {
               error: {
@@ -1298,6 +1323,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             completionTokens: parsedUsage.completionTokens,
             totalTokens: parsedUsage.totalTokens,
             upstreamPath: successfulUpstreamPath,
+            compatibilityNotes,
 	          });
 	          const terminalFailureOutcome = failureOutcome.action === 'retry'
 	            ? (canRetryChannelSelection(retryCount, forcedChannelId)
@@ -1340,6 +1366,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             latencyMs: latency,
             retryCount,
             upstreamPath: successfulUpstreamPath,
+            compatibilityNotes,
             logSuccess: failureToolkit.log,
             recordDownstreamCost: (estimatedCost) => {
               recordDownstreamCostUsage(request, estimatedCost);
@@ -1375,6 +1402,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             || (endpointFailureStatus !== null && endpointFailureStatus >= 500)
           );
           if (isSiteApiEndpointFailure) {
+            const compatibilityNotes = getErrorCompatibilityNotes(err);
             const failureOutcome = await failureToolkit.handleUpstreamFailure({
               selected,
           requestedModel,
@@ -1385,6 +1413,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
+          compatibilityNotes,
         });
             const terminalFailureOutcome = failureOutcome.action === 'retry'
               ? (canRetryChannelSelection(retryCount, forcedChannelId)

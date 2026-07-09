@@ -57,6 +57,11 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
+      expect(result.request).toMatchObject({
+        endpoint: 'responses',
+        path: '/v1/responses',
+        body: { model: 'gpt-5.2', input: 'hello' },
+      });
     }
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/v1/responses');
     expect(fetchMock).toHaveBeenCalledTimes(1);

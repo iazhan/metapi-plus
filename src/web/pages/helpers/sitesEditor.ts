@@ -21,6 +21,7 @@ export type SiteForm = {
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
   globalWeight: string;
+  responsesStripImageGenerationEnabled: boolean;
 };
 
 export type SiteEditorState =
@@ -42,6 +43,7 @@ export type SiteSavePayload = {
   }>;
   customHeaders: string;
   globalWeight: number;
+  responsesStripImageGenerationEnabled: boolean;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -80,6 +82,7 @@ export function emptySiteForm(): SiteForm {
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
     globalWeight: '1',
+    responsesStripImageGenerationEnabled: false,
   };
 }
 
@@ -135,6 +138,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
+  responsesStripImageGenerationEnabled?: boolean | null;
   apiEndpoints?: Array<{
     url?: string | null;
     enabled?: boolean | null;
@@ -156,6 +160,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     globalWeight,
+    responsesStripImageGenerationEnabled: site.responsesStripImageGenerationEnabled === true,
   };
 }
 

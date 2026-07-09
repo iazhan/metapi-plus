@@ -59,6 +59,7 @@ describe('backupService', () => {
       externalCheckinUrl: 'https://checkin.roundtrip.example.com',
       proxyUrl: 'http://127.0.0.1:8080',
       useSystemProxy: true,
+      responsesStripImageGenerationEnabled: true,
       customHeaders: JSON.stringify({
         'cf-access-client-id': 'roundtrip-client',
       }),
@@ -249,6 +250,7 @@ describe('backupService', () => {
     expect(exported.accounts.accounts[0]).not.toHaveProperty('balanceUsed');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastCheckinAt');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastBalanceRefresh');
+    expect(exported.accounts.sites[0].responsesStripImageGenerationEnabled).toBe(true);
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('lastUsedAt');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedCost');
@@ -273,6 +275,7 @@ describe('backupService', () => {
     expect(restoredSite?.proxyUrl).toBe('http://127.0.0.1:8080');
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
     expect(restoredSite?.useSystemProxy).toBe(true);
+    expect(restoredSite?.responsesStripImageGenerationEnabled).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);

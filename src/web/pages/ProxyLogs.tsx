@@ -14,6 +14,7 @@ import {
   type ProxyDebugTraceListItem,
   type ProxyLogBillingDetails,
   type ProxyLogClientOption,
+  type ProxyLogCompatibilityNotes,
   type ProxyLogDetail,
   type ProxyLogListItem,
   type ProxyLogsSummary,
@@ -40,6 +41,7 @@ type ProxyLogRenderItem = ProxyLogListItem & {
   siteName?: string | null;
   siteUrl?: string | null;
   errorMessage?: string | null;
+  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
 };
 
 type ProxyLogDetailState = {
@@ -327,10 +329,69 @@ function formatPerMillionPrice(value: number) {
   return `$${formatCompactNumber(value)} / 1M tokens`;
 }
 
-function formatBillingDetailSummary(log: ProxyLogRenderItem) {
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function getCompleteBillingDetails(
+  log: ProxyLogRenderItem,
+): NonNullable<ProxyLogBillingDetails> | null {
   const detail = log.billingDetails;
   if (!detail) return null;
+  if (!detail.usage || !detail.pricing || !detail.breakdown) return null;
+
+  const requiredNumbers = [
+    detail.usage.promptTokens,
+    detail.usage.completionTokens,
+    detail.usage.totalTokens,
+    detail.usage.cacheReadTokens,
+    detail.usage.cacheCreationTokens,
+    detail.usage.billablePromptTokens,
+    detail.pricing.modelRatio,
+    detail.pricing.completionRatio,
+    detail.pricing.cacheRatio,
+    detail.pricing.cacheCreationRatio,
+    detail.pricing.groupRatio,
+    detail.breakdown.inputPerMillion,
+    detail.breakdown.outputPerMillion,
+    detail.breakdown.cacheReadPerMillion,
+    detail.breakdown.cacheCreationPerMillion,
+    detail.breakdown.inputCost,
+    detail.breakdown.outputCost,
+    detail.breakdown.cacheReadCost,
+    detail.breakdown.cacheCreationCost,
+    detail.breakdown.totalCost,
+  ];
+
+  return requiredNumbers.every(isFiniteNumber) ? detail : null;
+}
+
+function formatBillingDetailSummary(log: ProxyLogRenderItem) {
+  const detail = getCompleteBillingDetails(log);
+  if (!detail) return null;
   return `模型倍率 ${formatCompactNumber(detail.pricing.modelRatio)}，输出倍率 ${formatCompactNumber(detail.pricing.completionRatio)}，缓存倍率 ${formatCompactNumber(detail.pricing.cacheRatio)}，缓存创建倍率 ${formatCompactNumber(detail.pricing.cacheCreationRatio)}，分组倍率 ${formatCompactNumber(detail.pricing.groupRatio)}`;
+}
+
+function getResponsesCompatibilityNote(log: ProxyLogRenderItem) {
+  const note = log.compatibilityNotes?.responsesStripImageGeneration;
+  if (!note || note.enabled !== true) return null;
+  return note;
+}
+
+function formatCompatibilityBadgeLabel(log: ProxyLogRenderItem) {
+  return getResponsesCompatibilityNote(log) ? "Codex兼容" : null;
+}
+
+function formatCompatibilityDetailText(log: ProxyLogRenderItem) {
+  const note = getResponsesCompatibilityNote(log);
+  if (!note) return null;
+  const removed = typeof note.removed === "number" && note.removed > 0
+    ? Math.trunc(note.removed)
+    : 0;
+  if (removed > 0) {
+    return `Codex 兼容：移除 ${removed} 项 image generation 声明`;
+  }
+  return "Codex 兼容：已开启，本次无需处理";
 }
 
 function formatProxyLogUsageSource(
@@ -358,7 +419,7 @@ function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
 }
 
 function buildBillingProcessLines(log: ProxyLogRenderItem) {
-  const detail = log.billingDetails;
+  const detail = getCompleteBillingDetails(log);
   if (!detail) return [];
 
   const lines = [
@@ -2619,6 +2680,10 @@ export default function ProxyLogs() {
               const firstByteLabel = formatFirstByteLabel(
                 detailLog.firstByteLatencyMs,
               );
+              const compatibilityBadgeLabel =
+                formatCompatibilityBadgeLabel(detailLog);
+              const compatibilityDetailText =
+                formatCompatibilityDetailText(detailLog);
 
               return (
                 <MobileCard
@@ -2691,6 +2756,14 @@ export default function ProxyLogs() {
                         }}
                       >
                         {firstByteLabel}
+                      </span>
+                    ) : null}
+                    {compatibilityBadgeLabel ? (
+                      <span
+                        className="badge badge-muted"
+                        style={{ fontSize: 10 }}
+                      >
+                        {compatibilityBadgeLabel}
                       </span>
                     ) : null}
                   </div>
@@ -2776,6 +2849,11 @@ export default function ProxyLogs() {
                           {billingDetailSummary}
                         </div>
                       )}
+                      {compatibilityDetailText && (
+                        <div style={{ color: "var(--color-text-muted)" }}>
+                          {compatibilityDetailText}
+                        </div>
+                      )}
                       <MobileField
                         label="客户端详情"
                         value={renderProxyLogClientCell(detailLog, {
@@ -2854,6 +2932,12 @@ export default function ProxyLogs() {
                 const firstByteLabel = formatFirstByteLabel(
                   detailLog.firstByteLatencyMs,
                 );
+                const compatibilityBadgeLabel =
+                  formatCompatibilityBadgeLabel(detailLog);
+                const compatibilityDetailText =
+                  formatCompatibilityDetailText(detailLog);
+                const completeBillingDetails =
+                  getCompleteBillingDetails(detailLog);
 
                 return (
                   <React.Fragment key={log.id}>
@@ -2924,7 +3008,9 @@ export default function ProxyLogs() {
                               {downstreamKeySummary}
                             </div>
                           ) : null}
-                          {streamModeLabel || firstByteLabel ? (
+                          {streamModeLabel ||
+                          firstByteLabel ||
+                          compatibilityBadgeLabel ? (
                             <div
                               style={{
                                 display: "flex",
@@ -2932,6 +3018,14 @@ export default function ProxyLogs() {
                                 flexWrap: "wrap",
                               }}
                             >
+                              {compatibilityBadgeLabel ? (
+                                <span
+                                  className="badge badge-muted"
+                                  style={{ fontSize: 10 }}
+                                >
+                                  {compatibilityBadgeLabel}
+                                </span>
+                              ) : null}
                               {streamModeLabel ? (
                                 <span
                                   className="badge badge-muted"
@@ -3223,6 +3317,15 @@ export default function ProxyLogs() {
                                         {billingDetailSummary}
                                       </div>
                                     )}
+                                    {compatibilityDetailText && (
+                                      <div
+                                        style={{
+                                          color: "var(--color-text-muted)",
+                                        }}
+                                      >
+                                        {compatibilityDetailText}
+                                      </div>
+                                    )}
                                     <div
                                       style={{
                                         color: "var(--color-text-muted)",
@@ -3267,8 +3370,8 @@ export default function ProxyLogs() {
                                   </div>
                                 </div>
 
-                                {detailLog.billingDetails &&
-                                  detailLog.billingDetails.usage
+                                {completeBillingDetails &&
+                                  completeBillingDetails.usage
                                     .cacheReadTokens > 0 && (
                                     <div style={{ display: "flex", gap: 6 }}>
                                       <span
@@ -3281,13 +3384,13 @@ export default function ProxyLogs() {
                                         缓存 Tokens
                                       </span>
                                       <span>
-                                        {detailLog.billingDetails.usage.cacheReadTokens.toLocaleString()}
+                                        {completeBillingDetails.usage.cacheReadTokens.toLocaleString()}
                                       </span>
                                     </div>
                                   )}
 
-                                {detailLog.billingDetails &&
-                                  detailLog.billingDetails.usage
+                                {completeBillingDetails &&
+                                  completeBillingDetails.usage
                                     .cacheCreationTokens > 0 && (
                                     <div style={{ display: "flex", gap: 6 }}>
                                       <span
@@ -3300,7 +3403,7 @@ export default function ProxyLogs() {
                                         缓存创建 Tokens
                                       </span>
                                       <span>
-                                        {detailLog.billingDetails.usage.cacheCreationTokens.toLocaleString()}
+                                        {completeBillingDetails.usage.cacheCreationTokens.toLocaleString()}
                                       </span>
                                     </div>
                                   )}
@@ -3342,7 +3445,7 @@ export default function ProxyLogs() {
                                     </div>
                                   ) : (
                                     <span>
-                                      输入{" "}
+                                      无详细计费拆分；输入{" "}
                                       {formatProxyLogTokenValue(
                                         detailLog.promptTokens,
                                       )}{" "}

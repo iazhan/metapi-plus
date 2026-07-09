@@ -356,6 +356,12 @@ describe('selectSurfaceChannelForAttempt', () => {
       totalTokens: 15,
       estimatedCost: 0.42,
       billingDetails: { source: 'test' },
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      },
       upstreamPath: '/v1/responses',
       usageSource: 'self-log',
       clientContext: {
@@ -395,6 +401,12 @@ describe('selectSurfaceChannelForAttempt', () => {
       totalTokens: 15,
       estimatedCost: 0.42,
       billingDetails: { source: 'test' },
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: 2,
+        },
+      },
       clientFamily: 'codex',
       clientAppId: 'app-id',
       clientAppName: 'App',

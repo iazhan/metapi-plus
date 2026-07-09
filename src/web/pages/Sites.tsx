@@ -62,6 +62,7 @@ type SiteRow = {
   status?: string;
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
+  responsesStripImageGenerationEnabled?: boolean;
   customHeaders?: string | null;
   globalWeight?: number;
   isPinned?: boolean;
@@ -763,6 +764,7 @@ export default function Sites() {
       initializationPresetId: selectedInitializationPresetId,
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
+      responsesStripImageGenerationEnabled: !!form.responsesStripImageGenerationEnabled,
       apiEndpoints: serializedApiEndpoints.apiEndpoints,
       customHeaders: serializedCustomHeaders.customHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
@@ -1919,6 +1921,33 @@ export default function Sites() {
                 onChange={(e) => setForm((prev) => ({ ...prev, useSystemProxy: e.target.checked }))}
               />
               使用系统代理
+            </label>
+            <label style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              padding: '10px 14px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 13,
+              background: 'var(--color-bg)',
+              color: 'var(--color-text-primary)',
+            }}>
+              <input
+                type="checkbox"
+                checked={form.responsesStripImageGenerationEnabled}
+                onChange={(e) => setForm((prev) => ({
+                  ...prev,
+                  responsesStripImageGenerationEnabled: e.target.checked,
+                }))}
+                style={{ marginTop: 2 }}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span>Codex Responses 兼容模式</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                  开启后，转发 /v1/responses 前移除 image generation 相关工具声明。
+                </span>
+              </span>
             </label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <input

@@ -20,6 +20,7 @@ import {
   getInputHeader,
   headerValueToString,
 } from '../proxy-core/providers/headerUtils.js';
+import { stripResponsesImageGenerationTools } from '../proxy-core/responsesCompatibility.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -415,6 +416,7 @@ export function buildUpstreamEndpointRequest(input: {
   claudeOriginalBody?: Record<string, unknown>;
   forceNormalizeClaudeBody?: boolean;
   responsesOriginalBody?: Record<string, unknown>;
+  responsesStripImageGenerationEnabled?: boolean;
   downstreamHeaders?: Record<string, unknown>;
   providerHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
@@ -423,6 +425,12 @@ export function buildUpstreamEndpointRequest(input: {
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  compatibilityNotes?: {
+    responsesStripImageGeneration?: {
+      enabled: boolean;
+      removed: number;
+    };
+  } | null;
   runtime?: {
     executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
     modelName?: string;
@@ -562,6 +570,31 @@ export function buildUpstreamEndpointRequest(input: {
       protocol: sitePlatform,
     }) as T
   );
+  const applyResponsesStripImageGenerationCompatibility = (body: Record<string, unknown>): {
+    body: Record<string, unknown>;
+    compatibilityNotes?: {
+      responsesStripImageGeneration: {
+        enabled: boolean;
+        removed: number;
+      };
+    };
+  } => {
+    if (input.responsesStripImageGenerationEnabled !== true) {
+      return { body };
+    }
+    const stripped = stripResponsesImageGenerationTools(body);
+    return {
+      body: stripped.body && typeof stripped.body === 'object' && !Array.isArray(stripped.body)
+        ? stripped.body as Record<string, unknown>
+        : body,
+      compatibilityNotes: {
+        responsesStripImageGeneration: {
+          enabled: true,
+          removed: stripped.removed,
+        },
+      },
+    };
+  };
 
   if (isInternalGeminiUpstream) {
     const instructions = (
@@ -718,29 +751,33 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
+    const responsesCompatibility = applyResponsesStripImageGenerationCompatibility(configuredResponsesBody);
 
     if (sitePlatform === 'codex') {
       if (providerProfile?.id !== 'codex') {
         throw new Error(`missing codex provider profile for platform: ${sitePlatform}`);
       }
-      return providerProfile.prepareRequest({
-        endpoint: 'responses',
-        modelName: input.modelName,
-        stream: input.stream,
-        tokenValue: input.tokenValue,
-        oauthProvider: input.oauthProvider,
-        oauthProjectId: input.oauthProjectId,
-        sitePlatform,
-        baseHeaders: {
-          ...commonHeaders,
-          ...responsesHeaders,
-        },
-        providerHeaders: input.providerHeaders,
-        codexSessionCacheKey: input.codexSessionCacheKey,
-        codexExplicitSessionId: input.codexExplicitSessionId,
-        responsesWebsocketTransport,
-        body: configuredResponsesBody,
-      });
+      return {
+        ...providerProfile.prepareRequest({
+          endpoint: 'responses',
+          modelName: input.modelName,
+          stream: input.stream,
+          tokenValue: input.tokenValue,
+          oauthProvider: input.oauthProvider,
+          oauthProjectId: input.oauthProjectId,
+          sitePlatform,
+          baseHeaders: {
+            ...commonHeaders,
+            ...responsesHeaders,
+          },
+          providerHeaders: input.providerHeaders,
+          codexSessionCacheKey: input.codexSessionCacheKey,
+          codexExplicitSessionId: input.codexExplicitSessionId,
+          responsesWebsocketTransport,
+          body: responsesCompatibility.body,
+        }),
+        compatibilityNotes: responsesCompatibility.compatibilityNotes,
+      };
     }
 
     const headers = ensureResponsesAcceptHeader({
@@ -753,7 +790,8 @@ export function buildUpstreamEndpointRequest(input: {
     return {
       path: resolveEndpointPath('responses'),
       headers,
-      body: configuredResponsesBody,
+      body: responsesCompatibility.body,
+      compatibilityNotes: responsesCompatibility.compatibilityNotes,
       runtime,
     };
   }
