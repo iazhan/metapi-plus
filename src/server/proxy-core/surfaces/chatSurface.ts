@@ -357,49 +357,6 @@ export async function handleChatSurfaceRequest(
     const modelName = selected.actualModel || requestedModel;
     const oauth = getOauthInfoFromAccount(selected.account);
     const isCodexSite = String(selected.site.platform || '').trim().toLowerCase() === 'codex';
-    let endpointCandidates = [
-      ...await resolveUpstreamEndpointCandidates(
-        {
-          site: selected.site,
-          account: selected.account,
-        },
-        modelName,
-        downstreamFormat,
-        requestedModel,
-        {
-          hasNonImageFileInput,
-          conversationFileSummary,
-          wantsContinuationAwareResponses,
-        },
-        {
-          oauthProvider: oauth?.provider,
-        },
-      ),
-    ];
-    const endpointRuntimeContext = {
-      siteId: selected.site.id,
-      modelName,
-      downstreamFormat,
-      requestedModelHint: requestedModel,
-      requestCapabilities: {
-        hasNonImageFileInput,
-        conversationFileSummary,
-        wantsContinuationAwareResponses,
-      },
-    };
-    await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
-      endpointCandidates,
-      endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
-      decisionSummary: {
-        retryCount,
-        downstreamFormat,
-        stickySessionKey,
-        stickyPreferredChannelId,
-        oauthProvider: oauth?.provider || null,
-        isCodexSite,
-        wantsContinuationAwareResponses,
-      },
-    });
     const buildProviderHeaders = () => (
       buildOauthProviderHeaders({
         account: selected.account,
@@ -407,6 +364,52 @@ export async function handleChatSurfaceRequest(
       })
     );
     const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
+      let endpointCandidates = [
+        ...await resolveUpstreamEndpointCandidates(
+          {
+            site: {
+              ...selected.site,
+              url: siteApiBaseUrl,
+            },
+            account: selected.account,
+          },
+          modelName,
+          downstreamFormat,
+          requestedModel,
+          {
+            hasNonImageFileInput,
+            conversationFileSummary,
+            wantsContinuationAwareResponses,
+          },
+          {
+            oauthProvider: oauth?.provider,
+          },
+        ),
+      ];
+      const endpointRuntimeContext = {
+        siteId: selected.site.id,
+        modelName,
+        downstreamFormat,
+        requestedModelHint: requestedModel,
+        requestCapabilities: {
+          hasNonImageFileInput,
+          conversationFileSummary,
+          wantsContinuationAwareResponses,
+        },
+      };
+      await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
+        endpointCandidates,
+        endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
+        decisionSummary: {
+          retryCount,
+          downstreamFormat,
+          stickySessionKey,
+          stickyPreferredChannelId,
+          oauthProvider: oauth?.provider || null,
+          isCodexSite,
+          wantsContinuationAwareResponses,
+        },
+      });
       const forceResponsesUpstreamStream = shouldForceResponsesUpstreamStream({
         sitePlatform: selected.site.platform,
         isCompactRequest: false,

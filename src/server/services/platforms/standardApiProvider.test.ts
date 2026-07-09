@@ -32,6 +32,9 @@ describe('standardApiProvider helpers', () => {
     expect(resolveVersionedModelsUrl('https://api.example.com')).toBe('https://api.example.com/v1/models');
     expect(resolveVersionedModelsUrl('https://api.example.com/v1')).toBe('https://api.example.com/v1/models');
     expect(resolveVersionedModelsUrl('https://api.example.com/v1beta')).toBe('https://api.example.com/v1beta/models');
+    expect(resolveVersionedModelsUrl('https://ark.cn-beijing.volces.com/api/coding/v3')).toBe(
+      'https://ark.cn-beijing.volces.com/api/coding/v3/models',
+    );
   });
 
   it('provides shared unsupported login/checkin and zero-balance defaults', async () => {

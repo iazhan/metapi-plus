@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
 import { config } from '../../config.js';
-import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
+import {
+  recordUpstreamEndpointSuccess,
+  resetUpstreamEndpointRuntimeState,
+} from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -240,5 +243,88 @@ describe('chat proxy site api endpoint rotation', () => {
     });
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]?.lastSelectedAt).toBeTruthy();
+  });
+
+  it('uses Coding Plan endpoint capabilities from the selected api endpoint base url', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'custom-panel',
+      url: 'https://console.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'doubao-user',
+      accessToken: '',
+      apiToken: 'sk-doubao',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    selectChannelMock.mockReturnValue({
+      channel: { id: 31, routeId: 32 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-doubao',
+      actualModel: 'ark-code-latest',
+    });
+    selectNextChannelMock.mockReturnValue(null);
+
+    recordUpstreamEndpointSuccess({
+      siteId: site.id,
+      endpoint: 'responses',
+      downstreamFormat: 'openai',
+      modelName: 'ark-code-latest',
+    });
+
+    fetchMock.mockImplementation(async (rawUrl: unknown) => {
+      const url = String(rawUrl || '');
+      if (url === 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions') {
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-doubao-ok',
+          object: 'chat.completion',
+          created: 1_706_000_000,
+          model: 'ark-code-latest',
+          choices: [{
+            index: 0,
+            message: { role: 'assistant', content: 'ok via doubao coding plan' },
+            finish_reason: 'stop',
+          }],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        error: { message: 'unexpected endpoint', type: 'invalid_request_error' },
+      }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'ark-code-latest',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()?.choices?.[0]?.message?.content).toBe('ok via doubao coding plan');
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions');
   });
 });

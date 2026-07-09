@@ -461,67 +461,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
       const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
         || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
-      const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
-        ? await resolveUpstreamEndpointCandidates(
-          {
-            site: selected.site,
-            account: selected.account,
-          },
-          modelName,
-          'responses',
-          requestedModel,
-          {
-            hasNonImageFileInput,
-            conversationFileSummary,
-            wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
-          },
-          {
-            requestKind: 'responses-compact',
-            requiresNativeResponsesFileUrl,
-          },
-        )
-        : await resolveUpstreamEndpointCandidates(
-          {
-            site: selected.site,
-            account: selected.account,
-          },
-          modelName,
-          'responses',
-          requestedModel,
-          {
-            hasNonImageFileInput,
-            conversationFileSummary,
-            wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
-          },
-          {
-            requiresNativeResponsesFileUrl,
-          },
-        );
-      const endpointRuntimeContext = {
-        siteId: selected.site.id,
-        modelName,
-        downstreamFormat: 'responses' as const,
-        requestedModelHint: requestedModel,
-        requestCapabilities: {
-          hasNonImageFileInput,
-          conversationFileSummary,
-          wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
-        },
-      };
-      await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
-        endpointCandidates,
-        endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
-        decisionSummary: {
-          retryCount,
-          downstreamFormat: 'responses',
-          stickySessionKey,
-          stickyPreferredChannelId,
-          oauthProvider: oauth?.provider || null,
-          isCodexSite,
-          requiresNativeResponsesFileUrl,
-          isCompactRequest,
-        },
-      });
       const buildProviderHeaders = () => (
         buildOauthProviderHeaders({
           account: selected.account,
@@ -529,6 +468,73 @@ export async function handleOpenAiResponsesSurfaceRequest(
         })
       );
       const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
+        const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
+          ? await resolveUpstreamEndpointCandidates(
+            {
+              site: {
+                ...selected.site,
+                url: siteApiBaseUrl,
+              },
+              account: selected.account,
+            },
+            modelName,
+            'responses',
+            requestedModel,
+            {
+              hasNonImageFileInput,
+              conversationFileSummary,
+              wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+            },
+            {
+              requestKind: 'responses-compact',
+              requiresNativeResponsesFileUrl,
+            },
+          )
+          : await resolveUpstreamEndpointCandidates(
+            {
+              site: {
+                ...selected.site,
+                url: siteApiBaseUrl,
+              },
+              account: selected.account,
+            },
+            modelName,
+            'responses',
+            requestedModel,
+            {
+              hasNonImageFileInput,
+              conversationFileSummary,
+              wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+            },
+            {
+              requiresNativeResponsesFileUrl,
+            },
+          );
+        const endpointRuntimeContext = {
+          siteId: selected.site.id,
+          modelName,
+          downstreamFormat: 'responses' as const,
+          requestedModelHint: requestedModel,
+          requestCapabilities: {
+            hasNonImageFileInput,
+            conversationFileSummary,
+            wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+          },
+        };
+        await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
+          endpointCandidates,
+          endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
+          decisionSummary: {
+            retryCount,
+            downstreamFormat: 'responses',
+            stickySessionKey,
+            stickyPreferredChannelId,
+            oauthProvider: oauth?.provider || null,
+            isCodexSite,
+            requiresNativeResponsesFileUrl,
+            isCompactRequest,
+          },
+        });
         const forceResponsesUpstreamStream = shouldForceResponsesUpstreamStream({
           sitePlatform: selected.site.platform,
           isCompactRequest,

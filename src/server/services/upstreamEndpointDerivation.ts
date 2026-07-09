@@ -39,6 +39,35 @@ function normalizePlatformName(platform: unknown): string {
   return asTrimmedString(platform).toLowerCase();
 }
 
+function normalizeUrlPathname(pathname: string): string {
+  let normalized = pathname.trim().toLowerCase();
+  if (!normalized || normalized === '/') return '/';
+  if (!normalized.startsWith('/')) normalized = `/${normalized}`;
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function isOpenAiCodingPlanEndpoint(sitePlatform: unknown, siteUrl: unknown): boolean {
+  if (normalizePlatformName(sitePlatform) !== 'openai') return false;
+  const raw = asTrimmedString(siteUrl);
+  if (!raw) return false;
+
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    const host = parsed.hostname.toLowerCase();
+    const path = normalizeUrlPathname(parsed.pathname);
+    return (
+      (host === 'coding.dashscope.aliyuncs.com' && (path === '/' || path === '/v1'))
+      || (host === 'open.bigmodel.cn' && path === '/api/coding/paas/v4')
+      || (host === 'ark.cn-beijing.volces.com' && path === '/api/coding/v3')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function normalizeEndpointTypes(value: unknown): UpstreamEndpoint[] {
   const raw = asTrimmedString(value).toLowerCase();
   if (!raw) return [];
@@ -171,12 +200,15 @@ export async function resolveUpstreamEndpointCandidates(
   const hasNonImageFileInput = capabilityProfile.hasNonImageFileInput;
   const wantsNativeResponsesReasoning = capabilityProfile.wantsNativeResponsesReasoning;
   const wantsContinuationAwareResponses = capabilityProfile.wantsContinuationAwareResponses;
+  const isCodingPlanOpenAiEndpoint = isOpenAiCodingPlanEndpoint(context.site.platform, context.site.url);
   const applyRuntimePreference = (candidates: UpstreamEndpoint[]) => (
-    applyUpstreamEndpointRuntimePreference(candidates, {
-      siteId: context.site.id,
-      downstreamFormat,
-      capabilityProfile,
-    })
+    isCodingPlanOpenAiEndpoint
+      ? candidates
+      : applyUpstreamEndpointRuntimePreference(candidates, {
+        siteId: context.site.id,
+        downstreamFormat,
+        capabilityProfile,
+      })
   );
   const finalizeCandidates = (candidates: UpstreamEndpoint[]): UpstreamEndpoint[] => {
     const preferredCandidates = applyRuntimePreference(candidates);
@@ -216,6 +248,7 @@ export async function resolveUpstreamEndpointCandidates(
       if (sitePlatform === 'gemini') return ['responses', 'chat'] as UpstreamEndpoint[];
       if (sitePlatform === 'gemini-cli') return ['chat'] as UpstreamEndpoint[];
       if (sitePlatform === 'antigravity') return ['messages'] as UpstreamEndpoint[];
+      if (isCodingPlanOpenAiEndpoint) return ['chat', 'responses', 'messages'] as UpstreamEndpoint[];
       if (sitePlatform === 'openai') return ['responses', 'chat', 'messages'] as UpstreamEndpoint[];
       return rankConversationFileEndpoints({
         sitePlatform,
@@ -226,7 +259,9 @@ export async function resolveUpstreamEndpointCandidates(
         preferMessagesForClaudeModel,
       });
     })()
-    : preferred;
+    : isCodingPlanOpenAiEndpoint
+      ? (['chat', 'responses', 'messages'] as UpstreamEndpoint[])
+      : preferred;
   const prioritizedPreferredEndpoints: UpstreamEndpoint[] = (
     preferredWithCapabilities.includes('responses')
     && (

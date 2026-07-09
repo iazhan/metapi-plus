@@ -4,6 +4,7 @@ import {
   type CheckinResult,
   type UserInfo,
 } from './base.js';
+import { hasVersionedApiPathSuffix } from '../../shared/versionedApiPath.js';
 
 type FetchModelsOptions = {
   baseUrl: string;
@@ -22,7 +23,7 @@ export function normalizePlatformBaseUrl(baseUrl: string): string {
 
 export function resolveVersionedModelsUrl(baseUrl: string): string {
   const normalized = normalizePlatformBaseUrl(baseUrl);
-  if (/\/v\d+(?:\.\d+)?(?:beta)?$/i.test(normalized)) {
+  if (hasVersionedApiPathSuffix(normalized)) {
     return `${normalized}/models`;
   }
   return `${normalized}/v1/models`;

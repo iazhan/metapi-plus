@@ -1,3 +1,5 @@
+import { stripLeadingVersionSegmentForVersionedBase } from '../../shared/versionedApiPath.js';
+
 export type UpstreamEndpoint = 'chat' | 'messages' | 'responses';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,27 +122,13 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
     const parsed = new URL(baseRaw);
     let basePath = parsed.pathname.replace(/\/+$/, '');
     basePath = normalizeBasePathForRequest(basePath, path);
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(basePath);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
-    }
+    path = stripLeadingVersionSegmentForVersionedBase(basePath, path);
 
     const joinedPath = joinPath(basePath, path);
     return `${formatUrlOrigin(parsed)}${joinedPath}${parsed.search}${parsed.hash}`;
   } catch {
     let normalizedFallbackBase = normalizeBasePathForRequest(fallbackBase, path);
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(normalizedFallbackBase);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
-    }
+    path = stripLeadingVersionSegmentForVersionedBase(normalizedFallbackBase, path);
 
     normalizedFallbackBase = normalizedFallbackBase.replace(/\/+$/, '');
     return `${normalizedFallbackBase}${path}`;

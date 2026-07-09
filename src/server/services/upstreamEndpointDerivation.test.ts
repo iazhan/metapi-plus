@@ -7,7 +7,10 @@ vi.mock('./modelPricingService.js', () => ({
 }));
 
 import { resolveUpstreamEndpointCandidates } from './upstreamEndpointDerivation.js';
-import { resetUpstreamEndpointRuntimeState } from './upstreamEndpointRuntimeMemory.js';
+import {
+  recordUpstreamEndpointSuccess,
+  resetUpstreamEndpointRuntimeState,
+} from './upstreamEndpointRuntimeMemory.js';
 
 const baseContext = {
   site: {
@@ -74,6 +77,56 @@ describe('upstreamEndpointDerivation', () => {
     );
 
     expect(order).toEqual(['responses', 'chat', 'messages']);
+  });
+
+  it('prefers chat first for known Coding Plan OpenAI endpoints', async () => {
+    const cases = [
+      'https://coding.dashscope.aliyuncs.com',
+      'https://coding.dashscope.aliyuncs.com/v1',
+      'https://open.bigmodel.cn/api/coding/paas/v4',
+      'https://ark.cn-beijing.volces.com/api/coding/v3',
+    ];
+
+    for (const url of cases) {
+      const order = await resolveUpstreamEndpointCandidates(
+        {
+          ...baseContext,
+          site: {
+            ...baseContext.site,
+            platform: 'openai',
+            url,
+          },
+        },
+        'ark-code-latest',
+        'openai',
+      );
+
+      expect(order).toEqual(['chat', 'responses', 'messages']);
+    }
+  });
+
+  it('keeps Coding Plan chat-first ordering even when runtime memory prefers responses', async () => {
+    recordUpstreamEndpointSuccess({
+      siteId: baseContext.site.id,
+      endpoint: 'responses',
+      downstreamFormat: 'openai',
+      modelName: 'ark-code-latest',
+    });
+
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: {
+          ...baseContext.site,
+          platform: 'openai',
+          url: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+        },
+      },
+      'ark-code-latest',
+      'openai',
+    );
+
+    expect(order).toEqual(['chat', 'responses', 'messages']);
   });
 
   it('keeps antigravity non-gemini compatibility requests on messages-first ordering', async () => {
