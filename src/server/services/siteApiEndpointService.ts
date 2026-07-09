@@ -1,6 +1,7 @@
 import { asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { isExplicitUsageLimitRateLimitFailure } from './usageLimitFailure.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
@@ -15,7 +16,6 @@ const NETWORK_FAILURE_PATTERNS = [
   /ecanceled/i,
   ...RETRYABLE_TIMEOUT_PATTERNS,
 ];
-
 export const SITE_API_ENDPOINT_COOLDOWN_MS = 5 * 60 * 1000;
 
 type SiteRow = typeof schema.sites.$inferSelect;
@@ -132,6 +132,10 @@ export function classifySiteApiEndpointFailure(
     ? input.status
     : parseStatusFromFailureMessage(message);
   const failureReason = formatFailureReason(status, message);
+
+  if (isExplicitUsageLimitRateLimitFailure({ status, message })) {
+    return { retryable: false, rotateToNextEndpoint: false, failureReason };
+  }
 
   if (status !== null) {
     if (RETRYABLE_STATUS_CODES.has(status)) {

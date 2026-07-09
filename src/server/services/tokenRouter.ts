@@ -17,6 +17,7 @@ import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from '.
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { parseCodexQuotaResetHint } from './oauth/quota.js';
+import { isUsageLimitRateLimitFailure as isSharedUsageLimitRateLimitFailure } from './usageLimitFailure.js';
 import {
   getOauthRouteUnitStrategyLabel,
   listOauthRouteUnitMembersByUnitIds,
@@ -176,14 +177,6 @@ const SITE_TRANSIENT_FAILURE_PATTERNS: RegExp[] = [
   /connection\s+refused/i,
   /econnreset/i,
   /econnrefused/i,
-];
-
-const USAGE_LIMIT_RATE_LIMIT_PATTERNS: RegExp[] = [
-  /usage_limit_reached/i,
-  /usage\s+limit\s+has\s+been\s+reached/i,
-  /quota\s+exceeded/i,
-  /rate\s+limit/i,
-  /\blimit\b/i,
 ];
 
 type SiteRuntimeHealthPersistencePayload = {
@@ -361,8 +354,7 @@ function matchesAnyPattern(patterns: RegExp[], input?: string | null): boolean {
 
 function isUsageLimitRateLimitFailure(context: SiteRuntimeFailureContext = {}): boolean {
   const status = typeof context.status === 'number' ? context.status : 0;
-  if (status !== 429) return false;
-  return matchesAnyPattern(USAGE_LIMIT_RATE_LIMIT_PATTERNS, context.errorText);
+  return isSharedUsageLimitRateLimitFailure({ status, message: context.errorText });
 }
 
 function isModelScopedRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {

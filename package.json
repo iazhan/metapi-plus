@@ -1,6 +1,6 @@
 {
   "name": "metapi-plus",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Community-maintained Metapi fork for AI API aggregation platforms",
   "main": "dist/desktop/main.js",
   "keywords": [

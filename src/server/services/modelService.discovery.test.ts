@@ -320,6 +320,68 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('clears previous API-key coverage when model discovery is unauthorized', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-invalid-apikey-coverage',
+      url: 'https://site-invalid-apikey-coverage.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'invalid-apikey-coverage-user',
+      accessToken: '',
+      apiToken: 'sk-invalid',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'stale-default',
+      token: 'sk-invalid',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-stale',
+      available: true,
+      checkedAt: '2026-03-21T11:30:00.000Z',
+    }).run();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'gpt-stale',
+      available: true,
+      checkedAt: '2026-03-21T11:30:00.000Z',
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      errorCode: 'unauthorized',
+    });
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows).toHaveLength(0);
+
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+      .all();
+    expect(tokenRows).toHaveLength(0);
+  });
+
   it('normalizes anyrouter html challenge parse errors during model discovery', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error("Unexpected token '<', \"<html><scr\"... is not valid JSON"));
@@ -588,6 +650,352 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelName: 'gpt-4.1',
       available: true,
     });
+  });
+
+  it('preserves active account availability and routes when model discovery is rate limited', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('HTTP 429: usage_limit_reached'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-rate-limited-refresh',
+      url: 'https://site-rate-limited-refresh.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'rate-limited-user',
+      accessToken: '',
+      apiToken: 'sk-rate-limited-account',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-rate-limited-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+      latencyMs: 120,
+      checkedAt: '2026-03-21T11:30:00.000Z',
+    }).run();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'gpt-4.1',
+      available: true,
+      latencyMs: 90,
+      checkedAt: '2026-03-21T11:30:00.000Z',
+    }).run();
+
+    const initialRebuild = await rebuildTokenRoutesFromAvailability();
+    expect(initialRebuild.createdRoutes).toBeGreaterThan(0);
+    expect(initialRebuild.createdChannels).toBeGreaterThan(0);
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'failed',
+      modelCount: 0,
+      errorCode: 'rate_limited',
+    });
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName)).toEqual(['gpt-4.1']);
+
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+      .all();
+    expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-4.1']);
+
+    await rebuildTokenRoutesFromAvailability();
+
+    const routes = await db.select().from(schema.tokenRoutes).all();
+    const channels = await db.select().from(schema.routeChannels).all();
+    expect(routes.map((route) => route.modelPattern)).toContain('gpt-4.1');
+    expect(channels.some((channel) => channel.accountId === account.id)).toBe(true);
+  });
+
+  it('preserves a managed token coverage when another token refresh succeeds and this one is rate limited', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, tokenValue: string) => {
+      if (tokenValue === 'sk-refresh-success') return ['gpt-success-new'];
+      if (tokenValue === 'sk-rate-limited-token') throw new Error('HTTP 429: usage_limit_reached');
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-partial-token-limit',
+      url: 'https://site-partial-token-limit.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'partial-token-user',
+      accessToken: '',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const successToken = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'success',
+      token: 'sk-refresh-success',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    const limitedToken = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'limited',
+      token: 'sk-rate-limited-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: false,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'gpt-success-old',
+        available: true,
+        latencyMs: 110,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+      {
+        accountId: account.id,
+        modelName: 'gpt-limited-old',
+        available: true,
+        latencyMs: 120,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+    ]).run();
+
+    await db.insert(schema.tokenModelAvailability).values([
+      {
+        tokenId: successToken.id,
+        modelName: 'gpt-success-old',
+        available: true,
+        latencyMs: 90,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+      {
+        tokenId: limitedToken.id,
+        modelName: 'gpt-limited-old',
+        available: true,
+        latencyMs: 95,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+    ]).run();
+
+    const initialRebuild = await rebuildTokenRoutesFromAvailability();
+    expect(initialRebuild.createdRoutes).toBeGreaterThan(0);
+    expect(initialRebuild.createdChannels).toBeGreaterThan(0);
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      discoveredByCredential: false,
+    });
+
+    const successRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, successToken.id))
+      .all();
+    expect(successRows.map((row) => row.modelName)).toEqual(['gpt-success-new']);
+
+    const limitedRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, limitedToken.id))
+      .all();
+    expect(limitedRows.map((row) => row.modelName)).toEqual(['gpt-limited-old']);
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName).sort()).toEqual(['gpt-limited-old', 'gpt-success-new']);
+
+    await rebuildTokenRoutesFromAvailability();
+
+    const limitedRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-limited-old'))
+      .get();
+    expect(limitedRoute).toBeTruthy();
+
+    const channels = await db.select().from(schema.routeChannels).all();
+    expect(channels.some((channel) => (
+      channel.routeId === limitedRoute!.id
+      && channel.accountId === account.id
+      && channel.tokenId === limitedToken.id
+    ))).toBe(true);
+  });
+
+  it('does not restore unauthorized token coverage when all managed token refreshes fail with mixed errors', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, tokenValue: string) => {
+      if (tokenValue === 'session-access-token') return [];
+      if (tokenValue === 'sk-rate-limited-token') throw new Error('HTTP 429: usage_limit_reached');
+      if (tokenValue === 'sk-invalid-token') throw new Error('HTTP 401: invalid token');
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-mixed-token-failure',
+      url: 'https://site-mixed-token-failure.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'mixed-token-failure-user',
+      accessToken: 'session-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const limitedToken = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'limited',
+      token: 'sk-rate-limited-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    const invalidToken = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'invalid',
+      token: 'sk-invalid-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: false,
+      valueStatus: 'ready' as any,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'gpt-limited-old',
+        available: true,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+      {
+        accountId: account.id,
+        modelName: 'gpt-invalid-old',
+        available: true,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+    ]).run();
+
+    await db.insert(schema.tokenModelAvailability).values([
+      {
+        tokenId: limitedToken.id,
+        modelName: 'gpt-limited-old',
+        available: true,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+      {
+        tokenId: invalidToken.id,
+        modelName: 'gpt-invalid-old',
+        available: true,
+        checkedAt: '2026-03-21T11:30:00.000Z',
+      },
+    ]).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      errorCode: 'rate_limited',
+    });
+
+    const limitedRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, limitedToken.id))
+      .all();
+    expect(limitedRows.map((row) => row.modelName)).toEqual(['gpt-limited-old']);
+
+    const invalidRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, invalidToken.id))
+      .all();
+    expect(invalidRows).toHaveLength(0);
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName)).toEqual(['gpt-limited-old']);
+  });
+
+  it('treats HTTP 429 usage-limit errors as rate limited even when the body mentions invalid_request_error', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error(`HTTP 429: ${JSON.stringify({
+      status: 429,
+      error: {
+        type: 'invalid_request_error',
+        code: 'usage_limit_reached',
+        message: 'The usage limit has been reached',
+      },
+    })}`));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-rate-limit-invalid-body',
+      url: 'https://site-rate-limit-invalid-body.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'rate-limit-invalid-body-user',
+      accessToken: '',
+      apiToken: 'sk-rate-limited',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-still-available',
+      available: true,
+      checkedAt: '2026-03-21T11:30:00.000Z',
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      errorCode: 'rate_limited',
+      errorMessage: '模型获取失败：上游限额或频率限制',
+    });
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName)).toEqual(['gpt-still-available']);
   });
 
   it('does not scan masked_pending placeholders as token credentials', async () => {

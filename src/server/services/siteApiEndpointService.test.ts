@@ -269,6 +269,82 @@ describe('siteApiEndpointService', () => {
     });
   });
 
+  it('does not cool down a shared endpoint for credential-scoped usage limits', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'credential-limit-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-credential-limit.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 429,
+      message: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      retryable: false,
+      rotateToNextEndpoint: false,
+      cooldownUntil: null,
+    });
+
+    const stored = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id))
+      .get();
+    expect(stored).toMatchObject({
+      cooldownUntil: null,
+      lastFailedAt: '2026-03-31T12:00:00.000Z',
+    });
+    expect(stored?.lastFailureReason || '').toContain('usage_limit_reached');
+  });
+
+  it('cools down and rotates a shared endpoint for generic upstream rate limits', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'generic-rate-limit-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-generic-rate-limit.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      status: 429,
+      message: 'rate limit exceeded',
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      retryable: true,
+      rotateToNextEndpoint: true,
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+    });
+
+    const stored = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id))
+      .get();
+    expect(stored).toMatchObject({
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+      lastFailureReason: 'HTTP 429: rate limit exceeded',
+    });
+  });
+
   it('records auth and validation failures without triggering cooldown rotation', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'non-retryable-site',

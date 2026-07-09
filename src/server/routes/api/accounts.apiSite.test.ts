@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
 
 const verifyTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -314,6 +315,62 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(accounts).toHaveLength(2);
     expect(accounts.map((item) => item.apiToken)).toEqual(['sk-batch-a', 'sk-batch-b']);
     expect(accounts.map((item) => item.username)).toEqual(['batch-key #1', 'batch-key #2']);
+  });
+
+  it('keeps a credential-scoped usage limit from cooling down the shared ai endpoint during batch creation', async () => {
+    getModelsMock
+      .mockRejectedValueOnce(new Error(`HTTP 429: ${JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      })}`))
+      .mockResolvedValueOnce(['gpt-4.1-mini']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'Nihao Batch Limit',
+      url: 'https://console.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        username: 'limited-batch-key',
+        accessToken: 'sk-limited\nsk-healthy',
+        credentialMode: 'apikey',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      batch: true,
+      totalCount: 2,
+      createdCount: 1,
+      failedCount: 1,
+    });
+    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api.example.com', 'sk-limited', undefined);
+    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api.example.com', 'sk-healthy', undefined);
+
+    const storedEndpoint = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.id, endpoint.id))
+      .get();
+    expect(storedEndpoint?.cooldownUntil).toBeNull();
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.apiToken).toBe('sk-healthy');
   });
 
   it('treats accessTokens payloads as batch API key creation even without credentialMode', async () => {

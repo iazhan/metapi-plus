@@ -35,6 +35,10 @@ import {
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
+import {
+  isUsageLimitRateLimitFailure,
+  matchesExplicitUsageLimitFailureText,
+} from './usageLimitFailure.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
@@ -53,7 +57,7 @@ let inFlightRefreshModelsAndRebuildRoutes: Promise<{
   rebuild: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>>;
 }> | null = null;
 
-type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
+type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'rate_limited' | 'empty_models' | 'unknown';
 type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
 
 export type ModelRefreshAccountNotFoundResult = {
@@ -171,6 +175,8 @@ function looksLikeShieldChallenge(message: string): boolean {
 function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   const lowered = message.toLowerCase();
   if (lowered.includes('timeout') || lowered.includes('timed out') || lowered.includes('请求超时')) return 'timeout';
+  if (isUsageLimitRateLimitFailure({ status: lowered.includes('429') ? 429 : null, message: lowered })
+    || matchesExplicitUsageLimitFailureText(lowered)) return 'rate_limited';
   if (lowered.includes('http 401') || lowered.includes('http 403')
     || lowered.includes('unauthorized') || lowered.includes('invalid')
     || lowered.includes('无权') || lowered.includes('未提供令牌')) return 'unauthorized';
@@ -188,8 +194,13 @@ function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string
   }
   if (code === 'timeout') return '模型获取失败（请求超时）';
   if (code === 'unauthorized') return '模型获取失败，API Key 已无效';
+  if (code === 'rate_limited') return '模型获取失败：上游限额或频率限制';
   if (code === 'empty_models') return '模型获取失败：未获取到可用模型';
   return fallback || '模型获取失败';
+}
+
+function shouldRestorePreviousAvailabilityOnFailure(errorCode: ModelRefreshErrorCode): boolean {
+  return errorCode !== 'unauthorized';
 }
 
 function isSiteDisabled(status?: string | null): boolean {
@@ -619,28 +630,53 @@ export async function refreshModelsForAccount(
   const adapter = getAdapter(site.platform);
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
 
-  const restoreAvailabilityOnFailure = options?.allowInactive === true;
-  const previousAccountTokens = restoreAvailabilityOnFailure
-    ? await db.select()
-      .from(schema.accountTokens)
-      .where(eq(schema.accountTokens.accountId, accountId))
-      .all()
-    : [];
-  const previousModelAvailability = restoreAvailabilityOnFailure
-    ? await db.select()
+  const previousAccountTokens = await db.select()
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, accountId))
+    .all();
+  const previousModelAvailability = await db.select()
+    .from(schema.modelAvailability)
+    .where(and(
+      eq(schema.modelAvailability.accountId, accountId),
+      eq(schema.modelAvailability.isManual, false),
+    ))
+    .all();
+  const previousTokenModelAvailability = (await Promise.all(previousAccountTokens.map(async (token) => db.select()
+    .from(schema.tokenModelAvailability)
+    .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+    .all()))).flat();
+
+  // Collect manual model names so discovered/restored models that collide are skipped (unique index).
+  const manualModelNames = new Set(
+    (await db.select({ modelName: schema.modelAvailability.modelName })
       .from(schema.modelAvailability)
       .where(and(
         eq(schema.modelAvailability.accountId, accountId),
-        eq(schema.modelAvailability.isManual, false),
+        eq(schema.modelAvailability.isManual, true),
       ))
       .all()
-    : [];
-  const previousTokenModelAvailability = restoreAvailabilityOnFailure
-    ? (await Promise.all(previousAccountTokens.map(async (token) => db.select()
-      .from(schema.tokenModelAvailability)
-      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
-      .all()))).flat()
-    : [];
+    ).map((r) => r.modelName.toLowerCase()),
+  );
+
+  const previousTokenModelAvailabilityByTokenId = new Map<number, Array<typeof previousTokenModelAvailability[number]>>();
+  for (const row of previousTokenModelAvailability) {
+    const rows = previousTokenModelAvailabilityByTokenId.get(row.tokenId) || [];
+    rows.push(row);
+    previousTokenModelAvailabilityByTokenId.set(row.tokenId, rows);
+  }
+  const preservedAccountAvailabilityByName = new Map<string, typeof previousModelAvailability[number]>();
+
+  const preservePreviousAccountAvailability = (modelNames?: Iterable<string>) => {
+    const allowedNames = modelNames
+      ? new Set(Array.from(modelNames).map((name) => name.toLowerCase()))
+      : null;
+    for (const row of previousModelAvailability) {
+      const key = row.modelName.toLowerCase();
+      if (allowedNames && !allowedNames.has(key)) continue;
+      if (manualModelNames.has(key)) continue;
+      preservedAccountAvailabilityByName.set(key, row);
+    }
+  };
 
   const clearExistingAvailability = async () => {
     await db.delete(schema.modelAvailability)
@@ -662,8 +698,8 @@ export async function refreshModelsForAccount(
     }
   };
 
-  const restorePreviousAvailability = async () => {
-    if (!restoreAvailabilityOnFailure) return;
+  const restorePreviousAvailability = async (errorCode: ModelRefreshErrorCode) => {
+    if (!shouldRestorePreviousAvailabilityOnFailure(errorCode)) return;
     await clearExistingAvailability();
     if (previousModelAvailability.length > 0) {
       await db.insert(schema.modelAvailability).values(
@@ -677,19 +713,41 @@ export async function refreshModelsForAccount(
     }
   };
 
-  await clearExistingAvailability();
+  const restorePreviousTokenAvailability = async (tokenId: number, errorCode: ModelRefreshErrorCode) => {
+    if (!shouldRestorePreviousAvailabilityOnFailure(errorCode)) return;
+    const rows = previousTokenModelAvailabilityByTokenId.get(tokenId) || [];
+    if (rows.length === 0) return;
 
-  // Collect manual model names so discovered models that collide are skipped (unique index).
-  const manualModelNames = new Set(
-    (await db.select({ modelName: schema.modelAvailability.modelName })
-      .from(schema.modelAvailability)
-      .where(and(
-        eq(schema.modelAvailability.accountId, accountId),
-        eq(schema.modelAvailability.isManual, true),
-      ))
-      .all()
-    ).map((r) => r.modelName.toLowerCase()),
-  );
+    await db.delete(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, tokenId))
+      .run();
+    await db.insert(schema.tokenModelAvailability).values(
+      rows.map(({ id: _id, ...row }) => row),
+    ).run();
+    preservePreviousAccountAvailability(rows.map((row) => row.modelName));
+  };
+
+  let restoredAllPreviousTokenAvailability = false;
+  const restoreAllPreviousTokenAvailability = async (errorCode: ModelRefreshErrorCode) => {
+    if (restoredAllPreviousTokenAvailability) return;
+    if (!shouldRestorePreviousAvailabilityOnFailure(errorCode)) return;
+    if (previousTokenModelAvailability.length === 0) return;
+    await db.insert(schema.tokenModelAvailability).values(
+      previousTokenModelAvailability.map(({ id: _id, ...row }) => row),
+    ).run();
+    restoredAllPreviousTokenAvailability = true;
+  };
+
+  const restorePreservedAccountAvailability = async (
+    rows = Array.from(preservedAccountAvailabilityByName.values()),
+  ) => {
+    if (rows.length === 0) return;
+    await db.insert(schema.modelAvailability).values(
+      rows.map(({ id: _id, ...row }) => row),
+    ).run();
+  };
+
+  await clearExistingAvailability();
 
   if (isSiteDisabled(site.status)) {
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
@@ -774,7 +832,7 @@ export async function refreshModelsForAccount(
         source: 'model-discovery',
         checkedAt,
       });
-      await restorePreviousAvailability();
+      await restorePreviousAvailability(errorCode);
       return buildFailedRefreshResult({
         accountId,
         errorCode,
@@ -860,7 +918,7 @@ export async function refreshModelsForAccount(
         source: 'model-discovery',
         checkedAt,
       });
-      await restorePreviousAvailability();
+      await restorePreviousAvailability(errorCode);
       return buildFailedRefreshResult({
         accountId,
         errorCode,
@@ -959,7 +1017,7 @@ export async function refreshModelsForAccount(
         source: 'model-discovery',
         checkedAt,
       });
-      await restorePreviousAvailability();
+      await restorePreviousAvailability(errorCode);
       return buildFailedRefreshResult({
         accountId,
         errorCode,
@@ -1046,7 +1104,7 @@ export async function refreshModelsForAccount(
         source: 'model-discovery',
         checkedAt,
       });
-      await restorePreviousAvailability();
+      await restorePreviousAvailability(errorCode);
       return buildFailedRefreshResult({
         accountId,
         errorCode,
@@ -1128,7 +1186,7 @@ export async function refreshModelsForAccount(
       source: 'model-discovery',
       checkedAt: new Date().toISOString(),
     });
-    await restorePreviousAvailability();
+    await restorePreviousAvailability(errorCode);
     return buildFailedRefreshResult({
       accountId,
       errorCode,
@@ -1145,9 +1203,10 @@ export async function refreshModelsForAccount(
   let discoveredByCredential = false;
   const attemptedCredentials = new Set<string>();
   const failureMessages: string[] = [];
-  const recordFailure = (err: unknown) => {
+  const recordFailure = (err: unknown): string => {
     const message = (err as { message?: string })?.message || String(err || '');
     if (message) failureMessages.push(message);
+    return message;
   };
 
   const mergeDiscoveredModels = (models: string[], latencyMs: number | null) => {
@@ -1173,6 +1232,7 @@ export async function refreshModelsForAccount(
 
     const startedAt = Date.now();
     let models: string[] = [];
+    let preserveOnEmptyCode: ModelRefreshErrorCode = 'empty_models';
     try {
       models = normalizeModels(
         await withTimeout(
@@ -1183,10 +1243,21 @@ export async function refreshModelsForAccount(
         ),
       );
     } catch (err) {
-      recordFailure(err);
+      const message = recordFailure(err);
+      const errorCode = classifyModelDiscoveryError(message);
+      preserveOnEmptyCode = errorCode;
       models = [];
     }
-    if (models.length === 0) return;
+    if (models.length === 0) {
+      if ((!usesManagedTokens || options?.allowInactive === true)
+        && shouldRestorePreviousAvailabilityOnFailure(preserveOnEmptyCode)) {
+        preservePreviousAccountAvailability();
+        if (!usesManagedTokens) {
+          await restoreAllPreviousTokenAvailability(preserveOnEmptyCode);
+        }
+      }
+      return;
+    }
     discoveredByCredential = true;
     const latencyMs = Date.now() - startedAt;
     mergeDiscoveredModels(models, latencyMs);
@@ -1200,6 +1271,7 @@ export async function refreshModelsForAccount(
   for (const token of enabledTokens) {
     const startedAt = Date.now();
     let models: string[] = [];
+    let preserveOnEmptyCode: ModelRefreshErrorCode = 'empty_models';
 
     try {
       models = normalizeModels(
@@ -1211,11 +1283,16 @@ export async function refreshModelsForAccount(
         ),
       );
     } catch (err) {
-      recordFailure(err);
+      const message = recordFailure(err);
+      const errorCode = classifyModelDiscoveryError(message);
+      preserveOnEmptyCode = errorCode;
       models = [];
     }
 
-    if (models.length === 0) continue;
+    if (models.length === 0) {
+      await restorePreviousTokenAvailability(token.id, preserveOnEmptyCode);
+      continue;
+    }
 
     const latencyMs = Date.now() - startedAt;
     const checkedAt = new Date().toISOString();
@@ -1244,7 +1321,7 @@ export async function refreshModelsForAccount(
       source: 'model-discovery',
       checkedAt: new Date().toISOString(),
     });
-    await restorePreviousAvailability();
+    await restorePreservedAccountAvailability();
     return buildFailedRefreshResult({
       accountId,
       errorCode,
@@ -1257,6 +1334,12 @@ export async function refreshModelsForAccount(
 
   const checkedAt = new Date().toISOString();
   const newAccountModels = Array.from(accountModels.values()).filter((m) => !manualModelNames.has(m.toLowerCase()));
+  const newAccountModelNames = new Set(newAccountModels.map((modelName) => modelName.toLowerCase()));
+  const preservedAccountRows = Array.from(preservedAccountAvailabilityByName.values())
+    .filter((row) => {
+      const key = row.modelName.toLowerCase();
+      return !manualModelNames.has(key) && !newAccountModelNames.has(key);
+    });
   if (newAccountModels.length > 0) {
     await db.insert(schema.modelAvailability).values(
       newAccountModels.map((modelName) => ({
@@ -1268,6 +1351,9 @@ export async function refreshModelsForAccount(
       })),
     ).run();
   }
+  if (preservedAccountRows.length > 0) {
+    await restorePreservedAccountAvailability(preservedAccountRows);
+  }
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',
@@ -1276,15 +1362,19 @@ export async function refreshModelsForAccount(
     checkedAt,
   });
 
-  const modelsPreview = Array.from(accountModels.values()).slice(0, 10);
+  const availableAccountModels = [
+    ...Array.from(accountModels.values()),
+    ...preservedAccountRows.map((row) => row.modelName),
+  ];
+  const modelsPreview = availableAccountModels.slice(0, 10);
   const standardPostProbeResult = await runPostRefreshProbeIfEnabled({
     account,
     site,
-    discoveredModels: Array.from(accountModels.values()),
+    discoveredModels: availableAccountModels,
   });
   return buildSuccessfulRefreshResult({
     accountId,
-    modelCount: accountModels.size,
+    modelCount: availableAccountModels.length,
     modelsPreview,
     tokenScanned: scannedTokenCount,
     discoveredByCredential,
