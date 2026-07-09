@@ -586,6 +586,83 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('persists dense priorities when reordering channels inside one shared priority layer', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 31, modelPattern: 're:^same-priority-route$', displayName: 'same-priority-route',
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 3, enabledChannelCount: 3, siteNames: ['site-a', 'site-b', 'site-c'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 101, routeId: 31, accountId: 101, tokenId: 1001, sourceModel: 'same-priority-route',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_a' }, site: { name: 'site-a' },
+        token: { id: 1001, name: 'token-a', accountId: 101, enabled: true, isDefault: true },
+      },
+      {
+        id: 102, routeId: 31, accountId: 102, tokenId: 1002, sourceModel: 'same-priority-route',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_b' }, site: { name: 'site-b' },
+        token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: true },
+      },
+      {
+        id: 103, routeId: 31, accountId: 103, tokenId: 1003, sourceModel: 'same-priority-route',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_c' }, site: { name: 'site-c' },
+        token: { id: 1003, name: 'token-c', accountId: 103, enabled: true, isDefault: true },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('same-priority-route'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const dragContext = root.root.find((node) => typeof node.props?.onDragEnd === 'function');
+      await act(async () => {
+        await dragContext.props.onDragEnd({
+          active: { id: 103 },
+          over: { id: 102 },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.batchUpdateChannels).toHaveBeenCalledWith([
+        { id: 101, priority: 0 },
+        { id: 103, priority: 1 },
+        { id: 102, priority: 2 },
+      ]);
+      expect(globalThis.confirm).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('keeps zero-channel placeholder routes hidden by default', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([]);
     apiMock.getModelTokenCandidates.mockResolvedValue({

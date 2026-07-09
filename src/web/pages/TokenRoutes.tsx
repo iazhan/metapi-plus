@@ -1142,7 +1142,6 @@ export default function TokenRoutes() {
       : channels.find((channel) => channel.id === Number(over.id));
 
     if (!overIsNewLayer && !targetChannel) return;
-    if (!overIsNewLayer && (targetChannel?.priority ?? 0) === (activeChannel.priority ?? 0)) return;
 
     const reordered = applyPriorityRailDrop(channels, Number(active.id), over.id);
     const changedChannels = reordered.filter((channel) => {

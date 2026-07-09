@@ -58,6 +58,50 @@ function normalizePriorityRailChannels<T extends PriorityRailChannelLike>(channe
   });
 }
 
+function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex) return items;
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  if (item === undefined) return items;
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+// Same-priority rows have no persisted order, so split the touched layer.
+function reorderSharedPriorityLayer<T extends PriorityRailChannelLike>(
+  channels: T[],
+  activeId: number,
+  targetId: number,
+  priority: number,
+): T[] {
+  const layerChannels = channels.filter((channel) => {
+    const channelPriority = Number.isFinite(channel.priority) ? channel.priority : 0;
+    return channelPriority === priority;
+  });
+  const activeIndex = layerChannels.findIndex((channel) => channel.id === activeId);
+  const targetIndex = layerChannels.findIndex((channel) => channel.id === targetId);
+  if (layerChannels.length <= 1 || activeIndex < 0 || targetIndex < 0 || activeIndex === targetIndex) {
+    return channels;
+  }
+
+  const reorderedLayer = moveItem(layerChannels, activeIndex, targetIndex);
+  const nextPriorityById = new Map<number, number>();
+  reorderedLayer.forEach((channel, index) => {
+    nextPriorityById.set(channel.id, priority + index);
+  });
+  const shiftedPriorityOffset = reorderedLayer.length - 1;
+
+  return normalizePriorityRailChannels(
+    channels.map((channel) => {
+      const channelPriority = Number.isFinite(channel.priority) ? channel.priority : 0;
+      const nextPriority = nextPriorityById.get(channel.id);
+      if (nextPriority !== undefined) return { ...channel, priority: nextPriority };
+      if (channelPriority > priority) return { ...channel, priority: channelPriority + shiftedPriorityOffset };
+      return channel;
+    }),
+  );
+}
+
 export function buildPriorityRailDragTargets(
   sections: PriorityRailSection[],
   options: BuildPriorityRailDragTargetsOptions,
@@ -110,6 +154,11 @@ export function applyPriorityRailDrop<T extends PriorityRailChannelLike>(
   if (!targetChannel || targetChannel.id === activeId) return normalized;
 
   const targetPriority = Number.isFinite(targetChannel.priority) ? targetChannel.priority : 0;
+  const activePriority = Number.isFinite(activeChannel.priority) ? activeChannel.priority : 0;
+
+  if (targetPriority === activePriority) {
+    return reorderSharedPriorityLayer(normalized, activeId, targetChannel.id, targetPriority);
+  }
 
   return normalizePriorityRailChannels(
     normalized.map((channel) => (

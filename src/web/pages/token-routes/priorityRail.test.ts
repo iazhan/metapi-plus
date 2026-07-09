@@ -58,6 +58,44 @@ describe('priorityRail helpers', () => {
     ]);
   });
 
+  it('turns same-layer row reordering into dense route priorities', () => {
+    const reordered = applyPriorityRailDrop(
+      [
+        { id: 11, priority: 0 },
+        { id: 12, priority: 0 },
+        { id: 13, priority: 0 },
+      ],
+      13,
+      12,
+    );
+
+    expect(reordered).toEqual([
+      { id: 11, priority: 0 },
+      { id: 13, priority: 1 },
+      { id: 12, priority: 2 },
+    ]);
+  });
+
+  it('shifts lower priority layers after splitting a shared priority layer', () => {
+    const reordered = applyPriorityRailDrop(
+      [
+        { id: 11, priority: 0 },
+        { id: 12, priority: 0 },
+        { id: 13, priority: 0 },
+        { id: 21, priority: 1 },
+      ],
+      13,
+      12,
+    );
+
+    expect(reordered).toEqual([
+      { id: 11, priority: 0 },
+      { id: 13, priority: 1 },
+      { id: 12, priority: 2 },
+      { id: 21, priority: 3 },
+    ]);
+  });
+
   it('creates a new next layer when dropped onto a drag-only new-layer target', () => {
     const reordered = applyPriorityRailDrop(
       [
