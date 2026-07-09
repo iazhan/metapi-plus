@@ -1,9 +1,35 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const MAC_BINARY_SEGMENTS = ['Metapi.app', 'Contents', 'MacOS', 'Metapi'];
+const DEFAULT_BUILDER_CONFIG = 'electron-builder.yml';
+
+function unquoteYamlScalar(value) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+export function readProductNameFromBuilderConfig(configPath = resolve(DEFAULT_BUILDER_CONFIG)) {
+  const config = readFileSync(configPath, 'utf8');
+  const match = config.match(/^productName:\s*(.+?)\s*$/m);
+  if (!match) {
+    throw new Error(`Unable to read productName from ${configPath}`);
+  }
+
+  return unquoteYamlScalar(match[1]);
+}
+
+export function buildMacBinarySuffix(productName) {
+  return [`${productName}.app`, 'Contents', 'MacOS', productName].join('/');
+}
 
 function walkDirectories(rootDir) {
   const queue = [rootDir];
@@ -31,8 +57,11 @@ function walkDirectories(rootDir) {
   return files;
 }
 
-export function findPackagedMacBinaries(releaseDir) {
-  const normalizedSuffix = MAC_BINARY_SEGMENTS.join('/');
+export function findPackagedMacBinaries(
+  releaseDir,
+  productName = readProductNameFromBuilderConfig(),
+) {
+  const normalizedSuffix = buildMacBinarySuffix(productName);
 
   return walkDirectories(releaseDir).filter((filePath) =>
     filePath.replaceAll('\\', '/').endsWith(normalizedSuffix),
@@ -63,11 +92,12 @@ export function inspectBinaryArchsWithLipo(binaryPath) {
 export function verifyMacArchitecture({
   releaseDir,
   expectedArch,
+  productName = readProductNameFromBuilderConfig(),
   inspectBinaryArchs = inspectBinaryArchsWithLipo,
 }) {
-  const binaries = findPackagedMacBinaries(releaseDir);
+  const binaries = findPackagedMacBinaries(releaseDir, productName);
   if (binaries.length === 0) {
-    throw new Error(`No packaged macOS app binary found under ${releaseDir}`);
+    throw new Error(`No packaged macOS app binary found for ${productName} under ${releaseDir}`);
   }
 
   const expectedBinaryArch = normalizeExpectedMacArch(expectedArch);
