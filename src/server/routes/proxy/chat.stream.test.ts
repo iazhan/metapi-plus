@@ -4882,6 +4882,176 @@ describe('chat proxy stream behavior', () => {
     expect(options.headers.Authorization).toBe('Bearer gemini-key');
   });
 
+  it('bridges Gemini official chat tool history through native streaming generateContent', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'gemini-site', url: 'https://generativelanguage.googleapis.com/v1beta/openai', platform: 'gemini' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'gemini-key',
+      actualModel: 'gemini-3.5-flash',
+    });
+
+    const geminiToolEvent = {
+      responseId: 'resp-gemini-native-tool',
+      modelVersion: 'gemini-3.5-flash',
+      candidates: [{
+        index: 0,
+        finishReason: 'STOP',
+        content: {
+          role: 'model',
+          parts: [{
+            functionCall: {
+              id: 'call_read',
+              name: 'read',
+              args: { path: '/tmp/example.txt' },
+            },
+            thoughtSignature: 'sig-tool',
+          }],
+        },
+      }],
+    };
+    fetchMock.mockResolvedValue(new Response(`data: ${JSON.stringify(geminiToolEvent)}\n\n`, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gemini-3.5-flash',
+        stream: true,
+        messages: [
+          { role: 'user', content: 'List files.' },
+          {
+            role: 'assistant',
+            tool_calls: [{
+              id: 'call_read',
+              type: 'function',
+              function: { name: 'read', arguments: '{"path":"/tmp/example.txt"}' },
+            }],
+          },
+          { role: 'tool', tool_call_id: 'call_read', content: 'file content' },
+        ],
+        tools: [{
+          type: 'function',
+          function: { name: 'read', parameters: { type: 'object', properties: {} } },
+        }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse');
+    expect(options.headers.Authorization).toBe('Bearer gemini-key');
+
+    const upstreamBody = JSON.parse(options.body);
+    expect(upstreamBody).toHaveProperty('contents');
+    expect(upstreamBody).not.toHaveProperty('messages');
+    const functionCallParts = upstreamBody.contents
+      .flatMap((content: any) => content.parts)
+      .filter((part: any) => part.functionCall);
+    expect(functionCallParts[0].thoughtSignature).toEqual(expect.any(String));
+
+    expect(response.body).toContain('data: [DONE]');
+    expect(response.body).toContain('"tool_calls"');
+    expect(response.body).toContain('"id":"call_read"');
+    expect(response.body).toContain('"name":"read"');
+    expect(response.body).toContain('"finish_reason":"tool_calls"');
+  });
+
+  it('returns upstream_error when Gemini native stream reports an error payload', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'gemini-key',
+      actualModel: 'gemini-3.5-flash',
+    });
+
+    fetchMock.mockResolvedValue(new Response('data: {"error":{"message":"native stream failed","status":"INVALID_ARGUMENT"}}\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gemini-3.5-flash',
+        stream: true,
+        messages: [
+          { role: 'user', content: 'List files.' },
+          {
+            role: 'assistant',
+            tool_calls: [{
+              id: 'call_read',
+              type: 'function',
+              function: { name: 'read', arguments: '{"path":"/tmp/example.txt"}' },
+            }],
+          },
+          { role: 'tool', tool_call_id: 'call_read', content: 'file content' },
+        ],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(502);
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(response.json()?.error?.message).toContain('native stream failed');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['malformed', 'data: not-json\n\n'],
+  ] as const)('returns upstream_error when Gemini native stream has %s SSE content', async (_name, upstreamText) => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'gemini-key',
+      actualModel: 'gemini-3.5-flash',
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamText, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gemini-3.5-flash',
+        stream: true,
+        messages: [
+          { role: 'user', content: 'List files.' },
+          {
+            role: 'assistant',
+            tool_calls: [{
+              id: 'call_read',
+              type: 'function',
+              function: { name: 'read', arguments: '{"path":"/tmp/example.txt"}' },
+            }],
+          },
+          { role: 'tool', tool_call_id: 'call_read', content: 'file content' },
+        ],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(502);
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+  });
+
   it('chooses /v1/messages upstream when catalog indicates messages-only endpoint support', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [

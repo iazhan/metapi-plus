@@ -46,6 +46,7 @@ import {
   createGeminiCliStreamReader,
   unwrapGeminiCliPayload,
 } from '../../transformers/gemini/generate-content/cliBridge.js';
+import { geminiGenerateContentTransformer } from '../../transformers/gemini/generate-content/index.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
@@ -92,6 +93,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isGeminiNativeRuntimePath(path: string): boolean {
+  return /\/v1beta\/models\/[^/]+:(?:streamGenerateContent|generateContent)(?:\?|$)/.test(path);
+}
+
+type GeminiNativeParsedSsePayloads = ReturnType<
+  typeof geminiGenerateContentTransformer.stream.parseSsePayloads
+>;
+
+function compactFailureText(value: unknown): string {
+  return asTrimmedString(value).replace(/\s+/g, ' ');
+}
+
+function extractGeminiNativeStreamErrorMessage(payload: unknown): string {
+  if (!isRecord(payload)) return '';
+  const rootError = payload.error;
+  if (typeof rootError === 'string') return compactFailureText(rootError);
+  const error = isRecord(rootError) ? rootError : payload;
+  return (
+    compactFailureText(error.message)
+    || compactFailureText(error.status)
+    || compactFailureText(error.code)
+    || compactFailureText(error.type)
+  );
+}
+
+function describeGeminiNativeSseFailure(
+  rawText: string,
+  parsed: GeminiNativeParsedSsePayloads,
+): string | null {
+  for (const event of parsed.events) {
+    const errorMessage = extractGeminiNativeStreamErrorMessage(event);
+    if (errorMessage) return errorMessage;
+  }
+
+  if (parsed.events.length > 0) return null;
+  if (!rawText.trim()) return 'Gemini native stream returned empty content';
+  return 'Gemini native stream returned no parseable events';
+}
+
+function buildOpenAiFinalFromGeminiNativePayload(
+  payload: unknown,
+  modelName: string,
+  fallbackText = '',
+) {
+  const aggregate = geminiGenerateContentTransformer.aggregator.createState();
+  for (const item of geminiGenerateContentTransformer.stream.parseJsonArrayPayload(payload)) {
+    geminiGenerateContentTransformer.aggregator.apply(aggregate, item);
+  }
+  const geminiFinal = geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregate);
+  return openAiChatTransformer.transformFinalResponse(geminiFinal, modelName, fallbackText);
+}
+
+function buildOpenAiStreamLinesFromGeminiNativeSse(
+  rawText: string,
+  modelName: string,
+  parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rawText),
+): { lines: string[]; finalPayload: Record<string, unknown> } {
+  const aggregate = geminiGenerateContentTransformer.stream.createAggregateState();
+  for (const payload of parsed.events) {
+    geminiGenerateContentTransformer.stream.applyAggregate(aggregate, payload);
+  }
+
+  const geminiFinal = geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregate);
+  const normalizedFinal = openAiChatTransformer.transformFinalResponse(geminiFinal, modelName, rawText);
+  return {
+    finalPayload: geminiFinal,
+    lines: [
+      ...openAiChatTransformer.buildSyntheticChunks(normalizedFinal)
+        .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`),
+      'data: [DONE]\n\n',
+    ],
+  };
 }
 
 function finalizeRetryAsUpstreamFailure(status: number, message: string) {
@@ -641,6 +716,69 @@ export async function handleChatSurfaceRequest(
           },
         });
         let rawText = '';
+        if (isGeminiNativeRuntimePath(successfulUpstreamPath)) {
+          // The native Gemini bridge currently buffers the upstream SSE so it can
+          // aggregate functionCall parts before emitting OpenAI tool_call chunks.
+          rawText = await readRuntimeResponseText(upstream);
+          const parsedGeminiNativeSse = geminiGenerateContentTransformer.stream.parseSsePayloads(rawText);
+          const nativeSseFailure = describeGeminiNativeSseFailure(rawText, parsedGeminiNativeSse);
+          if (nativeSseFailure) {
+            clearSurfaceStickyChannel({
+              stickySessionKey,
+              selected,
+            });
+            const latency = Date.now() - startTime;
+            await failureToolkit.recordStreamFailure({
+              selected,
+              requestedModel,
+              modelName,
+              errorMessage: nativeSseFailure,
+              latencyMs: latency,
+              retryCount,
+              promptTokens: parsedUsage.promptTokens,
+              completionTokens: parsedUsage.completionTokens,
+              totalTokens: parsedUsage.totalTokens,
+              upstreamPath: successfulUpstreamPath,
+              runtimeFailureStatus: 502,
+            });
+            const payload = {
+              error: {
+                message: nativeSseFailure,
+                type: 'upstream_error' as const,
+              },
+            };
+            await finalizeDebugFailure(502, payload, successfulUpstreamPath);
+            return reply.code(502).send(payload);
+          }
+          const bridged = buildOpenAiStreamLinesFromGeminiNativeSse(
+            rawText,
+            modelName,
+            parsedGeminiNativeSse,
+          );
+          upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(bridged.finalPayload);
+          parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(bridged.finalPayload));
+          writeLines(bridged.lines);
+          streamResponse.end();
+
+          const latency = Date.now() - startTime;
+          await recordStreamSuccess(latency);
+          await finalizeDebugSuccess(
+            200,
+            successfulUpstreamPath,
+            buildSurfaceProxyDebugResponseHeaders(upstream),
+            debugTrace?.options.captureStreamChunks
+              ? rawText
+              : {
+                stream: true,
+                usage: parsedUsage,
+              },
+          );
+          bindSurfaceStickyChannel({
+            stickySessionKey,
+            selected,
+          });
+          return;
+        }
         if (!upstreamContentType.includes('text/event-stream')) {
           const fallbackText = await readRuntimeResponseText(upstream);
           rawText = fallbackText;
@@ -949,7 +1087,9 @@ export async function handleChatSurfaceRequest(
         );
         return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
-      const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
+      const normalizedFinal = isGeminiNativeRuntimePath(successfulUpstreamPath)
+        ? buildOpenAiFinalFromGeminiNativePayload(upstreamData, modelName, rawText)
+        : downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
       const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
 
       await recordSurfaceSuccess({

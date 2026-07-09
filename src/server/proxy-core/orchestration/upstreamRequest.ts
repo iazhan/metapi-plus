@@ -80,6 +80,13 @@ function joinPath(basePath: string, requestPath: string): string {
   return `${base}${path}`;
 }
 
+function normalizeBasePathForRequest(basePath: string, requestPath: string): string {
+  if (/\/v1beta\/openai$/i.test(basePath) && /^\/v1beta\/models(?:\/|$)/i.test(requestPath)) {
+    return basePath.replace(/\/v1beta\/openai$/i, '');
+  }
+  return basePath;
+}
+
 export function summarizeUpstreamError(status: number, rawErrorText: string): string {
   const statusPrefix = status > 0
     ? `Upstream returned HTTP ${status}`
@@ -111,7 +118,8 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
 
   try {
     const parsed = new URL(baseRaw);
-    const basePath = parsed.pathname.replace(/\/+$/, '');
+    let basePath = parsed.pathname.replace(/\/+$/, '');
+    basePath = normalizeBasePathForRequest(basePath, path);
     const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(basePath);
     if (baseHasVersionSuffix) {
       if (path === '/v1') {
@@ -124,7 +132,8 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
     const joinedPath = joinPath(basePath, path);
     return `${formatUrlOrigin(parsed)}${joinedPath}${parsed.search}${parsed.hash}`;
   } catch {
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(fallbackBase);
+    let normalizedFallbackBase = normalizeBasePathForRequest(fallbackBase, path);
+    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(normalizedFallbackBase);
     if (baseHasVersionSuffix) {
       if (path === '/v1') {
         path = '/';
@@ -133,6 +142,7 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
       }
     }
 
-    return `${fallbackBase}${path}`;
+    normalizedFallbackBase = normalizedFallbackBase.replace(/\/+$/, '');
+    return `${normalizedFallbackBase}${path}`;
   }
 }
