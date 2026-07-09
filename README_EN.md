@@ -148,16 +148,12 @@ AnyRouter-style deployments should use the `new-api` platform. Existing `anyrout
       <div><b>Usage Logs</b> — Proxy request logs and cost breakdown</div>
     </td>
     <td align="center">
-      <img src="docs/screenshots/monitor.png" alt="monitor" style="width:100%;height:auto;"/>
-      <div><b>Availability Monitor</b> — Channel health real-time monitoring</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
       <img src="docs/screenshots/settings.png" alt="settings" style="width:100%;height:auto;"/>
       <div><b>System Settings</b> — Global parameters and security configuration</div>
     </td>
-    <td align="center">
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
       <img src="docs/screenshots/notification-settings.png" alt="notification-settings" style="width:100%;height:auto;"/>
       <div><b>Notification Settings</b> — Multi-channel alert and push configuration</div>
     </td>

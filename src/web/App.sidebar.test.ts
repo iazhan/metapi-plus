@@ -29,4 +29,12 @@ describe('App sidebar config', () => {
     expect(source).toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
     expect(source).toContain('<Route path="/oauth" element={<OAuthManagement />} />');
   });
+
+  it('does not expose the removed monitor embed page', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+
+    expect(source).not.toContain("const Monitors = lazy(() => import('./pages/Monitors.js'));");
+    expect(source).not.toContain("{ to: '/monitor', label: '可用性监控'");
+    expect(source).not.toContain('<Route path="/monitor" element={<Monitors />} />');
+  });
 });

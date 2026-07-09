@@ -12,7 +12,7 @@ function collectText(node: ReactTestInstance): string {
 
 describe('Login surface', () => {
   it('uses the site root as the documentation URL', () => {
-    expect(SITE_DOCS_URL).toBe('https://metapi.cita777.me');
+    expect(SITE_DOCS_URL).toBe('https://iazhan.github.io/metapi-plus/');
   });
 
   it('uses the project repository for the login github shortcut', () => {

@@ -81,10 +81,6 @@ features:
       <img src="./screenshots/playground.png" alt="模型操练场" />
       <figcaption>模型操练场</figcaption>
     </figure>
-    <figure class="home-carousel-slide">
-      <img src="./screenshots/monitor.png" alt="可用性监控" />
-      <figcaption>可用性监控</figcaption>
-    </figure>
   </div>
 </div>
 

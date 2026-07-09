@@ -7,10 +7,6 @@ const authChangePayloadSchema = z.object({
   newToken: z.string().optional(),
 }).passthrough();
 
-const monitorConfigPayloadSchema = z.object({
-  ldohCookie: z.union([z.string(), z.null()]).optional(),
-}).passthrough();
-
 const oauthStartPayloadSchema = z.object({
   accountId: z.number().int().positive().optional(),
   projectId: z.string().optional(),
@@ -83,7 +79,6 @@ const updateCenterRollbackPayloadSchema = z.object({
 }).passthrough();
 
 export type AuthChangePayload = z.output<typeof authChangePayloadSchema>;
-export type MonitorConfigPayload = z.output<typeof monitorConfigPayloadSchema>;
 export type OauthConnectionRebindPayload = z.output<typeof oauthConnectionRebindPayloadSchema>;
 export type OauthConnectionProxyUpdatePayload = z.output<typeof oauthConnectionProxyUpdatePayloadSchema>;
 export type OauthImportPayload = z.output<typeof oauthImportPayloadSchema>;
@@ -111,9 +106,6 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'newToken') {
     return 'Invalid newToken. Expected string.';
-  }
-  if (firstPath === 'ldohCookie') {
-    return 'Invalid ldohCookie. Expected string or null.';
   }
   if (firstPath === 'accountId') {
     return 'Invalid accountId. Expected positive number.';
@@ -210,11 +202,6 @@ function parseSupportRoutePayload<T extends z.ZodTypeAny>(
 export function parseAuthChangePayload(input: unknown):
 { success: true; data: AuthChangePayload } | { success: false; error: string } {
   return parseSupportRoutePayload(authChangePayloadSchema, input);
-}
-
-export function parseMonitorConfigPayload(input: unknown):
-{ success: true; data: MonitorConfigPayload } | { success: false; error: string } {
-  return parseSupportRoutePayload(monitorConfigPayloadSchema, input);
 }
 
 export function parseOauthStartPayload(input: unknown):
