@@ -23,4 +23,19 @@ describe('desktop package scripts', () => {
     expect(distDesktop).toContain('npm run build');
     expect(distDesktopIntel).toContain('npm run build');
   });
+
+  it('installs the Electron runtime before invoking electron-builder', () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> };
+
+    const scripts = packageJson.scripts || {};
+    const installScript = scripts['desktop:install-electron'] || '';
+    const distDesktop = scripts['dist:desktop'] || '';
+    const distDesktopIntel = scripts['dist:desktop:mac:intel'] || '';
+
+    expect(installScript).toBe('install-electron');
+    expect(distDesktop).toContain('npm run desktop:install-electron && electron-builder');
+    expect(distDesktopIntel).toContain('npm run desktop:install-electron && electron-builder');
+  });
 });
