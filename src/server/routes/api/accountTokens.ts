@@ -22,39 +22,20 @@ import { withAccountProxyOverride } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
   type CoverageBatchRebuildResult,
-  convergeAccountMutation,
   refreshAccountCoverageBatch,
 } from '../../services/accountMutationWorkflow.js';
+import {
+  syncAccountPlatformData,
+  type AccountPlatformSyncResult as SyncExecutionResult,
+  type AccountWithSiteRow,
+} from '../../services/accountPlatformSyncService.js';
+import { listAccountGroupRates } from '../../services/accountGroupRateService.js';
 import {
   parseAccountTokenBatchPayload,
   parseAccountTokenCreatePayload,
   parseAccountTokenSyncAllPayload,
   parseAccountTokenUpdatePayload,
 } from '../../contracts/accountTokensRoutePayloads.js';
-
-type AccountWithSiteRow = {
-  accounts: typeof schema.accounts.$inferSelect;
-  sites: typeof schema.sites.$inferSelect;
-};
-
-type SyncExecutionResult = {
-  accountId: number;
-  accountName: string;
-  accountStatus: string | null;
-  siteId: number;
-  siteName: string;
-  siteStatus: string | null;
-  status: 'synced' | 'skipped' | 'failed';
-  reason?: string;
-  message?: string;
-  synced: boolean;
-  created: number;
-  updated: number;
-  maskedPending?: number;
-  pendingTokenIds?: number[];
-  total: number;
-  defaultTokenId?: number | null;
-};
 
 type CoverageRefreshFailureItem = {
   accountId: number;
@@ -73,8 +54,16 @@ type CoverageRefreshFailureItem = {
 type CoverageRefreshItem = ModelRefreshResult | CoverageRefreshFailureItem;
 type CoverageRefreshRebuildResult = CoverageBatchRebuildResult;
 
-const TOKEN_SYNC_TIMEOUT_MS = 15_000;
 const SYNC_ALL_BATCH_SIZE = 3;
+
+const SAFE_TOKEN_SYNC_REASON_MESSAGES: Record<string, string> = {
+  site_disabled: '站点已禁用',
+  apikey_connection: 'API Key 连接不支持账号令牌同步',
+  missing_access_token: '账号缺少访问令牌',
+  no_upstream_tokens: '上游未返回可用令牌',
+  unsupported_platform: '当前平台不支持账号令牌同步',
+  sync_error: '账号令牌同步失败',
+};
 
 function buildSyncAccountLabel(item: SyncExecutionResult): string {
   const account = (item.accountName || `#${item.accountId}`).trim();
@@ -82,8 +71,27 @@ function buildSyncAccountLabel(item: SyncExecutionResult): string {
   return `${account} @ ${site}`;
 }
 
+function buildSyncOutcomeMessage(item: SyncExecutionResult, fallback = ''): string {
+  const tokenMessage = String(item.message || item.reason || fallback).trim();
+  const rateWarning = item.rateSync.status === 'failed'
+    ? `倍率同步失败：${item.rateSync.message}`
+    : '';
+  return [tokenMessage, rateWarning].filter(Boolean).join('；');
+}
+
+function buildSafePersistentSyncOutcomeMessage(item: SyncExecutionResult, fallback = ''): string {
+  const tokenMessage = item.status === 'synced'
+    ? ''
+    : (SAFE_TOKEN_SYNC_REASON_MESSAGES[String(item.reason || '')]
+      || (item.status === 'skipped' ? '账号令牌同步已跳过' : fallback || '账号令牌同步失败'));
+  const rateWarning = item.rateSync.status === 'failed'
+    ? '倍率同步失败：上游倍率同步失败'
+    : '';
+  return [tokenMessage, rateWarning].filter(Boolean).join('；');
+}
+
 function buildSyncReason(item: SyncExecutionResult): string {
-  const message = String(item.message || item.reason || '').trim();
+  const message = buildSafePersistentSyncOutcomeMessage(item);
   if (!message) return '';
   if (message.length <= 32) return message;
   return `${message.slice(0, 32)}...`;
@@ -95,6 +103,7 @@ function buildTokenSyncTaskDetailMessage(results: SyncExecutionResult[]): string
   const synced = results.filter((item) => item.status === 'synced');
   const skipped = results.filter((item) => item.status === 'skipped');
   const failed = results.filter((item) => item.status === 'failed');
+  const rateFailed = results.filter((item) => item.rateSync.status === 'failed');
 
   const renderRows = (rows: SyncExecutionResult[], withReason = false) => {
     const sliced = rows.slice(0, 12).map((item) => {
@@ -111,6 +120,7 @@ function buildTokenSyncTaskDetailMessage(results: SyncExecutionResult[]): string
     `成功(${synced.length}): ${synced.length > 0 ? renderRows(synced) : '-'}`,
     `跳过(${skipped.length}): ${skipped.length > 0 ? renderRows(skipped, true) : '-'}`,
     `失败(${failed.length}): ${failed.length > 0 ? renderRows(failed, true) : '-'}`,
+    `倍率失败(${rateFailed.length}): ${rateFailed.length > 0 ? renderRows(rateFailed, true) : '-'}`,
   ];
   return segments.join('\n');
 }
@@ -180,203 +190,31 @@ function normalizeBatchIds(input: unknown): number[] {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
-async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      fn(),
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExecutionResult> {
-  const accountId = row.accounts.id;
-  const base = {
-    accountId,
-    accountName: row.accounts.username || `account-${accountId}`,
-    accountStatus: row.accounts.status,
-    siteId: row.sites.id,
-    siteName: row.sites.name,
-    siteStatus: row.sites.status,
-  };
-
-  if (isSiteDisabled(row.sites.status)) {
-    return {
-      ...base,
-      status: 'skipped',
-      reason: 'site_disabled',
-      message: 'site disabled',
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
-
-  if (isApiKeyConnection(row.accounts)) {
-    return {
-      ...base,
-      status: 'skipped',
-      reason: 'apikey_connection',
-      message: 'apikey connection does not support account tokens',
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
-
-  if (!row.accounts.accessToken) {
-    if (row.accounts.apiToken) {
-      try {
-        const convergence = await convergeAccountMutation({
-          accountId,
-          preferredApiToken: row.accounts.apiToken,
-          defaultTokenSource: 'legacy',
-        });
-        if (convergence.defaultTokenId != null) {
-          return {
-            ...base,
-            status: 'synced',
-            reason: 'legacy_default_token_restored',
-            message: 'restored local default token from legacy api token',
-            synced: true,
-            created: 0,
-            updated: 0,
-            total: 0,
-            defaultTokenId: convergence.defaultTokenId,
-          };
-        }
-      } catch (error: any) {
-        return {
-          ...base,
-          status: 'failed',
-          reason: 'sync_error',
-          message: error?.message || 'sync failed',
-          synced: false,
-          created: 0,
-          updated: 0,
-          total: 0,
-          defaultTokenId: null,
-        };
-      }
-    }
-    return {
-      ...base,
-      status: 'skipped',
-      reason: 'missing_access_token',
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
-
-  const adapter = getAdapter(row.sites.platform);
-  if (!adapter) {
-    return {
-      ...base,
-      status: 'failed',
-      reason: 'unsupported_platform',
-      message: `不支持的平台: ${row.sites.platform}`,
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
-
-  try {
-    const platformUserId = resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username);
-    const accountProxyUrl = getProxyUrlFromExtraConfig(row.accounts.extraConfig);
-    let tokens = await withTimeout(
-      () => withAccountProxyOverride(accountProxyUrl,
-        () => adapter.getApiTokens(row.sites.url, row.accounts.accessToken, platformUserId)),
-      TOKEN_SYNC_TIMEOUT_MS,
-      `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
-    );
-
-    if (tokens.length === 0) {
-      const fallback = await withTimeout(
-        () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(row.sites.url, row.accounts.accessToken, platformUserId)),
-        TOKEN_SYNC_TIMEOUT_MS,
-        `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
-      );
-      if (fallback) {
-        tokens = [{ name: 'default', key: fallback, enabled: true, tokenGroup: 'default' }];
-      }
-    }
-
-    if (tokens.length === 0) {
-      return {
-        ...base,
-        status: 'skipped',
-        reason: 'no_upstream_tokens',
-        message: 'upstream returned no api tokens',
-        synced: false,
-        created: 0,
-        updated: 0,
-        total: 0,
-        defaultTokenId: null,
-      };
-    }
-
-    const convergence = await convergeAccountMutation({
-      accountId,
-      upstreamTokens: tokens,
-    });
-    const synced = convergence.tokenSync!;
-    if ((synced.maskedPending || 0) > 0) {
-      return {
-        ...base,
-        status: 'synced',
-        reason: 'upstream_masked_tokens',
-        message: `上游返回 ${synced.maskedPending} 条脱敏令牌，已保存为待补全记录，请手动补全明文 token。`,
-        synced: true,
-        ...synced,
-      };
-    }
-    return {
-      ...base,
-      status: 'synced',
-      synced: true,
-      ...synced,
-    };
-  } catch (error: any) {
-    return {
-      ...base,
-      status: 'failed',
-      reason: 'sync_error',
-      message: error?.message || 'sync failed',
-      synced: false,
-      created: 0,
-      updated: 0,
-      total: 0,
-      defaultTokenId: null,
-    };
-  }
+  return syncAccountPlatformData(row);
 }
 
 async function appendTokenSyncEvent(result: SyncExecutionResult) {
-  const title = result.status === 'synced'
+  const rateFailureMessage = result.rateSync.status === 'failed'
+    ? '上游倍率同步失败'
+    : '';
+  const rateFailed = rateFailureMessage.length > 0;
+  const baseTitle = result.status === 'synced'
     ? '令牌同步成功'
     : (result.status === 'skipped' ? '令牌同步跳过' : '令牌同步失败');
+  const title = rateFailed ? `${baseTitle}（倍率同步失败）` : baseTitle;
   const level = result.status === 'synced'
-    ? 'info'
+    ? (rateFailed ? 'warning' : 'info')
     : (result.status === 'skipped' ? 'warning' : 'error');
-  const detail = result.status === 'synced'
+  const tokenDetail = result.status === 'synced'
     ? `新增 ${result.created}，更新 ${result.updated}，待补全 ${result.maskedPending || 0}，总数 ${result.total}`
-    : (result.message || result.reason || 'sync skipped');
+    : buildSafePersistentSyncOutcomeMessage({
+      ...result,
+      rateSync: { status: 'skipped', reason: 'reported_separately' },
+    }, '账号令牌同步失败');
+  const detail = rateFailed
+    ? `${tokenDetail}；倍率同步失败：${rateFailureMessage}`
+    : tokenDetail;
 
   try {
     await db.insert(schema.events).values({
@@ -421,11 +259,41 @@ async function executeSyncAllAccountTokens() {
     synced: results.filter((item) => item.status === 'synced').length,
     skipped: results.filter((item) => item.status === 'skipped').length,
     failed: results.filter((item) => item.status === 'failed').length,
+    rateFailed: results.filter((item) => item.rateSync.status === 'failed').length,
     created: results.reduce((acc, item) => acc + item.created, 0),
     updated: results.reduce((acc, item) => acc + item.updated, 0),
   };
 
   return { summary, results, coverageRefresh };
+}
+
+function buildSafeBackgroundSyncResult(
+  result: Awaited<ReturnType<typeof executeSyncAllAccountTokens>>,
+) {
+  return {
+    summary: result.summary,
+    results: result.results.map((item): SyncExecutionResult => ({
+      accountId: item.accountId,
+      accountName: item.accountName,
+      accountStatus: item.accountStatus,
+      siteId: item.siteId,
+      siteName: item.siteName,
+      siteStatus: item.siteStatus,
+      status: item.status,
+      reason: item.reason,
+      message: buildSafePersistentSyncOutcomeMessage(item) || undefined,
+      synced: item.synced,
+      created: item.created,
+      updated: item.updated,
+      maskedPending: item.maskedPending,
+      pendingTokenIds: item.pendingTokenIds,
+      total: item.total,
+      defaultTokenId: item.defaultTokenId,
+      rateSync: item.rateSync.status === 'failed'
+        ? { status: 'failed', message: '上游倍率同步失败' }
+        : item.rateSync,
+    })),
+  };
 }
 
 async function refreshCoverageForAccounts(accountIds: number[]) {
@@ -942,8 +810,22 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         getProxyUrlFromExtraConfig(account.extraConfig),
         () => adapter.getUserGroups(site.url, account.accessToken, platformUserId),
       );
-      const normalized = Array.from(new Set((groups || []).map((item) => String(item || '').trim()).filter(Boolean)));
-      return { success: true, groups: normalized.length > 0 ? normalized : ['default'] };
+      const rates = await listAccountGroupRates(accountId);
+      const normalized = Array.from(new Set([
+        ...(groups || []).map((item) => String(item || '').trim()).filter(Boolean),
+        ...rates.map((rate) => rate.groupKey),
+      ]));
+      return {
+        success: true,
+        groups: normalized.length > 0 ? normalized : ['default'],
+        rates: rates.map((rate) => ({
+          groupKey: rate.groupKey,
+          groupName: rate.groupName,
+          description: rate.description,
+          ratio: rate.ratio,
+          lastSyncedAt: rate.lastSyncedAt,
+        })),
+      };
     } catch (error: any) {
       return reply.code(502).send({
         success: false,
@@ -988,10 +870,18 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'API Key 连接不支持同步账号令牌' });
     }
     if (result.status === 'failed' && result.reason === 'unsupported_platform') {
-      return reply.code(400).send({ success: false, message: result.message });
+      return reply.code(400).send({
+        success: false,
+        ...result,
+        message: buildSyncOutcomeMessage(result, '同步失败'),
+      });
     }
     if (result.status === 'failed') {
-      return reply.code(502).send({ success: false, message: result.message || '同步失败' });
+      return reply.code(502).send({
+        success: false,
+        ...result,
+        message: buildSyncOutcomeMessage(result, '同步失败'),
+      });
     }
     const coverageRefresh = await refreshCoverageForAccounts([accountId]);
     return { success: true, ...result, coverageRefresh };
@@ -1017,7 +907,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         successTitle: (currentTask) => {
           const summary = (currentTask.result as any)?.summary;
           if (!summary) return '同步全部账号令牌已完成';
-          return `同步全部账号令牌已完成（成功${summary.synced}/跳过${summary.skipped}/失败${summary.failed}）`;
+          const rateSummary = summary.rateFailed > 0 ? `/倍率失败${summary.rateFailed}` : '';
+          return `同步全部账号令牌已完成（成功${summary.synced}/跳过${summary.skipped}/失败${summary.failed}${rateSummary}）`;
         },
         failureTitle: () => '同步全部账号令牌失败',
         successMessage: (currentTask) => {
@@ -1025,13 +916,20 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           const results = (currentTask.result as any)?.results as SyncExecutionResult[] | undefined;
           if (!summary) return '全部账号令牌同步任务已完成';
           const detail = buildTokenSyncTaskDetailMessage(Array.isArray(results) ? results : []);
+          const summaryText = `全部账号令牌同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}，倍率失败 ${summary.rateFailed || 0}`;
           return detail
-            ? `全部账号令牌同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}\n${detail}`
-            : `全部账号令牌同步完成：成功 ${summary.synced}，跳过 ${summary.skipped}，失败 ${summary.failed}`;
+            ? `${summaryText}\n${detail}`
+            : summaryText;
         },
-        failureMessage: (currentTask) => `全部账号令牌同步失败：${currentTask.error || 'unknown error'}`,
+        failureMessage: () => '全部账号令牌同步任务执行失败',
       },
-      async () => executeSyncAllAccountTokens(),
+      async () => {
+        try {
+          return buildSafeBackgroundSyncResult(await executeSyncAllAccountTokens());
+        } catch {
+          throw new Error('账号令牌同步任务执行失败');
+        }
+      },
     );
 
     return reply.code(202).send({

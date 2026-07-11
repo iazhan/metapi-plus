@@ -37,6 +37,18 @@ describe('database schema parity', () => {
     }
   });
 
+  it('keeps account group-rate upgrades in the external-dialect artifacts', () => {
+    const mysqlUpgrade = readFileSync(resolve(generatedDir, 'mysql.upgrade.sql'), 'utf8');
+    const postgresUpgrade = readFileSync(resolve(generatedDir, 'postgres.upgrade.sql'), 'utf8');
+
+    expect(mysqlUpgrade).toContain('CREATE TABLE IF NOT EXISTS `account_group_rates`');
+    expect(mysqlUpgrade).toContain('CREATE UNIQUE INDEX `account_group_rates_account_group_unique`');
+    expect(mysqlUpgrade).toContain('CREATE INDEX `account_group_rates_account_id_idx`');
+    expect(postgresUpgrade).toContain('CREATE TABLE IF NOT EXISTS "account_group_rates"');
+    expect(postgresUpgrade).toContain('CREATE UNIQUE INDEX "account_group_rates_account_group_unique"');
+    expect(postgresUpgrade).toContain('CREATE INDEX "account_group_rates_account_id_idx"');
+  });
+
   it('keeps runtime support modules scoped to contract-defined tables and indexes', () => {
     const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
     const supportContent = supportPaths

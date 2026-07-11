@@ -16,6 +16,7 @@ const { apiMock } = vi.hoisted(() => ({
     getAccountTokenValue: vi.fn(),
     getAccountTokenGroups: vi.fn(),
     syncAccountTokens: vi.fn(),
+    syncAllAccountTokens: vi.fn(),
     updateAccountToken: vi.fn(),
   },
 }));
@@ -139,6 +140,10 @@ describe('Tokens edit modal and row selection', () => {
       status: 'synced',
       created: 0,
       updated: 0,
+    });
+    apiMock.syncAllAccountTokens.mockResolvedValue({
+      success: true,
+      results: [],
     });
   });
 
@@ -457,6 +462,177 @@ describe('Tokens edit modal and row selection', () => {
       expect(rendered).toContain('上游返回 1 条脱敏令牌');
       expect(apiMock.syncAccountTokens).toHaveBeenCalledWith(1);
       expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows a warning when token sync succeeds but group-rate sync fails', async () => {
+    apiMock.syncAccountTokens.mockResolvedValueOnce({
+      success: true,
+      synced: true,
+      status: 'synced',
+      created: 1,
+      updated: 0,
+      rateSync: {
+        status: 'failed',
+        message: 'rate endpoint unavailable',
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const syncButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步站点令牌');
+      expect(syncButton).toBeTruthy();
+
+      await act(async () => {
+        await syncButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(JSON.stringify(root.toJSON())).toContain('令牌同步完成，但倍率同步失败：rate endpoint unavailable');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not claim token success when token and group-rate sync both fail', async () => {
+    apiMock.syncAccountTokens.mockResolvedValueOnce({
+      success: false,
+      synced: false,
+      status: 'failed',
+      message: 'token endpoint unavailable',
+      created: 0,
+      updated: 0,
+      rateSync: {
+        status: 'failed',
+        message: 'rate endpoint unavailable',
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const syncButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步站点令牌');
+      expect(syncButton).toBeTruthy();
+
+      await act(async () => {
+        await syncButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('令牌同步失败：token endpoint unavailable');
+      expect(rendered).toContain('倍率同步失败：rate endpoint unavailable');
+      expect(rendered).not.toContain('令牌已同步，但倍率同步失败');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('labels skipped token sync separately when group-rate sync fails', async () => {
+    apiMock.syncAccountTokens.mockResolvedValueOnce({
+      success: true,
+      synced: false,
+      status: 'skipped',
+      message: 'upstream returned no api tokens',
+      created: 0,
+      updated: 0,
+      rateSync: {
+        status: 'failed',
+        message: 'rate endpoint unavailable',
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const syncButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步站点令牌');
+      expect(syncButton).toBeTruthy();
+
+      await act(async () => {
+        await syncButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('令牌同步已跳过：upstream returned no api tokens');
+      expect(rendered).toContain('倍率同步失败：rate endpoint unavailable');
+      expect(rendered).not.toContain('令牌已同步，但倍率同步失败');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('uses each token outcome when reporting batch group-rate failures', async () => {
+    apiMock.syncAllAccountTokens.mockResolvedValueOnce({
+      success: true,
+      results: [
+        {
+          accountId: 1,
+          accountName: 'failed-user',
+          status: 'failed',
+          message: 'token down',
+          rateSync: { status: 'failed', message: 'rate down' },
+        },
+        {
+          accountId: 2,
+          accountName: 'skipped-user',
+          status: 'skipped',
+          message: 'no tokens',
+          rateSync: { status: 'failed', message: 'rate down' },
+        },
+        {
+          accountId: 3,
+          accountName: 'synced-user',
+          status: 'synced',
+          rateSync: { status: 'failed', message: 'rate down' },
+        },
+      ],
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const syncAllButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步全部账号');
+      expect(syncAllButton).toBeTruthy();
+
+      await act(async () => {
+        await syncAllButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('failed-user 令牌同步失败，倍率同步失败：rate down');
+      expect(rendered).toContain('skipped-user 令牌同步已跳过，倍率同步失败：rate down');
+      expect(rendered).toContain('synced-user 令牌已同步，但倍率同步失败：rate down');
+      expect(rendered).not.toContain('failed-user 令牌已同步');
+      expect(rendered).not.toContain('skipped-user 令牌已同步');
     } finally {
       root?.unmount();
     }

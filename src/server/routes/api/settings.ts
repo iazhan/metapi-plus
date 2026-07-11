@@ -38,12 +38,15 @@ import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localT
 import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
+import { RuntimeMaintenanceConflictError } from '../../services/runtimeMaintenanceOwner.js';
 import { normalizeLogCleanupRetentionDays } from '../../shared/logCleanupRetentionDays.js';
+import { normalizeAccountGroupRateRefreshIntervalMinutes } from '../../shared/accountGroupRateRefresh.js';
 import { stopProxyLogRetentionService } from '../../services/proxyLogRetentionService.js';
 import {
   startModelAvailabilityProbeScheduler,
   stopModelAvailabilityProbeScheduler,
 } from '../../services/modelAvailabilityProbeService.js';
+import { updateAccountRateRefreshScheduler } from '../../services/accountRateRefreshScheduler.js';
 import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
 
 type RoutingWeights = typeof config.routingWeights;
@@ -53,6 +56,8 @@ interface RuntimeSettingsBody {
   systemProxyUrl?: string;
   payloadRules?: unknown;
   modelAvailabilityProbeEnabled?: boolean;
+  accountGroupRateRefreshEnabled?: boolean;
+  accountGroupRateRefreshIntervalMinutes?: number;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
@@ -423,6 +428,25 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       }
       return;
     }
+    case 'account_group_rate_refresh_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.accountGroupRateRefreshEnabled = value;
+      updateAccountRateRefreshScheduler({
+        enabled: config.accountGroupRateRefreshEnabled,
+        intervalMinutes: config.accountGroupRateRefreshIntervalMinutes,
+      });
+      return;
+    }
+    case 'account_group_rate_refresh_interval_minutes': {
+      const intervalMinutes = normalizeAccountGroupRateRefreshIntervalMinutes(value);
+      if (intervalMinutes == null) return;
+      config.accountGroupRateRefreshIntervalMinutes = intervalMinutes;
+      updateAccountRateRefreshScheduler({
+        enabled: config.accountGroupRateRefreshEnabled,
+        intervalMinutes: config.accountGroupRateRefreshIntervalMinutes,
+      });
+      return;
+    }
     case 'codex_upstream_websocket_enabled': {
       if (typeof value !== 'boolean') return;
       config.codexUpstreamWebsocketEnabled = value;
@@ -722,6 +746,8 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     modelAvailabilityProbeEnabled: config.modelAvailabilityProbeEnabled,
+    accountGroupRateRefreshEnabled: config.accountGroupRateRefreshEnabled,
+    accountGroupRateRefreshIntervalMinutes: config.accountGroupRateRefreshIntervalMinutes,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
     responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
@@ -1727,6 +1753,48 @@ export async function settingsRoutes(app: FastifyInstance) {
       await upsertSetting('payload_rules', pendingPayloadRules);
     }
 
+    const accountGroupRateRefreshTouched =
+      body.accountGroupRateRefreshEnabled !== undefined
+      || body.accountGroupRateRefreshIntervalMinutes !== undefined;
+    if (accountGroupRateRefreshTouched) {
+      const nextEnabled = body.accountGroupRateRefreshEnabled
+        ?? config.accountGroupRateRefreshEnabled;
+      const nextIntervalMinutes = normalizeAccountGroupRateRefreshIntervalMinutes(
+        body.accountGroupRateRefreshIntervalMinutes
+          ?? config.accountGroupRateRefreshIntervalMinutes,
+      );
+
+      if (nextIntervalMinutes == null) {
+        return reply.code(400).send({
+          success: false,
+          message: '倍率刷新间隔必须是 5 到 10080 之间的整数分钟',
+        });
+      }
+
+      if (nextEnabled !== config.accountGroupRateRefreshEnabled) {
+        changedLabels.push(nextEnabled ? '开启账号组倍率刷新' : '关闭账号组倍率刷新');
+      }
+      if (nextIntervalMinutes !== config.accountGroupRateRefreshIntervalMinutes) {
+        changedLabels.push(`账号组倍率刷新间隔（${config.accountGroupRateRefreshIntervalMinutes}m -> ${nextIntervalMinutes}m）`);
+      }
+
+      await db.transaction(async (tx) => {
+        await upsertSetting('account_group_rate_refresh_enabled', nextEnabled, tx);
+        await upsertSetting(
+          'account_group_rate_refresh_interval_minutes',
+          nextIntervalMinutes,
+          tx,
+        );
+      });
+
+      config.accountGroupRateRefreshEnabled = nextEnabled;
+      config.accountGroupRateRefreshIntervalMinutes = nextIntervalMinutes;
+      updateAccountRateRefreshScheduler({
+        enabled: nextEnabled,
+        intervalMinutes: nextIntervalMinutes,
+      });
+    }
+
     if (changedLabels.length > 0) {
       let eventType: 'checkin' | 'balance' | 'proxy' | 'status' | 'token' = 'status';
       if (changedLabels.length === 1) {
@@ -1866,19 +1934,13 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     try {
       const result = await importBackup(parsedBody.data.data);
-      for (const item of result.appliedSettings) {
-        applyImportedSettingToRuntime(item.key, item.value);
-      }
-      if (result.appliedSettings.some((item) => item.key === 'backup_webdav_config_v1')) {
-        await reloadBackupWebdavScheduler();
-      }
       return {
         success: true,
         message: '导入完成',
         ...result,
       };
     } catch (err: any) {
-      return reply.code(400).send({
+      return reply.code(err instanceof RuntimeMaintenanceConflictError ? 409 : 400).send({
         success: false,
         message: err?.message || '导入失败',
       });
@@ -1945,15 +2007,9 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/backup/webdav/import', async (_, reply) => {
     try {
       const result = await importBackupFromWebdav();
-      for (const item of result.appliedSettings) {
-        applyImportedSettingToRuntime(item.key, item.value);
-      }
-      if (result.appliedSettings.some((item) => item.key === 'backup_webdav_config_v1')) {
-        await reloadBackupWebdavScheduler();
-      }
       return result;
     } catch (err: any) {
-      return reply.code(400).send({
+      return reply.code(err instanceof RuntimeMaintenanceConflictError ? 409 : 400).send({
         success: false,
         message: err?.message || 'WebDAV 导入失败',
       });
@@ -2059,7 +2115,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         success: true,
       };
     } catch (err: any) {
-      return reply.code(500).send({
+      return reply.code(err instanceof RuntimeMaintenanceConflictError ? 409 : 500).send({
         success: false,
         message: err?.message || '重新初始化系统失败',
       });

@@ -44,11 +44,16 @@ services:
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
+      ACCOUNT_GROUP_RATE_REFRESH_ENABLED: "true"
+      ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: "30"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
     restart: unless-stopped
 ```
+
+> [!TIP]
+> 账号分组倍率自动刷新默认开启，默认每 `30` 分钟执行一次；间隔只接受 `5` 到 `10080` 的整数分钟。你也可以在后台「设置」里保存自己的值，之后会覆盖这里的环境默认值。服务启动时或从关闭切回开启时，会立即执行一次**仅倍率刷新**，不会同步 Token、余额、模型或路由；如果刷新遇到过期 Session，系统会先尝试 `Refresh Token`，再尝试用加密保存的账号密码恢复。
 
 ### 3. 设置令牌并启动
 

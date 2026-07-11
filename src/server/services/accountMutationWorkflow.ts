@@ -2,7 +2,9 @@ import { refreshBalance } from './balanceService.js';
 import {
   ensureDefaultTokenForAccount,
   syncTokensFromUpstream,
+  syncTokensFromUpstreamForSession,
 } from './accountTokenService.js';
+import type { AccountSessionSnapshot } from './accountSessionPersistenceService.js';
 import {
   refreshModelsForAccount,
   type ModelRefreshResult,
@@ -30,6 +32,7 @@ export async function convergeAccountMutation(input: {
   defaultTokenSource?: string;
   ensurePreferredTokenBeforeSync?: boolean;
   upstreamTokens?: UpstreamTokenLike[];
+  expectedSession?: AccountSessionSnapshot;
   refreshBalance?: boolean;
   refreshModels?: boolean;
   allowInactiveModelRefresh?: boolean;
@@ -44,7 +47,12 @@ export async function convergeAccountMutation(input: {
   balanceResult: Awaited<ReturnType<typeof refreshBalance>> | null;
   modelRefreshResult: ModelRefreshResult | null;
   rebuildResult: Awaited<ReturnType<typeof routeRefreshWorkflow.rebuildRoutesOnly>> | null;
+  stale: boolean;
 }> {
+  if (input.expectedSession && input.preferredApiToken?.trim()) {
+    throw new Error('preferredApiToken is not supported with expectedSession');
+  }
+
   const result = {
     defaultTokenId: null as number | null,
     tokenSync: null as Awaited<ReturnType<typeof syncTokensFromUpstream>> | null,
@@ -54,6 +62,7 @@ export async function convergeAccountMutation(input: {
     balanceResult: null as Awaited<ReturnType<typeof refreshBalance>> | null,
     modelRefreshResult: null as ModelRefreshResult | null,
     rebuildResult: null as Awaited<ReturnType<typeof routeRefreshWorkflow.rebuildRoutesOnly>> | null,
+    stale: false,
   };
 
   const runStep = async <T>(fn: () => Promise<T>): Promise<T | null> => {
@@ -77,10 +86,19 @@ export async function convergeAccountMutation(input: {
   }
 
   if ((input.upstreamTokens?.length || 0) > 0) {
-    const tokenSync = await runStep(() => syncTokensFromUpstream(input.accountId, input.upstreamTokens!));
+    const tokenSync = input.expectedSession
+      ? await runStep(() => syncTokensFromUpstreamForSession(input.expectedSession!, input.upstreamTokens!))
+      : await runStep(async () => ({
+        status: 'persisted' as const,
+        result: await syncTokensFromUpstream(input.accountId, input.upstreamTokens!),
+      }));
     if (tokenSync) {
-      result.tokenSync = tokenSync;
-      result.defaultTokenId = tokenSync.defaultTokenId ?? result.defaultTokenId;
+      if (tokenSync.status === 'stale') {
+        result.stale = true;
+        return result;
+      }
+      result.tokenSync = tokenSync.result;
+      result.defaultTokenId = tokenSync.result.defaultTokenId ?? result.defaultTokenId;
     }
     if (!input.ensurePreferredTokenBeforeSync && input.preferredApiToken?.trim()) {
       const defaultTokenId = await runStep(() => ensureDefaultTokenForAccount(

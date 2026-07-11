@@ -5,14 +5,14 @@ import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.
 import { reportTokenExpired } from './alertService.js';
 import {
   buildStoredSub2ApiSubscriptionSummary,
-  getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { reloginAccountSession } from './accountLoginSessionService.js';
+import { shouldAttemptAccountSessionRecovery } from './accountSessionRecoveryPolicy.js';
 import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthService.js';
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
@@ -32,21 +32,6 @@ function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boole
   const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
   if (explicit && explicit !== 'auto') return explicit === 'apikey';
   return !(account.accessToken || '').trim();
-}
-
-function shouldAttemptAutoRelogin(message?: string | null): boolean {
-  if (!message) return false;
-  if (isTokenExpiredError({ message })) return true;
-
-  const text = message.toLowerCase();
-  return (
-    text.includes('access token') ||
-    text.includes('new-api-user') ||
-    text.includes('unauthorized') ||
-    text.includes('forbidden') ||
-    text.includes('not login') ||
-    text.includes('not logged')
-  );
 }
 
 function shouldReportExpired(message?: string | null): boolean {
@@ -208,34 +193,6 @@ async function fetchTodayIncomeFromLogs(params: {
   return Math.round(totalIncome * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const loginResult = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!loginResult.success || !loginResult.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: loginResult.accessToken,
-      status: account.status === 'expired' ? 'active' : account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return loginResult.accessToken;
-}
-
 export async function refreshBalance(accountId: number) {
   const rows = await db
     .select()
@@ -277,7 +234,7 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.accessToken;
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
@@ -326,7 +283,7 @@ export async function refreshBalance(accountId: number) {
     const canTryManagedSub2ApiRefresh =
       isSub2ApiPlatform(site.platform)
       && !!getSub2ApiAuthFromExtraConfig(activeExtraConfig)?.refreshToken
-      && shouldAttemptAutoRelogin(message);
+      && shouldAttemptAccountSessionRecovery(message, 'broad');
 
     if (canTryManagedSub2ApiRefresh) {
       try {
@@ -342,10 +299,12 @@ export async function refreshBalance(accountId: number) {
       } catch (retryErr: any) {
         await handleBalanceError(retryErr);
       }
-    } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await tryAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+    } else if (shouldAttemptAccountSessionRecovery(message, 'broad')) {
+      const reloggedSession = await reloginAccountSession(account, site);
+      if (reloggedSession) {
+        activeAccessToken = reloggedSession.accessToken;
+        activeExtraConfig = reloggedSession.extraConfig;
+        platformUserId = reloggedSession.platformUserId;
         try {
           balanceInfo = await readBalance(activeAccessToken);
         } catch (retryErr: any) {

@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { OneHubAdapter } from './oneHub.js';
+import { OneApiAdapter } from './oneApi.js';
+import { DoneHubAdapter } from './doneHub.js';
 
 describe('OneHubAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -86,5 +88,76 @@ describe('OneHubAdapter', () => {
     const tokens = await adapter.getApiTokens(baseUrl, 'token');
     expect(tokens.length).toBe(1);
     expect(tokens[0].key).toBe('sk-hub-abc');
+  });
+
+  it('aborts the active token-list fetch instead of accepting its later response', async () => {
+    let requestStarted = false;
+    await startServer((req, res) => {
+      if (req.url?.startsWith('/api/token/')) {
+        requestStarted = true;
+        setTimeout(() => {
+          if (res.destroyed || res.writableEnded) return;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ data: [{ key: 'late-token', status: 1 }] }));
+        }, 50);
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const adapter = new OneHubAdapter();
+    const controller = new AbortController();
+    const pending = adapter.getApiTokens(baseUrl, 'token', undefined, controller.signal);
+
+    await vi.waitFor(() => expect(requestStarted).toBe(true));
+    controller.abort(new Error('cancel one-api token request'));
+
+    await expect(pending).rejects.toThrow('cancel one-api token request');
+  });
+
+  it.each([
+    { platform: 'OneAPI', createAdapter: () => new OneApiAdapter(), status: 401 },
+    { platform: 'OneAPI', createAdapter: () => new OneApiAdapter(), status: 403 },
+    { platform: 'OneAPI', createAdapter: () => new OneApiAdapter(), status: 500 },
+    { platform: 'OneHub', createAdapter: () => new OneHubAdapter(), status: 401 },
+    { platform: 'OneHub', createAdapter: () => new OneHubAdapter(), status: 403 },
+    { platform: 'OneHub', createAdapter: () => new OneHubAdapter(), status: 500 },
+    { platform: 'DoneHub', createAdapter: () => new DoneHubAdapter(), status: 401 },
+    { platform: 'DoneHub', createAdapter: () => new DoneHubAdapter(), status: 403 },
+    { platform: 'DoneHub', createAdapter: () => new DoneHubAdapter(), status: 500 },
+  ])('$platform propagates HTTP $status from token listing', async ({ createAdapter, status }) => {
+    await startServer((_req, res) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: `status ${status}` }));
+    });
+
+    await expect(createAdapter().getApiTokens(baseUrl, 'token'))
+      .rejects.toThrow(new RegExp(`HTTP ${status}`));
+  });
+
+  it.each([
+    { platform: 'OneAPI', createAdapter: () => new OneApiAdapter() },
+    { platform: 'OneHub', createAdapter: () => new OneHubAdapter() },
+    { platform: 'DoneHub', createAdapter: () => new DoneHubAdapter() },
+  ])('$platform rejects success:false from token listing', async ({ createAdapter }) => {
+    await startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: 'token listing disabled' }));
+    });
+
+    await expect(createAdapter().getApiTokens(baseUrl, 'token'))
+      .rejects.toThrow(/token listing disabled/i);
+  });
+
+  it.each([
+    { platform: 'OneAPI', createAdapter: () => new OneApiAdapter() },
+    { platform: 'OneHub', createAdapter: () => new OneHubAdapter() },
+    { platform: 'DoneHub', createAdapter: () => new DoneHubAdapter() },
+  ])('$platform accepts a structurally valid empty token list', async ({ createAdapter }) => {
+    await startServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: { items: [] } }));
+    });
+
+    await expect(createAdapter().getApiTokens(baseUrl, 'token')).resolves.toEqual([]);
   });
 });

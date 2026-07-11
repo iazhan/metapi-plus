@@ -38,7 +38,11 @@ describe('k3s deploy assets', () => {
     expect(normalizedDeploymentTemplate).toContain('{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ else }}:{{ .Values.image.tag }}{{ end }}');
     expect(deploymentTemplate).toMatch(/metapi\/image-digest:\s*\{\{\s*\.Values\.image\.digest\s*\|\s*quote\s*\}\}/);
     expect(deploymentTemplate).toMatch(/checksum\/env-secret:/);
-    expect(deploymentTemplate).toMatch(/replicaCount at 1 or switch persistence\.hostPath to shared storage before scaling/);
+    expect(deploymentTemplate).toMatch(/single-instance runtime requires replicaCount=1/);
+    expect(deploymentTemplate).toContain('type: Recreate');
+    expect(deploymentTemplate).not.toContain('type: RollingUpdate');
+    expect(values).not.toContain('maxSurge');
+    expect(values).not.toContain('maxUnavailable');
     expect(normalizedServiceTemplate).toContain('{{- if and (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) .Values.service.nodePort }}');
     expect(helpersTemplate).toContain('define "metapi.envSecretName"');
     expect(helpersTemplate).toContain('printf "%s-env"');
@@ -63,5 +67,7 @@ describe('k3s deploy assets', () => {
     expect(docs).toContain('image.digest');
     expect(docs).toContain('imagePullPolicy: Always');
     expect(docs).toContain('repository@digest');
+    expect(docs).toContain('Recreate');
+    expect(docs).toContain('单实例');
   });
 });

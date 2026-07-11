@@ -29,3 +29,7 @@ services:
         value: "0 8 * * *"
       - key: BALANCE_REFRESH_CRON
         value: "0 * * * *"
+      - key: ACCOUNT_GROUP_RATE_REFRESH_ENABLED
+        value: "true"
+      - key: ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES
+        value: "30"

@@ -23,7 +23,7 @@ import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
 import { proxyRoutes } from './routes/proxy/router.js';
-import { startScheduler } from './services/checkinScheduler.js';
+import { startScheduler, stopScheduler } from './services/checkinScheduler.js';
 import * as routeRefreshWorkflow from './services/routeRefreshWorkflow.js';
 import { startProxyFileRetentionService, stopProxyFileRetentionService } from './services/proxyFileRetentionService.js';
 import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
@@ -56,7 +56,11 @@ import {
   startUsageAggregationProjectorScheduler,
   stopUsageAggregationProjectorScheduler,
 } from './services/usageAggregationService.js';
-import { reloadBackupWebdavScheduler } from './services/backupService.js';
+import { reloadBackupWebdavScheduler, stopBackupWebdavScheduler } from './services/backupService.js';
+import {
+  startAccountRateRefreshScheduler,
+  stopAccountRateRefreshScheduler,
+} from './services/accountRateRefreshScheduler.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
@@ -66,9 +70,16 @@ import {
   applyRuntimeSettings,
   parseSettingFromMap,
 } from './runtimeSettingsHydration.js';
+import {
+  createGracefulShutdown,
+  initializeRuntimeBeforeCompatibility,
+  registerGracefulShutdownIpc,
+  registerGracefulShutdownSignals,
+} from './serverLifecycle.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 import {
   db,
+  closeDbConnections,
   ensureProxyFileCompatibilityColumns,
   ensureProxyLogClientColumns,
   ensureProxyLogCompatibilityNotesColumn,
@@ -121,17 +132,6 @@ function extractSavedRuntimeDatabaseConfig(settingsMap: Map<string, string>): { 
   };
 }
 
-const LOG_CLEANUP_SETTING_KEYS = [
-  'log_cleanup_cron',
-  'log_cleanup_usage_logs_enabled',
-  'log_cleanup_program_logs_enabled',
-  'log_cleanup_retention_days',
-] as const;
-
-function hasExplicitLogCleanupSettings(settingsMap: Map<string, string>): boolean {
-  return LOG_CLEANUP_SETTING_KEYS.some((key) => settingsMap.has(key));
-}
-
 // Ensure the current runtime database is bootstrapped before reading settings.
 await ensureRuntimeDatabaseReady({
   dialect: runtimeDbDialect,
@@ -140,7 +140,8 @@ await ensureRuntimeDatabaseReady({
 });
 
 // Load runtime config overrides from settings
-try {
+const startupInitialization = await initializeRuntimeBeforeCompatibility({
+  hydrateRuntimeSettings: async () => {
   const initialRows = await db.select().from(schema.settings).all();
   const initialMap = toSettingsMap(initialRows);
   const savedDbConfig = extractSavedRuntimeDatabaseConfig(initialMap);
@@ -170,32 +171,45 @@ try {
     }
   }
 
-  await ensureSiteCompatibilityColumns();
-  await ensureRouteGroupingCompatibilityColumns();
-  await ensureProxyFileCompatibilityColumns();
-  await ensureProxyLogStreamTimingColumns();
-  await ensureProxyLogClientColumns();
-  await ensureProxyLogCompatibilityNotesColumn();
-  await ensureProxyLogDownstreamApiKeyIdColumn();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);
-  config.logCleanupConfigured = hasExplicitLogCleanupSettings(finalMap);
   if (!config.logCleanupConfigured && config.proxyLogRetentionDays > 0) {
     config.logCleanupUsageLogsEnabled = true;
     config.logCleanupProgramLogsEnabled = false;
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(config.proxyLogRetentionDays);
   }
-  await ensureProxyLogBillingDetailsColumn();
-  await repairStoredCreatedAtValues();
-  await migrateSiteApiKeysToAccounts();
-  await ensureDefaultSitesSeeded();
-  await ensureOauthIdentityBackfill();
-  await routeRefreshWorkflow.rebuildRoutesOnly();
-
   console.log('Loaded runtime settings overrides');
-} catch (error) {
-  console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
+  },
+  runCompatibilityWork: async () => {
+    await ensureSiteCompatibilityColumns();
+    await ensureRouteGroupingCompatibilityColumns();
+    await ensureProxyFileCompatibilityColumns();
+    await ensureProxyLogStreamTimingColumns();
+    await ensureProxyLogClientColumns();
+    await ensureProxyLogCompatibilityNotesColumn();
+    await ensureProxyLogDownstreamApiKeyIdColumn();
+    await ensureProxyLogBillingDetailsColumn();
+    await repairStoredCreatedAtValues();
+    await migrateSiteApiKeysToAccounts();
+    await ensureDefaultSitesSeeded();
+    await ensureOauthIdentityBackfill();
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+  },
+});
+if (startupInitialization.hydrationError !== undefined) {
+  console.warn(
+    `Failed to load runtime settings overrides; account rate refresh disabled: ${
+      (startupInitialization.hydrationError as Error)?.message || 'unknown error'
+    }`,
+  );
+}
+if (startupInitialization.compatibilityError !== undefined) {
+  console.warn(
+    `Failed to complete startup compatibility work: ${
+      (startupInitialization.compatibilityError as Error)?.message || 'unknown error'
+    }`,
+  );
 }
 
 await ensureOauthProviderSitesExist();
@@ -265,6 +279,7 @@ await startScheduler();
 await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
+startAccountRateRefreshScheduler();
 startChannelRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
@@ -278,16 +293,41 @@ try {
 setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 startProxyFileRetentionService();
 app.addHook('onClose', async () => {
+  const checkinSchedulerDrain = stopScheduler();
+  const backupWebdavDrain = stopBackupWebdavScheduler();
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
   stopChannelRecoveryProbeScheduler();
+  await stopAccountRateRefreshScheduler({ resumePendingUpdates: false });
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
+  await Promise.all([checkinSchedulerDrain, backupWebdavDrain]);
+});
+
+const gracefulShutdown = createGracefulShutdown({
+  closeApp: () => app.close(),
+  closeDatabase: closeDbConnections,
+});
+registerGracefulShutdownSignals({
+  processTarget: process,
+  shutdown: gracefulShutdown,
+  onError: (error) => {
+    app.log.error(error);
+    process.exitCode = 1;
+  },
+});
+registerGracefulShutdownIpc({
+  processTarget: process,
+  shutdown: gracefulShutdown,
+  onError: (error) => {
+    app.log.error(error);
+    process.exitCode = 1;
+  },
 });
 
 // Start server
@@ -304,5 +344,6 @@ try {
   }
 } catch (err) {
   app.log.error(err);
-  process.exit(1);
+  process.exitCode = 1;
+  await gracefulShutdown();
 }

@@ -25,7 +25,10 @@ K3s 更新中心的日常入口位于：
 >
 > 当前“更新中心”不会直接帮你更新一台普通 Docker 主机上的 Compose 容器。它依赖集群里的 Deploy Helper 去执行 `helm upgrade` 和 `kubectl rollout status`，所以只适用于已经有 K3s / Kubernetes / Helm 的环境。
 >
-> 但如果你是老用户，正打算 **从 Docker Compose 迁到 K3s / Helm，以获得滚动更新能力**，那这页仍然值得看，因为它描述的就是迁移完成后的目标形态。
+> 但如果你是老用户，正打算从 Docker Compose 迁到 K3s / Helm，以获得版本管理、回滚和后台更新入口，那这页仍然值得看，因为它描述的就是迁移完成后的目标形态。
+
+> [!IMPORTANT]
+> Metapi 当前正式支持单实例运行。仓库自带 chart 使用 `replicaCount: 1` 和 `Recreate` 策略，升级时会先停止旧 Pod 再启动新 Pod，因此会有短暂停机。不要增加副本或改回 RollingUpdate；当前内存调度器和维护任务没有跨实例 leader lease。
 
 ## 配置到底在哪里配
 
@@ -55,7 +58,7 @@ K3s 更新中心的日常入口位于：
 | 你的现状 | 是否适用 | 你现在该怎么做 |
 |------|------------|--------------|
 | 只有一个 `docker compose up -d` 跑起来的 Metapi 容器 | 不需要 | 继续用普通 Docker 升级方式 |
-| 目前是 Docker Compose，准备迁到 K3s / Helm 来获得滚动更新 | 需要 | 把本页当成迁移后的目标架构说明，先完成迁移，再启用更新中心 |
+| 目前是 Docker Compose，准备迁到 K3s / Helm 来统一管理版本和回滚 | 需要 | 把本页当成迁移后的目标架构说明，先完成迁移，再启用更新中心 |
 | 有 K3s / Kubernetes 集群，但 Metapi 不是用 Helm release 部署的 | 暂时不建议 | 这套更新中心无法直接接管现有部署 |
 | Metapi 已经是 Helm release，想在后台里看版本并手动点一次升级 | 需要 | 继续看下文 |
 
@@ -88,7 +91,7 @@ docker compose up -d
 
 很多老用户想迁到 K3s / Helm，核心诉求通常不是“为了多一个页面”，而是为了获得这些能力：
 
-- 发布时尽量减少停机时间
+- 用 `Recreate` 明确执行单实例升级，并接受短暂停机
 - 用 Helm 管理版本和回滚
 - 后续在后台里看版本来源，并人工触发一次升级
 
@@ -106,7 +109,7 @@ docker compose up -d
    - 具体备份方式见 [运维手册](./operations.md)。
 2. 评估迁移后的运行数据库。
    - 如果你迁到 K3s 只是想“单副本 + 更规范部署”，SQLite 仍然可以先用。
-   - 如果你更看重后续可维护性、滚动发布体验和外部持久化，通常更建议切到 MySQL / PostgreSQL。
+   - 如果你更看重后续可维护性和外部持久化，通常更建议切到 MySQL / PostgreSQL；这不会改变当前单实例运行约束。
 3. 在新环境里先把 Metapi 作为 Helm release 跑起来。
 4. 确认新实例可正常登录、数据正常、代理请求正常。
 5. 再部署 Deploy Helper，并启用更新中心。

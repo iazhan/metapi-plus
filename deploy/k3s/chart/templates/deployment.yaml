@@ -1,5 +1,5 @@
-{{- if and .Values.persistence.hostPath (gt (int .Values.replicaCount) 1) -}}
-{{- fail "deploy/k3s/chart uses node-local hostPath storage; keep replicaCount at 1 or switch persistence.hostPath to shared storage before scaling" -}}
+{{- if ne (int .Values.replicaCount) 1 -}}
+{{- fail "Metapi's single-instance runtime requires replicaCount=1" -}}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -11,10 +11,7 @@ spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: 2
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: {{ .Values.deployment.strategy.maxSurge }}
-      maxUnavailable: {{ .Values.deployment.strategy.maxUnavailable }}
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "metapi.name" . }}

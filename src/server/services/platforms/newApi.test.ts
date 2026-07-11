@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
+
+vi.mock('../siteProxy.js', () => ({
+  withSiteProxyRequestInit: (_url: string, options: unknown) => options,
+}));
 
 interface RequestSnapshot {
   method: string;
@@ -25,10 +29,41 @@ const GROUP_EXPIRED_TOKEN = 'group-expired-token';
 const SHIELD_LOGIN_USERNAME = 'shield-user';
 const SHIELD_LOGIN_PASSWORD = 'shield-pass';
 const SHIELD_LOGIN_TOKEN = 'login-session-token';
+const SHIELD_LOGIN_USER_ID = 11494;
 const SHIELD_LOGIN_COOKIE = 'challenge-seed';
 const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
 const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
 const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
+const COOKIE_ONLY_LOGIN_USER_ID = 22001;
+const TWO_FACTOR_LOGIN_USERNAME = 'two-factor-user';
+const TWO_FACTOR_LOGIN_PASSWORD = 'two-factor-pass';
+const TURNSTILE_LOGIN_USERNAME = 'turnstile-user';
+const TURNSTILE_LOGIN_PASSWORD = 'turnstile-pass';
+const INVALID_INTEGER_LOGIN_PASSWORD = 'invalid-integer-pass';
+const INVALID_INTEGER_LOGIN_VALUES: Record<string, unknown> = {
+  'invalid-integer-suffix': '42junk',
+  'invalid-integer-decimal': 42.5,
+  'invalid-integer-unsafe': Number.MAX_SAFE_INTEGER + 1,
+};
+const GROUP_RATE_TOKEN = 'group-rate-session-token';
+const AUTO_ONLY_GROUP_RATE_TOKEN = 'auto-only-group-rate-session-token';
+const MALFORMED_GROUP_RATE_TOKEN = 'malformed-group-rate-session-token';
+const FAILED_GROUP_RATE_TOKEN = 'failed-group-rate-session-token';
+const AMBIGUOUS_EMPTY_GROUP_RATE_TOKEN = 'ambiguous-empty-group-rate-session-token';
+const EXPLICIT_EMPTY_GROUP_RATE_TOKEN = 'explicit-empty-group-rate-session-token';
+const COOKIE_GROUP_RATE_TOKEN = 'session=cookie-group-rate-session-token';
+const MALFORMED_BEARER_GROUP_RATE_TOKEN = 'session=malformed-bearer-group-rate-token';
+const NON_AUTH_LOGIN_WORD_GROUP_RATE_TOKEN = 'session=non-auth-login-word-group-rate-token';
+const NON_AUTH_EXPIRED_GROUP_RATE_TOKEN = 'session=non-auth-expired-group-rate-token';
+const NON_SHIELD_HTML_GROUP_RATE_TOKEN = 'session=non-shield-html-group-rate-token';
+const TOKEN_LIST_401_TOKEN = 'token-list-401-token';
+const TOKEN_LIST_PERMISSION_DENIED_TOKEN = 'token-list-permission-denied-token';
+const TOKEN_LIST_500_TOKEN = 'token-list-500-token';
+const TOKEN_LIST_INVALID_JSON_TOKEN = 'token-list-invalid-json-token';
+const TOKEN_LIST_INVALID_STRUCTURE_TOKEN = 'token-list-invalid-structure-token';
+const TOKEN_LIST_EMPTY_TOKEN = 'token-list-empty-token';
+const TOKEN_ABORT_DISCOVERY_TOKEN = 'token-abort-discovery-token';
+const GROUP_PERMISSION_DENIED_TOKEN = 'group-permission-denied-token';
 const OPENAI_MODELS_SHIELDED_TOKEN = 'session=openai-models-shielded-token';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
@@ -65,6 +100,7 @@ describe('NewApiAdapter', () => {
   beforeEach(async () => {
     requests = [];
     server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      res.setHeader('Connection', 'close');
       requests.push({
         method: req.method || 'GET',
         url: req.url || '/',
@@ -137,7 +173,24 @@ describe('NewApiAdapter', () => {
           const isCookieOnlyLogin =
             payload.username === COOKIE_ONLY_LOGIN_USERNAME &&
             payload.password === COOKIE_ONLY_LOGIN_PASSWORD;
-          if (!isShieldLogin && !isCookieOnlyLogin) {
+          const isTwoFactorLogin =
+            payload.username === TWO_FACTOR_LOGIN_USERNAME &&
+            payload.password === TWO_FACTOR_LOGIN_PASSWORD;
+          const isTurnstileLogin =
+            payload.username === TURNSTILE_LOGIN_USERNAME &&
+            payload.password === TURNSTILE_LOGIN_PASSWORD;
+          const invalidIntegerLoginValue = typeof payload.username === 'string'
+            ? INVALID_INTEGER_LOGIN_VALUES[payload.username]
+            : undefined;
+          const isInvalidIntegerLogin = invalidIntegerLoginValue !== undefined
+            && payload.password === INVALID_INTEGER_LOGIN_PASSWORD;
+          if (
+            !isShieldLogin
+            && !isCookieOnlyLogin
+            && !isTwoFactorLogin
+            && !isTurnstileLogin
+            && !isInvalidIntegerLogin
+          ) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, message: 'invalid credentials' }));
             return;
@@ -166,7 +219,34 @@ describe('NewApiAdapter', () => {
             });
             res.end(JSON.stringify({
               success: true,
-              data: {},
+              data: { id: COOKIE_ONLY_LOGIN_USER_ID },
+            }));
+            return;
+          }
+
+          if (isTwoFactorLogin) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              data: { id: 33001, require_2fa: true },
+            }));
+            return;
+          }
+
+          if (isTurnstileLogin) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              message: 'Turnstile verification failed',
+            }));
+            return;
+          }
+
+          if (isInvalidIntegerLogin) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              data: { id: invalidIntegerLoginValue, token: SHIELD_LOGIN_TOKEN },
             }));
             return;
           }
@@ -174,7 +254,7 @@ describe('NewApiAdapter', () => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
-            data: { token: SHIELD_LOGIN_TOKEN },
+            data: { id: SHIELD_LOGIN_USER_ID, token: SHIELD_LOGIN_TOKEN },
           }));
         });
         return;
@@ -201,6 +281,49 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url?.startsWith('/api/token/')) {
+        const authorization = typeof req.headers.authorization === 'string'
+          ? req.headers.authorization
+          : '';
+        const cookie = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+        const hasCredential = (token: string) => (
+          authorization === `Bearer ${token}` || cookie.includes(token)
+        );
+
+        if (hasCredential(TOKEN_LIST_PERMISSION_DENIED_TOKEN)) {
+          const status = authorization ? 403 : 401;
+          res.writeHead(status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            message: status === 403 ? 'token list forbidden by role' : 'cookie unauthorized',
+          }));
+          return;
+        }
+        if (hasCredential(TOKEN_LIST_401_TOKEN)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'token list unauthorized' }));
+          return;
+        }
+        if (hasCredential(TOKEN_LIST_500_TOKEN)) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'token list unavailable' }));
+          return;
+        }
+        if (hasCredential(TOKEN_LIST_INVALID_JSON_TOKEN)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{not-json');
+          return;
+        }
+        if (hasCredential(TOKEN_LIST_INVALID_STRUCTURE_TOKEN)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: { items: 'not-an-array' } }));
+          return;
+        }
+        if (hasCredential(TOKEN_LIST_EMPTY_TOKEN)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: { items: [] } }));
+          return;
+        }
+
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${COOKIE_SHIELDED_TOKEN}`) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
@@ -293,6 +416,15 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url === '/api/user/self') {
+        if (req.headers.authorization === `Bearer ${TOKEN_ABORT_DISCOVERY_TOKEN}`) {
+          setTimeout(() => {
+            if (res.destroyed || res.writableEnded) return;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, data: { id: 11494 } }));
+          }, 50);
+          return;
+        }
+
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${BALANCE_SHIELD_FAILURE_TOKEN}`) {
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
@@ -455,7 +587,7 @@ describe('NewApiAdapter', () => {
         }
         if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`session=${CHECKIN_INVALID_URL_FORBIDDEN_SESSION_TOKEN}`)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'forbidden' }));
+          res.end(JSON.stringify({ success: false, message: 'New-Api-User permission denied' }));
           return;
         }
 
@@ -533,6 +665,111 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url === '/api/user/self/groups') {
+        if (req.headers.authorization === `Bearer ${GROUP_PERMISSION_DENIED_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'access token 权限不足' }));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(GROUP_PERMISSION_DENIED_TOKEN)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { default: { ratio: 1, desc: 'Default group' } },
+          }));
+          return;
+        }
+
+        if (req.headers.authorization === `Bearer ${COOKIE_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Unauthorized, invalid access token' }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${MALFORMED_BEARER_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{broken-json');
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${NON_AUTH_LOGIN_WORD_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: '登录方式配置不支持分组倍率' }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${NON_AUTH_EXPIRED_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'subscription expired' }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${NON_SHIELD_HTML_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end('<html><script>window.maintenance = true;</script><body>maintenance</body></html>');
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(COOKIE_GROUP_RATE_TOKEN)
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: {
+              default: { ratio: 1, desc: 'Default group' },
+              vip: { ratio: 0.8, desc: 'VIP group' },
+            },
+          }));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(MALFORMED_BEARER_GROUP_RATE_TOKEN)
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { default: { ratio: 1, desc: 'Default group' } },
+          }));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(NON_AUTH_LOGIN_WORD_GROUP_RATE_TOKEN)
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { default: { ratio: 1, desc: 'Default group' } },
+          }));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(NON_AUTH_EXPIRED_GROUP_RATE_TOKEN)
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { default: { ratio: 1, desc: 'Default group' } },
+          }));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(NON_SHIELD_HTML_GROUP_RATE_TOKEN)
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { default: { ratio: 1, desc: 'Default group' } },
+          }));
+          return;
+        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${GROUP_EXPIRED_TOKEN}`) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'access token expired' }));
@@ -541,6 +778,69 @@ describe('NewApiAdapter', () => {
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === 'Bearer session-token') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, data: { default: true, gemini: true } }));
+          return;
+        }
+        if (
+          req.headers.authorization === `Bearer ${GROUP_RATE_TOKEN}`
+          && req.headers['new-api-user'] === String(SHIELD_LOGIN_USER_ID)
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: {
+              default: { ratio: 1, desc: 'Default group' },
+              vip: { ratio: 0.8, desc: 'VIP group' },
+              auto: { ratio: '自动', desc: 'Automatic routing' },
+            },
+          }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${AUTO_ONLY_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: {
+              auto: { ratio: '自动', desc: 'Automatic routing' },
+            },
+          }));
+          return;
+        }
+        if (
+          req.headers.authorization === `Bearer ${MALFORMED_GROUP_RATE_TOKEN}`
+          || (typeof req.headers.cookie === 'string'
+            && req.headers.cookie.includes(MALFORMED_GROUP_RATE_TOKEN))
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: {
+              default: { ratio: 1 },
+              broken: { ratio: 'not-a-rate' },
+            },
+          }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${FAILED_GROUP_RATE_TOKEN}`) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({}));
+          return;
+        }
+        if (
+          typeof req.headers.cookie === 'string'
+          && req.headers.cookie.includes(FAILED_GROUP_RATE_TOKEN)
+        ) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({}));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${AMBIGUOUS_EMPTY_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({}));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${EXPLICIT_EMPTY_GROUP_RATE_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: {} }));
           return;
         }
       }
@@ -621,12 +921,69 @@ describe('NewApiAdapter', () => {
     expect(token).toBe('api-key-from-token-list');
   });
 
+  it.each([
+    [TOKEN_LIST_401_TOKEN, /HTTP 401/i],
+    [TOKEN_LIST_500_TOKEN, /HTTP 500/i],
+    [TOKEN_LIST_INVALID_JSON_TOKEN, /invalid token list response/i],
+    [TOKEN_LIST_INVALID_STRUCTURE_TOKEN, /invalid token list response/i],
+  ])('rejects failed or malformed token-list responses for %s', async (accessToken, expectedError) => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getApiTokens(baseUrl, accessToken, 11494)).rejects.toThrow(expectedError);
+  });
+
+  it('accepts an explicit successful empty token list', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getApiTokens(baseUrl, TOKEN_LIST_EMPTY_TOKEN, 11494)).resolves.toEqual([]);
+  });
+
+  it('preserves a bearer permission denial without trying cookie token-list fallback', async () => {
+    const adapter = new NewApiAdapter();
+    const requestStart = requests.length;
+
+    await expect(adapter.getApiTokens(
+      baseUrl,
+      TOKEN_LIST_PERMISSION_DENIED_TOKEN,
+      11494,
+    )).rejects.toThrow(/HTTP 403.*forbidden by role/i);
+
+    const tokenRequests = requests.slice(requestStart)
+      .filter((request) => request.url.startsWith('/api/token/'));
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]?.headers.authorization)
+      .toBe(`Bearer ${TOKEN_LIST_PERMISSION_DENIED_TOKEN}`);
+  });
+
+  it('aborts token user-id discovery before starting token-list fallbacks', async () => {
+    const adapter = new NewApiAdapter();
+    const requestStart = requests.length;
+    const controller = new AbortController();
+    const pending = adapter.getApiTokens(
+      baseUrl,
+      TOKEN_ABORT_DISCOVERY_TOKEN,
+      undefined,
+      controller.signal,
+    );
+
+    await vi.waitFor(() => expect(requests.some((request) => (
+      request.url === '/api/user/self'
+      && request.headers.authorization === `Bearer ${TOKEN_ABORT_DISCOVERY_TOKEN}`
+    ))).toBe(true));
+    controller.abort(new Error('cancel new-api token discovery'));
+
+    await expect(pending).rejects.toThrow('cancel new-api token discovery');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(requests.slice(requestStart).some((request) => request.url.startsWith('/api/token/'))).toBe(false);
+  });
+
   it('solves acw challenge for account-password login', async () => {
     const adapter = new NewApiAdapter();
     const result = await adapter.login(baseUrl, SHIELD_LOGIN_USERNAME, SHIELD_LOGIN_PASSWORD);
 
     expect(result.success).toBe(true);
     expect(result.accessToken).toBe(SHIELD_LOGIN_TOKEN);
+    expect(result.platformUserId).toBe(SHIELD_LOGIN_USER_ID);
     expect(
       requests.some(
         (r) =>
@@ -650,9 +1007,214 @@ describe('NewApiAdapter', () => {
     const result = await adapter.login(baseUrl, COOKIE_ONLY_LOGIN_USERNAME, COOKIE_ONLY_LOGIN_PASSWORD);
 
     expect(result.success).toBe(true);
+    expect(result.platformUserId).toBe(COOKIE_ONLY_LOGIN_USER_ID);
     expect(result.accessToken || '').toContain(`session=${COOKIE_ONLY_LOGIN_SESSION}`);
     expect(result.accessToken || '').toContain(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`);
     expect(result.accessToken || '').toContain(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`);
+  });
+
+  it('rejects account-password login when the upstream requires 2FA', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, TWO_FACTOR_LOGIN_USERNAME, TWO_FACTOR_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('2FA');
+  });
+
+  it('returns an explicit failure when the upstream requires Turnstile', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, TURNSTILE_LOGIN_USERNAME, TURNSTILE_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Turnstile');
+  });
+
+  it.each(Object.keys(INVALID_INTEGER_LOGIN_VALUES))(
+    'does not accept malformed platform user id from login: %s',
+    async (username) => {
+      const adapter = new NewApiAdapter();
+      const result = await adapter.login(baseUrl, username, INVALID_INTEGER_LOGIN_PASSWORD);
+
+      expect(result).toMatchObject({
+        success: true,
+        accessToken: SHIELD_LOGIN_TOKEN,
+      });
+      expect(result).not.toHaveProperty('platformUserId');
+    },
+  );
+
+  it('returns numeric account group rates and skips automatic groups', async () => {
+    const adapter = new NewApiAdapter();
+
+    const rates = await adapter.getGroupRates(baseUrl, GROUP_RATE_TOKEN, SHIELD_LOGIN_USER_ID);
+
+    expect(rates).toEqual([
+      {
+        groupKey: 'default',
+        groupName: 'default',
+        description: 'Default group',
+        ratio: 1,
+      },
+      {
+        groupKey: 'vip',
+        groupName: 'vip',
+        description: 'VIP group',
+        ratio: 0.8,
+      },
+    ]);
+  });
+
+  it('falls back to the login cookie when the bearer group-rate envelope reports an expired access token', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      COOKIE_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).resolves.toEqual([
+      {
+        groupKey: 'default',
+        groupName: 'default',
+        description: 'Default group',
+        ratio: 1,
+      },
+      {
+        groupKey: 'vip',
+        groupName: 'vip',
+        description: 'VIP group',
+        ratio: 0.8,
+      },
+    ]);
+  });
+
+  it('does not hide malformed bearer group-rate JSON behind a successful cookie fallback', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      MALFORMED_BEARER_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/group rate response.*json/i);
+
+    expect(requests.some((request) => (
+      request.url === '/api/user/self/groups'
+      && typeof request.headers.cookie === 'string'
+      && request.headers.cookie.includes(MALFORMED_BEARER_GROUP_RATE_TOKEN)
+    ))).toBe(false);
+  });
+
+  it('does not treat every group-rate error containing login wording as an expired session', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      NON_AUTH_LOGIN_WORD_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow('登录方式配置不支持分组倍率');
+
+    expect(requests.some((request) => (
+      request.url === '/api/user/self/groups'
+      && typeof request.headers.cookie === 'string'
+      && request.headers.cookie.includes(NON_AUTH_LOGIN_WORD_GROUP_RATE_TOKEN)
+    ))).toBe(false);
+  });
+
+  it('does not treat unrelated expired business state as an expired account session', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      NON_AUTH_EXPIRED_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow('subscription expired');
+
+    expect(requests.some((request) => (
+      request.url === '/api/user/self/groups'
+      && typeof request.headers.cookie === 'string'
+      && request.headers.cookie.includes(NON_AUTH_EXPIRED_GROUP_RATE_TOKEN)
+    ))).toBe(false);
+  });
+
+  it('does not rewrite or cookie-retry ordinary group permission denials as session expiry', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      GROUP_PERMISSION_DENIED_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow('access token 权限不足');
+
+    expect(requests.some((request) => (
+      request.url === '/api/user/self/groups'
+      && typeof request.headers.cookie === 'string'
+      && request.headers.cookie.includes(GROUP_PERMISSION_DENIED_TOKEN)
+    ))).toBe(false);
+  });
+
+  it('does not treat ordinary html with a script tag as a shield challenge', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      NON_SHIELD_HTML_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/group rate response.*json/i);
+
+    expect(requests.some((request) => (
+      request.url === '/api/user/self/groups'
+      && typeof request.headers.cookie === 'string'
+      && request.headers.cookie.includes(NON_SHIELD_HTML_GROUP_RATE_TOKEN)
+    ))).toBe(false);
+  });
+
+  it('rejects a non-empty snapshot containing only automatic groups', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      AUTO_ONLY_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/invalid group rate/i);
+  });
+
+  it('rejects malformed non-automatic account group rates', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      MALFORMED_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/invalid group rate/i);
+  });
+
+  it('rejects non-success HTTP responses from every group-rate auth variant', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      FAILED_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/HTTP 500/i);
+  });
+
+  it('rejects an ambiguous raw empty group-rate object', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      AMBIGUOUS_EMPTY_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).rejects.toThrow(/invalid group rate/i);
+  });
+
+  it('accepts an explicit successful empty group-rate snapshot', async () => {
+    const adapter = new NewApiAdapter();
+
+    await expect(adapter.getGroupRates(
+      baseUrl,
+      EXPLICIT_EMPTY_GROUP_RATE_TOKEN,
+      SHIELD_LOGIN_USER_ID,
+    )).resolves.toEqual([]);
   });
 
   it('detects cookie session values as session cookies for new-api variants', async () => {
@@ -798,13 +1360,12 @@ describe('NewApiAdapter', () => {
     expect(result.message).not.toContain('Invalid URL');
   });
 
-  it('treats forbidden self probe responses as cookie session auth failures', async () => {
+  it('does not replace an endpoint failure with a user-id permission denial from self-probe', async () => {
     const adapter = new NewApiAdapter();
     const result = await adapter.checkin(baseUrl, CHECKIN_INVALID_URL_FORBIDDEN_SESSION_TOKEN, 131936);
 
     expect(result.success).toBe(false);
-    expect(result.message).toContain('forbidden');
-    expect(result.message).not.toContain('Invalid URL');
+    expect(result.message).not.toContain('permission denied');
   });
 
   it('summarizes cloudflare tunnel HTML failures to concise checkin error', async () => {

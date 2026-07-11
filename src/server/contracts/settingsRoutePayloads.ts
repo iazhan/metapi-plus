@@ -1,10 +1,20 @@
 import { z } from 'zod';
+import {
+  ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES,
+  ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES,
+} from '../shared/accountGroupRateRefresh.js';
 
 const backupExportTypeSchema = z.enum(['all', 'accounts', 'preferences']);
 const migrationDialectSchema = z.enum(['sqlite', 'mysql', 'postgres']);
 
 const runtimeSettingsPayloadSchema = z.object({
   modelAvailabilityProbeEnabled: z.boolean().optional(),
+  accountGroupRateRefreshEnabled: z.boolean().optional(),
+  accountGroupRateRefreshIntervalMinutes: z.number()
+    .int()
+    .min(ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES)
+    .max(ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES)
+    .optional(),
   webhookEnabled: z.boolean().optional(),
   barkEnabled: z.boolean().optional(),
   serverChanEnabled: z.boolean().optional(),
@@ -89,6 +99,12 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'modelAvailabilityProbeEnabled') {
     return '批量测活开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'accountGroupRateRefreshEnabled') {
+    return '倍率刷新开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'accountGroupRateRefreshIntervalMinutes') {
+    return '倍率刷新间隔必须是 5 到 10080 之间的整数分钟';
   }
   if (firstPath === 'barkEnabled') {
     return 'Bark 开关格式无效：需要 boolean';

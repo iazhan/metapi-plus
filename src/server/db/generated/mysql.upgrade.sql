@@ -1,2 +1,3 @@
-ALTER TABLE `proxy_logs` ADD COLUMN `compatibility_notes` TEXT;
-ALTER TABLE `sites` ADD COLUMN `responses_strip_image_generation_enabled` BOOLEAN NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS `account_group_rates` (`id` INT AUTO_INCREMENT NOT NULL PRIMARY KEY, `account_id` INT NOT NULL, `group_key` TEXT NOT NULL, `group_name` TEXT NOT NULL, `description` TEXT, `ratio` DOUBLE NOT NULL, `last_synced_at` VARCHAR(191) NOT NULL, `created_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), `updated_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON DELETE CASCADE);
+CREATE UNIQUE INDEX `account_group_rates_account_group_unique` ON `account_group_rates` (`account_id`, `group_key`(191));
+CREATE INDEX `account_group_rates_account_id_idx` ON `account_group_rates` (`account_id`);

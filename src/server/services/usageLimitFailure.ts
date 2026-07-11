@@ -3,6 +3,8 @@ export const EXPLICIT_USAGE_LIMIT_RATE_LIMIT_PATTERNS: RegExp[] = [
   /usage\s+limit\s+has\s+been\s+reached/i,
   /quota\s+exceeded/i,
   /insufficient[_\s-]+quota/i,
+  /insufficient[_\s-]+(?:account[_\s-]+)?balance/i,
+  /余额不足/,
 ];
 
 export const USAGE_LIMIT_RATE_LIMIT_PATTERNS: RegExp[] = [

@@ -1,7 +1,13 @@
 ﻿import { and, eq, ne } from 'drizzle-orm';
+import { inArray, isNull, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
+import {
+  normalizeAccountSessionStatus,
+  sessionSnapshotMatches,
+  type AccountSessionSnapshot,
+} from './accountSessionPersistenceService.js';
 
 type UpstreamApiToken = {
   name?: string | null;
@@ -11,6 +17,11 @@ type UpstreamApiToken = {
 };
 
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+type DbClient = typeof db;
+
+export type SessionAwareTokenSyncResult =
+  | { status: 'persisted'; result: Awaited<ReturnType<typeof syncTokensFromUpstream>> }
+  | { status: 'stale' };
 
 export const ACCOUNT_TOKEN_VALUE_STATUS_READY = 'ready' as const;
 export const ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING = 'masked_pending' as const;
@@ -158,8 +169,16 @@ function sameTokenGroup(
   return normalizeTokenGroup(leftGroup, leftName) === normalizeTokenGroup(rightGroup, rightName);
 }
 
-async function updateAccountApiToken(accountId: number, tokenValue: string | null) {
-  await db.update(schema.accounts)
+function nullableEquals(column: any, value: string | null): SQL {
+  return value === null ? isNull(column) : eq(column, value);
+}
+
+async function updateAccountApiToken(
+  accountId: number,
+  tokenValue: string | null,
+  client: DbClient = db,
+) {
+  await client.update(schema.accounts)
     .set({ apiToken: tokenValue || null, updatedAt: new Date().toISOString() })
     .where(eq(schema.accounts.id, accountId))
     .run();
@@ -264,38 +283,46 @@ export async function setDefaultToken(tokenId: number): Promise<boolean> {
   return true;
 }
 
-export async function repairDefaultToken(accountId: number) {
-  const tokens = await db.select()
+async function repairDefaultTokenWithClient(accountId: number, client: DbClient) {
+  const tokens = await client.select()
     .from(schema.accountTokens)
     .where(eq(schema.accountTokens.accountId, accountId))
     .all();
 
   const enabled = tokens.filter(isUsableAccountToken);
   if (enabled.length === 0) {
-    await updateAccountApiToken(accountId, null);
+    await updateAccountApiToken(accountId, null, client);
     return null;
   }
 
   const currentDefault = enabled.find((t) => t.isDefault) || enabled[0];
   const now = new Date().toISOString();
 
-  await db.update(schema.accountTokens)
+  await client.update(schema.accountTokens)
     .set({ isDefault: false, updatedAt: now })
     .where(eq(schema.accountTokens.accountId, accountId))
     .run();
 
-  await db.update(schema.accountTokens)
+  await client.update(schema.accountTokens)
     .set({ isDefault: true, enabled: true, updatedAt: now })
     .where(eq(schema.accountTokens.id, currentDefault.id))
     .run();
 
-  await updateAccountApiToken(accountId, currentDefault.token);
+  await updateAccountApiToken(accountId, currentDefault.token, client);
   return currentDefault;
 }
 
-export async function syncTokensFromUpstream(accountId: number, upstreamTokens: UpstreamApiToken[]) {
+export async function repairDefaultToken(accountId: number) {
+  return repairDefaultTokenWithClient(accountId, db);
+}
+
+async function syncTokensFromUpstreamWithClient(
+  accountId: number,
+  upstreamTokens: UpstreamApiToken[],
+  client: DbClient,
+) {
   const now = new Date().toISOString();
-  const existing = await db.select()
+  const existing = await client.select()
     .from(schema.accountTokens)
     .where(eq(schema.accountTokens.accountId, accountId))
     .all();
@@ -321,7 +348,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       && resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_READY
     ));
     if (byToken) {
-      await db.update(schema.accountTokens)
+      await client.update(schema.accountTokens)
         .set({
           name: tokenName,
           tokenGroup,
@@ -362,7 +389,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         && sameTokenGroup(row.tokenGroup, row.name, tokenGroup, tokenName)
       ));
 
-      await db.update(schema.accountTokens)
+      await client.update(schema.accountTokens)
         .set({
           name: tokenName,
           tokenGroup,
@@ -382,7 +409,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
 
       if (staleMaskedPlaceholders.length > 0) {
         for (const placeholder of staleMaskedPlaceholders) {
-          await db.delete(schema.accountTokens)
+          await client.delete(schema.accountTokens)
             .where(eq(schema.accountTokens.id, placeholder.id))
             .run();
         }
@@ -406,7 +433,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
 
     if (matchingPlaceholder) {
       const nextEnabled = nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY ? enabled : false;
-      await db.update(schema.accountTokens)
+      await client.update(schema.accountTokens)
         .set({
           name: tokenName,
           token: tokenValue,
@@ -435,7 +462,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       continue;
     }
 
-    const inserted = await db.insert(schema.accountTokens)
+    const inserted = await client.insert(schema.accountTokens)
       .values({
         accountId,
         name: tokenName,
@@ -451,7 +478,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       .run();
     const insertedId = getInsertedRowId(inserted);
     if (insertedId == null) continue;
-    const createdRow = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get();
+    const createdRow = await client.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get();
     if (!createdRow) continue;
 
     existing.push(createdRow);
@@ -463,7 +490,7 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
     }
   }
 
-  const repaired = await repairDefaultToken(accountId);
+  const repaired = await repairDefaultTokenWithClient(accountId, client);
 
   return {
     created,
@@ -473,6 +500,52 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
     total: existing.length,
     defaultTokenId: repaired?.id || null,
   };
+}
+
+export async function syncTokensFromUpstream(accountId: number, upstreamTokens: UpstreamApiToken[]) {
+  return syncTokensFromUpstreamWithClient(accountId, upstreamTokens, db);
+}
+
+/**
+ * Claims the expected Session and converges tokens atomically with default/api-token repair.
+ */
+export async function syncTokensFromUpstreamForSession(
+  expectedSession: AccountSessionSnapshot,
+  upstreamTokens: UpstreamApiToken[],
+): Promise<SessionAwareTokenSyncResult> {
+  return db.transaction(async (tx: DbClient) => {
+    const latest = await tx.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, expectedSession.id))
+      .get();
+    if (
+      !latest
+      || normalizeAccountSessionStatus(latest.status) === 'disabled'
+      || !sessionSnapshotMatches(latest, expectedSession)
+    ) {
+      return { status: 'stale' };
+    }
+
+    const claim = await tx.update(schema.accounts)
+      .set({ updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.accounts.id, expectedSession.id),
+        eq(schema.accounts.siteId, expectedSession.siteId),
+        nullableEquals(schema.accounts.username, expectedSession.username ?? null),
+        nullableEquals(schema.accounts.accessToken, expectedSession.accessToken ?? null),
+        nullableEquals(schema.accounts.extraConfig, expectedSession.extraConfig ?? null),
+        nullableEquals(schema.accounts.status, expectedSession.status ?? null),
+      ))
+      .run();
+    if (Number(claim?.changes || 0) !== 1) {
+      return { status: 'stale' };
+    }
+
+    return {
+      status: 'persisted',
+      result: await syncTokensFromUpstreamWithClient(expectedSession.id, upstreamTokens, tx),
+    };
+  });
 }
 
 export async function listTokensWithRelations(accountId?: number) {
@@ -485,14 +558,37 @@ export async function listTokensWithRelations(accountId?: number) {
     ? await base.where(eq(schema.accountTokens.accountId, accountId)).all()
     : await base.all();
 
+  type AccountGroupRateRow = typeof schema.accountGroupRates.$inferSelect;
+  const accountIds = Array.from(new Set<number>(rows.map((row: any) => Number(row.accounts.id))));
+  const groupRates: AccountGroupRateRow[] = accountIds.length > 0
+    ? await db.select()
+      .from(schema.accountGroupRates)
+      .where(inArray(schema.accountGroupRates.accountId, accountIds))
+      .all()
+    : [];
+  const groupRateByAccountAndKey = new Map<string, AccountGroupRateRow>(
+    groupRates.map((rate) => [`${rate.accountId}:${rate.groupKey}`, rate] as const),
+  );
+
   return rows
     .filter((row) => !isApiKeyConnection(row.accounts))
     .map((row) => {
     const { token, ...tokenMeta } = row.account_tokens;
+    const tokenGroup = normalizeTokenGroup(row.account_tokens.tokenGroup, row.account_tokens.name) || 'default';
+    const groupRate = groupRateByAccountAndKey.get(`${row.accounts.id}:${tokenGroup}`) || null;
     return {
       ...tokenMeta,
       valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
       tokenMasked: maskToken(token, row.sites.platform),
+      groupRate: groupRate
+        ? {
+          groupKey: groupRate.groupKey,
+          groupName: groupRate.groupName,
+          description: groupRate.description,
+          ratio: groupRate.ratio,
+          lastSyncedAt: groupRate.lastSyncedAt,
+        }
+        : null,
       account: {
         id: row.accounts.id,
         username: row.accounts.username,

@@ -1,7 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Sub2ApiAdapter } from './sub2api.js';
+
+vi.mock('../siteProxy.js', () => ({
+  withSiteProxyRequestInit: (_url: string, options: unknown) => options,
+}));
 
 describe('Sub2ApiAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -13,6 +17,7 @@ describe('Sub2ApiAdapter', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (server) {
       const s = server;
       server = undefined;
@@ -24,7 +29,10 @@ describe('Sub2ApiAdapter', () => {
 
   function startServer(handler: (req: IncomingMessage, res: ServerResponse) => void) {
     return new Promise<void>((resolve) => {
-      server = createServer(handler);
+      server = createServer((req, res) => {
+        res.setHeader('Connection', 'close');
+        handler(req, res);
+      });
       server.listen(0, '127.0.0.1', () => {
         const addr = server!.address() as AddressInfo;
         baseUrl = `http://127.0.0.1:${addr.port}`;
@@ -361,6 +369,90 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
   });
 
+  it('preserves an api-key balance failure instead of replacing it with a management-token error', async () => {
+    let managementRequests = 0;
+    await startServer((req, res) => {
+      const auth = req.headers.authorization || '';
+      if (req.url === '/v1/models' && auth === 'Bearer sk-zero-balance') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'INSUFFICIENT_BALANCE',
+          message: 'Insufficient account balance',
+        }));
+        return;
+      }
+      if (req.url?.startsWith('/api/v1/keys') || req.url?.startsWith('/api/v1/api-keys')) {
+        managementRequests += 1;
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'INVALID_TOKEN', message: 'Invalid token' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getModels(baseUrl, 'sk-zero-balance')).rejects.toThrow(
+      /INSUFFICIENT_BALANCE|Insufficient account balance/i,
+    );
+    expect(managementRequests).toBe(0);
+  });
+
+  it('prioritizes a later balance failure over an earlier api-key-required model endpoint', async () => {
+    let managementRequests = 0;
+    await startServer((req, res) => {
+      if (req.url === '/v1/models') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'API_KEY_REQUIRED',
+          message: 'API key is required',
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/models') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'INSUFFICIENT_BALANCE',
+          message: 'Insufficient account balance',
+        }));
+        return;
+      }
+      if (req.url?.startsWith('/api/v1/keys') || req.url?.startsWith('/api/v1/api-keys')) {
+        managementRequests += 1;
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'INVALID_TOKEN', message: 'Invalid token' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getModels(baseUrl, 'sk-order-sensitive')).rejects.toThrow(
+      /INSUFFICIENT_BALANCE|Insufficient account balance/i,
+    );
+    expect(managementRequests).toBe(0);
+  });
+
+  it('does not use an invalid non-jwt api key for management-token discovery', async () => {
+    let managementRequests = 0;
+    await startServer((req, res) => {
+      if (req.url === '/v1/models') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'INVALID_TOKEN', message: 'Invalid token' }));
+        return;
+      }
+      if (req.url?.startsWith('/api/v1/keys') || req.url?.startsWith('/api/v1/api-keys')) {
+        managementRequests += 1;
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'INVALID_TOKEN', message: 'Invalid token' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getModels(baseUrl, 'sk-invalid-api-key')).rejects.toThrow(
+      /INVALID_TOKEN|Invalid token/i,
+    );
+    expect(managementRequests).toBe(0);
+  });
+
   it('discovers an api key for gemini /v1beta/models when session JWT cannot call the endpoint directly', async () => {
     await startServer((req, res) => {
       const auth = req.headers.authorization || '';
@@ -466,9 +558,320 @@ describe('Sub2ApiAdapter', () => {
     await expect(adapter.getBalance(baseUrl, 'expired-token')).rejects.toThrow();
   });
 
-  it('login returns unsupported', async () => {
-    const result = await adapter.login('http://localhost', 'user', 'pass');
+  it('logs in with email and password and returns normalized session metadata', async () => {
+    let loginBody: Record<string, unknown> | null = null;
+    await startServer((req, res) => {
+      if (req.url !== '/api/v1/auth/login' || req.method !== 'POST') {
+        res.writeHead(404).end();
+        return;
+      }
+      let raw = '';
+      req.on('data', (chunk) => {
+        raw += chunk.toString();
+      });
+      req.on('end', () => {
+        loginBody = JSON.parse(raw || '{}') as Record<string, unknown>;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            id: 42,
+            access_token: 'sub2-access-token',
+            refresh_token: 'sub2-refresh-token',
+            expires_in: 3600,
+            requires_2fa: false,
+          },
+        }));
+      });
+    });
+
+    const beforeLogin = Date.now();
+    const result = await adapter.login(baseUrl, 'user@example.com', 'pass');
+
+    expect(loginBody).toEqual({ email: 'user@example.com', password: 'pass' });
+    expect(result).toMatchObject({
+      success: true,
+      accessToken: 'sub2-access-token',
+      refreshToken: 'sub2-refresh-token',
+      username: 'user@example.com',
+      platformUserId: 42,
+    });
+    expect(result.expiresAt).toBeGreaterThanOrEqual(beforeLogin + 3_590_000);
+  });
+
+  const fixedLoginTime = 1_700_000_000_000;
+  const maxSafeExpiresInSeconds = Math.floor(
+    (Number.MAX_SAFE_INTEGER - fixedLoginTime) / 1000,
+  );
+
+  it.each([
+    ['Number.MAX_SAFE_INTEGER', Number.MAX_SAFE_INTEGER, undefined],
+    [
+      'the last whole-second safe boundary',
+      maxSafeExpiresInSeconds,
+      fixedLoginTime + maxSafeExpiresInSeconds * 1000,
+    ],
+    ['one second beyond the safe boundary', maxSafeExpiresInSeconds + 1, undefined],
+  ])('returns expiresAt only for a safe final timestamp: %s', async (_label, expiresIn, expectedExpiresAt) => {
+    vi.spyOn(Date, 'now').mockReturnValue(fixedLoginTime);
+    await startServer((req, res) => {
+      if (req.url !== '/api/v1/auth/login' || req.method !== 'POST') {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        code: 0,
+        message: 'success',
+        data: {
+          id: 42,
+          access_token: 'sub2-access-token',
+          expires_in: expiresIn,
+        },
+      }));
+    });
+
+    const result = await adapter.login(baseUrl, 'user@example.com', 'pass');
+
+    if (expectedExpiresAt === undefined) {
+      expect(result).not.toHaveProperty('expiresAt');
+    } else {
+      expect(result.expiresAt).toBe(expectedExpiresAt);
+    }
+  });
+
+  it.each([
+    ['integer suffix', '42junk'],
+    ['decimal', 42.5],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1],
+  ])('does not accept malformed %s login ids or expiry values', async (_label, invalidValue) => {
+    await startServer((req, res) => {
+      if (req.url !== '/api/v1/auth/login' || req.method !== 'POST') {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        code: 0,
+        message: 'success',
+        data: {
+          id: invalidValue,
+          access_token: 'sub2-access-token',
+          expires_in: invalidValue,
+        },
+      }));
+    });
+
+    const result = await adapter.login(baseUrl, 'user@example.com', 'pass');
+
+    expect(result).toMatchObject({
+      success: true,
+      accessToken: 'sub2-access-token',
+    });
+    expect(result).not.toHaveProperty('platformUserId');
+    expect(result).not.toHaveProperty('expiresAt');
+  });
+
+  it('rejects Sub2API login when the upstream requires 2FA', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/auth/login') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { requires_2fa: true },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const result = await adapter.login(baseUrl, 'user@example.com', 'pass');
+
     expect(result.success).toBe(false);
+    expect(result.message).toContain('2FA');
+  });
+
+  it('loads Sub2API group rates and applies rate overrides by group id', async () => {
+    await startServer((req, res) => {
+      if (req.headers.authorization !== 'Bearer jwt-token') {
+        res.writeHead(401).end();
+        return;
+      }
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: [
+            { id: 7, name: 'standard', description: 'Standard group', rate_multiplier: 1 },
+            { id: 9, name: 'premium', description: 'Premium group', rate_multiplier: 1.5 },
+          ],
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { '9': 1.25 },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).resolves.toEqual([
+      {
+        groupKey: '7',
+        groupName: 'standard',
+        description: 'Standard group',
+        ratio: 1,
+      },
+      {
+        groupKey: '9',
+        groupName: 'premium',
+        description: 'Premium group',
+        ratio: 1.25,
+      },
+    ]);
+  });
+
+  it('uses base group rates when the optional override endpoint is unsupported', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: [{ id: 7, name: 'standard', rate_multiplier: 1 }],
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'not supported' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).resolves.toEqual([
+      { groupKey: '7', groupName: 'standard', ratio: 1 },
+    ]);
+  });
+
+  it('treats an empty available-group array as a complete empty snapshot', async () => {
+    let overrideRequested = false;
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, message: 'success', data: [] }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        overrideRequested = true;
+        res.writeHead(500).end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).resolves.toEqual([]);
+    expect(overrideRequested).toBe(false);
+  });
+
+  it('does not hide server failures from the optional override endpoint', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: [{ id: 7, name: 'standard', rate_multiplier: 1 }],
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: 'database unavailable' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).rejects.toThrow(/HTTP 500/i);
+  });
+
+  it('rejects malformed group lists and invalid rate overrides', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: [{ id: 7, name: 'standard', rate_multiplier: 1 }],
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { '7': 'invalid' },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).rejects.toThrow(/invalid group rate override/i);
+  });
+
+  it('does not hide invalid JSON from the optional override endpoint', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: [{ id: 7, name: 'standard', rate_multiplier: 1 }],
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{not-json');
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).rejects.toThrow();
+  });
+
+  it.each([
+    [{ items: [] }, /invalid group list/i],
+    [[{ id: 0, name: 'broken', rate_multiplier: 1 }], /invalid group/i],
+    [[{ id: 7, name: 'broken', rate_multiplier: 'invalid' }], /invalid group/i],
+  ])('rejects malformed available-group payloads', async (availableData, expectedError) => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups/available') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, message: 'success', data: availableData }));
+        return;
+      }
+      if (req.url === '/api/v1/groups/rates') {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getGroupRates(baseUrl, 'jwt-token')).rejects.toThrow(expectedError);
   });
 
   it('accepts bearer-prefixed access tokens when verifying session tokens', async () => {
@@ -549,6 +952,125 @@ describe('Sub2ApiAdapter', () => {
       { key: 'sk-active', name: 'default', enabled: true },
     ]);
     expect(await adapter.getApiToken(baseUrl, 'jwt-token')).toBe('sk-active');
+  });
+
+  it.each([
+    {
+      name: 'HTTP 401',
+      status: 401,
+      body: JSON.stringify({ code: 401, message: 'unauthorized' }),
+      expectedError: /HTTP 401/i,
+    },
+    {
+      name: 'HTTP 500',
+      status: 500,
+      body: JSON.stringify({ code: 500, message: 'unavailable' }),
+      expectedError: /HTTP 500/i,
+    },
+    {
+      name: 'invalid JSON',
+      status: 200,
+      body: '{not-json',
+      expectedError: /JSON|token list/i,
+    },
+    {
+      name: 'invalid structure',
+      status: 200,
+      body: JSON.stringify({ code: 0, message: 'success', data: { items: 'not-an-array' } }),
+      expectedError: /invalid api key list/i,
+    },
+  ])('rejects $name responses from every api-key endpoint', async ({ status, body, expectedError }) => {
+    await startServer((req, res) => {
+      if (
+        req.url === '/api/v1/keys?page=1&page_size=100'
+        || req.url === '/api/v1/api-keys?page=1&page_size=100'
+      ) {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(body);
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getApiTokens(baseUrl, 'jwt-token')).rejects.toThrow(expectedError);
+  });
+
+  it('preserves an auth failure when the fallback api-key endpoint is unsupported', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 401, message: 'unauthorized' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getApiTokens(baseUrl, 'jwt-token')).rejects.toThrow(/HTTP 401/i);
+  });
+
+  it('preserves a keys permission denial without trying the alternate api-key endpoint', async () => {
+    const requests: string[] = [];
+    await startServer((req, res) => {
+      requests.push(req.url || '/');
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 403, message: 'forbidden by role' }));
+        return;
+      }
+      if (req.url === '/api/v1/api-keys?page=1&page_size=100') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 401, message: 'alternate unauthorized' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getApiTokens(baseUrl, 'jwt-token'))
+      .rejects.toThrow(/HTTP 403.*forbidden by role/i);
+    expect(requests).toEqual(['/api/v1/keys?page=1&page_size=100']);
+  });
+
+  it('accepts an explicit successful empty api-key list', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, message: 'success', data: { items: [] } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    await expect(adapter.getApiTokens(baseUrl, 'jwt-token')).resolves.toEqual([]);
+  });
+
+  it('aborts the active api-key fetch without starting the fallback endpoint', async () => {
+    const requests: string[] = [];
+    await startServer((req, res) => {
+      requests.push(req.url || '/');
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        setTimeout(() => {
+          if (res.destroyed || res.writableEnded) return;
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 404, message: 'not found' }));
+        }, 50);
+        return;
+      }
+      if (req.url === '/api/v1/api-keys?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: { items: [] } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const controller = new AbortController();
+    const pending = adapter.getApiTokens(baseUrl, 'jwt-token', undefined, controller.signal);
+
+    await vi.waitFor(() => expect(requests).toContain('/api/v1/keys?page=1&page_size=100'));
+    controller.abort(new Error('cancel sub2api token request'));
+
+    await expect(pending).rejects.toThrow('cancel sub2api token request');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(requests).not.toContain('/api/v1/api-keys?page=1&page_size=100');
   });
 
   it('fetches user groups from /api/v1/groups', async () => {

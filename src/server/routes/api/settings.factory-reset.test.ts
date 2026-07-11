@@ -147,12 +147,12 @@ describe('settings factory reset api', () => {
       url: '/api/settings/maintenance/factory-reset',
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toEqual({ success: true });
     expect(config.authToken).toBe('before-reset-token');
     expect(config.dbType).toBe('sqlite');
     expect(config.dbUrl).toBe('');
-    expect(config.dbSsl).toBe(false);
+    expect(config.dbSsl).toBe(true);
     expect(config.systemProxyUrl).toBe('http://127.0.0.1:7890');
 
     const sites = await db.select().from(schema.sites).all();
@@ -171,7 +171,7 @@ describe('settings factory reset api', () => {
     expect(authTokenSetting?.value).toBe(JSON.stringify('before-reset-token'));
     expect(dbTypeSetting?.value).toBe(JSON.stringify('sqlite'));
     expect(dbUrlSetting?.value).toBe(JSON.stringify(''));
-    expect(dbSslSetting?.value).toBe(JSON.stringify(false));
+    expect(dbSslSetting?.value).toBe(JSON.stringify(true));
     expect(systemProxySetting?.value).toBe(JSON.stringify('http://127.0.0.1:7890'));
 
     expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
@@ -185,5 +185,26 @@ describe('settings factory reset api', () => {
     expect(await db.select().from(schema.checkinLogs).all()).toHaveLength(0);
     expect(await db.select().from(schema.downstreamApiKeys).all()).toHaveLength(0);
     expect(await db.select().from(schema.events).all()).toHaveLength(0);
+  });
+
+  it('maps a concurrent restore/reset maintenance conflict to HTTP 409', async () => {
+    const { runRuntimeMaintenance } = await import('../../services/runtimeMaintenanceOwner.js');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const active = runRuntimeMaintenance('restore', async () => {
+      await gate;
+    }, {
+      stop: async () => undefined,
+      start: () => undefined,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/maintenance/factory-reset',
+    });
+    expect(response.statusCode).toBe(409);
+
+    release();
+    await active;
   });
 });

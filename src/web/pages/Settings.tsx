@@ -25,6 +25,13 @@ import {
   resolveRoutingProfilePreset,
   type RoutingWeights,
 } from './helpers/routingProfiles.js';
+import {
+  ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
+  ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES,
+  ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES,
+  ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES,
+  normalizeAccountGroupRateRefreshIntervalMinutes,
+} from '../../server/shared/accountGroupRateRefresh.js';
 import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
@@ -63,6 +70,8 @@ type RuntimeSettings = {
   checkinScheduleMode: 'cron' | 'interval';
   checkinIntervalHours: number;
   balanceRefreshCron: string;
+  accountGroupRateRefreshEnabled: boolean;
+  accountGroupRateRefreshIntervalMinutes: number;
   logCleanupCron: string;
   logCleanupUsageLogsEnabled: boolean;
   logCleanupProgramLogsEnabled: boolean;
@@ -345,6 +354,8 @@ export default function Settings() {
     checkinScheduleMode: 'cron',
     checkinIntervalHours: 6,
     balanceRefreshCron: '0 * * * *',
+    accountGroupRateRefreshEnabled: ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
+    accountGroupRateRefreshIntervalMinutes: ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES,
     logCleanupCron: '0 6 * * *',
     logCleanupUsageLogsEnabled: false,
     logCleanupProgramLogsEnabled: false,
@@ -364,6 +375,9 @@ export default function Settings() {
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
   });
+  const [accountGroupRateRefreshIntervalDraft, setAccountGroupRateRefreshIntervalDraft] = useState(
+    String(ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES),
+  );
   const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
   const [maskedToken, setMaskedToken] = useState('');
@@ -661,6 +675,10 @@ export default function Settings() {
       ]);
       setMaskedToken(authInfo.masked || '****');
       const routeCooldownInput = resolveRouteCooldownInput(runtimeInfo.tokenRouterFailureCooldownMaxSec);
+      const accountGroupRateRefreshIntervalMinutes = normalizeAccountGroupRateRefreshIntervalMinutes(
+        runtimeInfo.accountGroupRateRefreshIntervalMinutes,
+      ) ?? ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES;
+      setAccountGroupRateRefreshIntervalDraft(String(accountGroupRateRefreshIntervalMinutes));
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
         checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
@@ -668,6 +686,10 @@ export default function Settings() {
           ? Math.min(24, Math.trunc(Number(runtimeInfo.checkinIntervalHours)))
           : 6,
         balanceRefreshCron: runtimeInfo.balanceRefreshCron || '0 * * * *',
+        accountGroupRateRefreshEnabled: typeof runtimeInfo.accountGroupRateRefreshEnabled === 'boolean'
+          ? runtimeInfo.accountGroupRateRefreshEnabled
+          : ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
+        accountGroupRateRefreshIntervalMinutes,
         logCleanupCron: runtimeInfo.logCleanupCron || '0 6 * * *',
         logCleanupUsageLogsEnabled: !!runtimeInfo.logCleanupUsageLogsEnabled,
         logCleanupProgramLogsEnabled: !!runtimeInfo.logCleanupProgramLogsEnabled,
@@ -780,6 +802,16 @@ export default function Settings() {
     .filter((item) => item.length > 0);
 
   const saveSchedule = async () => {
+    const accountGroupRateRefreshIntervalMinutes = normalizeAccountGroupRateRefreshIntervalMinutes(
+      accountGroupRateRefreshIntervalDraft,
+    );
+    if (accountGroupRateRefreshIntervalMinutes === null) {
+      toast.error(
+        `倍率刷新间隔必须是 ${ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES} 到 ${ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES} 之间的整数`,
+      );
+      return;
+    }
+
     setSavingSchedule(true);
     try {
       await api.updateRuntimeSettings({
@@ -787,11 +819,18 @@ export default function Settings() {
         checkinScheduleMode: runtime.checkinScheduleMode,
         checkinIntervalHours: runtime.checkinIntervalHours,
         balanceRefreshCron: runtime.balanceRefreshCron,
+        accountGroupRateRefreshEnabled: runtime.accountGroupRateRefreshEnabled,
+        accountGroupRateRefreshIntervalMinutes,
         logCleanupCron: runtime.logCleanupCron,
         logCleanupUsageLogsEnabled: runtime.logCleanupUsageLogsEnabled,
         logCleanupProgramLogsEnabled: runtime.logCleanupProgramLogsEnabled,
         logCleanupRetentionDays: runtime.logCleanupRetentionDays,
       });
+      setRuntime((previous) => ({
+        ...previous,
+        accountGroupRateRefreshIntervalMinutes,
+      }));
+      setAccountGroupRateRefreshIntervalDraft(String(accountGroupRateRefreshIntervalMinutes));
       toast.success('定时任务设置已保存');
     } catch (err: any) {
       toast.error(err?.message || '保存失败');
@@ -1382,6 +1421,42 @@ export default function Settings() {
                 value={runtime.balanceRefreshCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, balanceRefreshCron: e.target.value }))}
                 style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+              />
+            </div>
+          </div>
+          <div
+            style={{
+              marginTop: 16,
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 180px',
+              gap: 12,
+              alignItems: 'end',
+            }}
+          >
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <input
+                data-testid="account-group-rate-refresh-enabled"
+                type="checkbox"
+                checked={runtime.accountGroupRateRefreshEnabled}
+                onChange={(event) => setRuntime((previous) => ({
+                  ...previous,
+                  accountGroupRateRefreshEnabled: event.target.checked,
+                }))}
+              />
+              自动刷新账号倍率
+            </label>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>倍率刷新间隔（分钟）</div>
+              <input
+                data-testid="account-group-rate-refresh-interval-minutes"
+                type="number"
+                min={ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES}
+                max={ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES}
+                step={1}
+                value={accountGroupRateRefreshIntervalDraft}
+                disabled={!runtime.accountGroupRateRefreshEnabled}
+                onChange={(event) => setAccountGroupRateRefreshIntervalDraft(event.target.value)}
+                style={inputStyle}
               />
             </div>
           </div>

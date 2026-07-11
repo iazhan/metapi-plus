@@ -295,6 +295,8 @@ services:
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
+      ACCOUNT_GROUP_RATE_REFRESH_ENABLED: "true"
+      ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: "30"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
@@ -340,6 +342,7 @@ docker run -d --name metapi-plus \
 > 若在 Compose 外运行且未显式设置 `AUTH_TOKEN`，默认为 `change-me-admin-token`（仅用于本地调试）。
 > 桌面安装包首次启动也属于这类场景：如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌同样是 `change-me-admin-token`。
 > 如果在「设置」面板中修改了管理员令牌，后续登录请使用新令牌。
+> 账号分组倍率自动刷新默认也会以 `ACCOUNT_GROUP_RATE_REFRESH_ENABLED=true` 和 `ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES=30` 启动；UI 保存后的值会覆盖环境默认值。服务启动时或从关闭切回开启时，会立即执行一次仅倍率刷新，不会同步 Token、余额、模型或路由；若 Session 过期，会先尝试 `Refresh Token`，再尝试用加密保存的账号密码恢复。
 
 Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](docs/deployment.md)。
 

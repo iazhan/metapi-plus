@@ -1,5 +1,10 @@
 import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
+import {
+  ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
+  ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES,
+  normalizeAccountGroupRateRefreshIntervalMinutes,
+} from './shared/accountGroupRateRefresh.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
@@ -65,6 +70,10 @@ function parseListenHost(env: NodeJS.ProcessEnv): string {
 
 export function buildConfig(env: NodeJS.ProcessEnv) {
   const dataDir = env.DATA_DIR || './data';
+  const accountGroupRateRefreshIntervalMinutes =
+    normalizeAccountGroupRateRefreshIntervalMinutes(
+      env.ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES,
+    ) ?? ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES;
 
   return {
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
@@ -83,6 +92,11 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       : 'cron' as const,
     checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(parseNumber(env.CHECKIN_INTERVAL_HOURS, 6)))),
     balanceRefreshCron: env.BALANCE_REFRESH_CRON || '0 * * * *',
+    accountGroupRateRefreshEnabled: parseBoolean(
+      env.ACCOUNT_GROUP_RATE_REFRESH_ENABLED,
+      ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
+    ),
+    accountGroupRateRefreshIntervalMinutes,
     logCleanupCron: env.LOG_CLEANUP_CRON || '0 6 * * *',
     logCleanupConfigured: false,
     logCleanupUsageLogsEnabled: parseBoolean(env.LOG_CLEANUP_USAGE_LOGS_ENABLED, false),

@@ -635,6 +635,7 @@ function deduplicateLegacySitesForUniqueIndex(sqlite: Database.Database): boolea
 }
 
 export const __migrateTestUtils = {
+  resolveSqliteDbPath,
   splitMigrationStatements,
   normalizeSqlForMatch,
   extractFailedSqlFromError,

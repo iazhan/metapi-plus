@@ -75,4 +75,11 @@ describe('docker workflows', () => {
     expect(dockerfile).toContain('RUN npm run build:web && npm run build:server');
     expect(dockerfile).toContain('npm prune --omit=dev --no-audit --no-fund');
   });
+
+  it('uses an exec-form entrypoint so the server receives container signals', () => {
+    const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
+
+    expect(dockerfile).toContain('ENTRYPOINT ["/app/docker-entrypoint.sh"]');
+    expect(dockerfile).not.toContain('CMD ["sh", "-c"');
+  });
 });

@@ -3,26 +3,31 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { and, eq, sql } from 'drizzle-orm';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
 import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
 const createApiTokenMock = vi.fn();
 const getUserGroupsMock = vi.fn();
+const getGroupRatesMock = vi.fn();
 const deleteApiTokenMock = vi.fn();
+const getAdapterOverrideMock = vi.fn();
 
 type AccountTokenServiceModule = typeof import('../../services/accountTokenService.js');
 
 vi.mock('../../services/platforms/index.js', () => ({
-  getAdapter: () => ({
-    getApiTokens: (...args: unknown[]) => getApiTokensMock(...args),
-    getApiToken: (...args: unknown[]) => getApiTokenMock(...args),
-    createApiToken: (...args: unknown[]) => createApiTokenMock(...args),
-    getUserGroups: (...args: unknown[]) => getUserGroupsMock(...args),
-    deleteApiToken: (...args: unknown[]) => deleteApiTokenMock(...args),
-  }),
+  getAdapter: (...args: unknown[]) => getAdapterOverrideMock(...args) || ({
+      getApiTokens: (...adapterArgs: unknown[]) => getApiTokensMock(...adapterArgs),
+      getApiToken: (...adapterArgs: unknown[]) => getApiTokenMock(...adapterArgs),
+      createApiToken: (...adapterArgs: unknown[]) => createApiTokenMock(...adapterArgs),
+      getUserGroups: (...adapterArgs: unknown[]) => getUserGroupsMock(...adapterArgs),
+      getGroupRates: (...adapterArgs: unknown[]) => getGroupRatesMock(...adapterArgs),
+      deleteApiToken: (...adapterArgs: unknown[]) => deleteApiTokenMock(...adapterArgs),
+    }),
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
 
 describe('account tokens sync routes with site status', () => {
   let app: FastifyInstance;
@@ -30,6 +35,8 @@ describe('account tokens sync routes with site status', () => {
   let schema: DbModule['schema'];
   let closeDbConnections: DbModule['closeDbConnections'];
   let maskToken: AccountTokenServiceModule['maskToken'];
+  let getBackgroundTask: BackgroundTaskModule['getBackgroundTask'];
+  let resetBackgroundTasks: BackgroundTaskModule['__resetBackgroundTasksForTests'];
   let testDataDir: TestDataDir;
   let seedId = 0;
 
@@ -67,11 +74,14 @@ describe('account tokens sync routes with site status', () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const accountTokenServiceModule = await import('../../services/accountTokenService.js');
+    const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     const routesModule = await import('./accountTokens.js');
     db = dbModule.db;
     schema = dbModule.schema;
     closeDbConnections = dbModule.closeDbConnections;
     maskToken = accountTokenServiceModule.maskToken;
+    getBackgroundTask = backgroundTaskModule.getBackgroundTask;
+    resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
 
     app = Fastify();
     await app.register(routesModule.accountTokensRoutes);
@@ -82,15 +92,21 @@ describe('account tokens sync routes with site status', () => {
     getApiTokenMock.mockReset();
     createApiTokenMock.mockReset();
     getUserGroupsMock.mockReset();
+    getGroupRatesMock.mockReset();
+    getGroupRatesMock.mockResolvedValue([]);
     deleteApiTokenMock.mockReset();
+    getAdapterOverrideMock.mockReset();
+    resetBackgroundTasks();
     seedId = 0;
 
     await db.delete(schema.accountTokens).run();
+    await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.checkinLogs).run();
+    await db.delete(schema.events).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -200,6 +216,77 @@ describe('account tokens sync routes with site status', () => {
         valueStatus: 'masked_pending',
       }),
     ]);
+  });
+
+  it('returns a rate warning without rolling back a successful token sync', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    await db.insert(schema.accountGroupRates).values({
+      accountId: account.id,
+      groupKey: 'legacy',
+      groupName: 'Legacy',
+      ratio: 1.5,
+      lastSyncedAt: '2026-07-09T00:00:00.000Z',
+    }).run();
+    getApiTokensMock.mockResolvedValue([
+      { name: 'new-token', key: 'sk-new-token', enabled: true },
+    ]);
+    getGroupRatesMock.mockRejectedValue(new Error('rate endpoint unavailable'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/sync/${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      status: 'synced',
+      synced: true,
+      rateSync: { status: 'failed', message: 'rate endpoint unavailable' },
+    });
+    await expect(db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id)).all())
+      .resolves.toEqual([expect.objectContaining({ token: 'sk-new-token' })]);
+    await expect(db.select().from(schema.accountGroupRates)
+      .where(eq(schema.accountGroupRates.accountId, account.id)).all())
+      .resolves.toEqual([expect.objectContaining({ groupKey: 'legacy', ratio: 1.5 })]);
+  });
+
+  it('keeps diagnostic failures in the response without persisting upstream secrets', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    getApiTokensMock.mockRejectedValue(new Error('token down: Bearer token-event-secret'));
+    getGroupRatesMock.mockRejectedValue(new Error('rate down: sk-rate-event-secret'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/sync/${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      success: false,
+      status: 'failed',
+      synced: false,
+      message: 'token down: Bearer token-event-secret；倍率同步失败：rate down: sk-rate-event-secret',
+      rateSync: { status: 'failed', message: 'rate down: sk-rate-event-secret' },
+    });
+
+    await vi.waitFor(async () => {
+      const event = await db.select().from(schema.events)
+        .where(and(
+          eq(schema.events.type, 'token'),
+          eq(schema.events.relatedId, account.id),
+        ))
+        .get();
+      expect(event).toMatchObject({
+        title: '令牌同步失败（倍率同步失败）',
+        level: 'error',
+      });
+      expect(event?.message).toContain('账号令牌同步失败');
+      expect(event?.message).toContain('倍率同步失败');
+      expect(event?.message).not.toContain('token-event-secret');
+      expect(event?.message).not.toContain('rate-event-secret');
+    });
   });
 
   it('reuses an existing ready token when upstream only returns the matching masked token', async () => {
@@ -573,6 +660,67 @@ describe('account tokens sync routes with site status', () => {
     expect(syncedDefaultToken?.token).toBe('sk-synced-token');
   });
 
+  it('reports safe token and rate failures in the background task summary', async () => {
+    await seedAccount({ siteStatus: 'active' });
+    getApiTokensMock.mockRejectedValue(new Error('token down: Bearer token-task-secret'));
+    getGroupRatesMock.mockRejectedValue(new Error('rate down: sk-rate-task-secret'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/sync-all',
+      payload: {},
+    });
+    expect(response.statusCode).toBe(202);
+    const body = response.json() as { jobId: string };
+
+    const task = await waitForBackgroundTaskToReachTerminalState(getBackgroundTask, body.jobId);
+    expect(task).toMatchObject({ status: 'succeeded' });
+    expect(task?.message).toContain('失败 1');
+    expect(task?.message).toContain('倍率失败 1');
+    expect(task?.message).toContain('账号令牌同步失败');
+    expect(task?.message).toContain('倍率同步失败');
+    expect(task?.message).not.toContain('token-task-secret');
+    expect(task?.message).not.toContain('rate-task-secret');
+    expect(task?.result).toMatchObject({
+      summary: { failed: 1, rateFailed: 1 },
+      results: [{
+        accountName: 'user-1',
+        siteName: 'site-1',
+        status: 'failed',
+        reason: 'sync_error',
+        message: '账号令牌同步失败；倍率同步失败：上游倍率同步失败',
+        rateSync: { status: 'failed', message: '上游倍率同步失败' },
+      }],
+    });
+    expect(task?.result).not.toHaveProperty('coverageRefresh');
+    const serializedTask = JSON.stringify(task);
+    expect(serializedTask).not.toContain('token-task-secret');
+    expect(serializedTask).not.toContain('rate-task-secret');
+  });
+
+  it('does not persist a catastrophic background sync error', async () => {
+    await seedAccount({ siteStatus: 'active' });
+    getAdapterOverrideMock.mockImplementationOnce(() => {
+      throw new Error('batch failed: Bearer fatal-task-secret');
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/sync-all',
+      payload: {},
+    });
+    expect(response.statusCode).toBe(202);
+    const body = response.json() as { jobId: string };
+
+    const task = await waitForBackgroundTaskToReachTerminalState(getBackgroundTask, body.jobId);
+    expect(task).toMatchObject({
+      status: 'failed',
+      error: '账号令牌同步任务执行失败',
+      message: '全部账号令牌同步任务执行失败',
+    });
+    expect(JSON.stringify(task)).not.toContain('fatal-task-secret');
+  });
+
   it('rejects non-boolean wait when syncing all account tokens', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -762,6 +910,13 @@ describe('account tokens sync routes with site status', () => {
   it('fetches account token groups from upstream', async () => {
     const { account } = await seedAccount({ siteStatus: 'active' });
     getUserGroupsMock.mockResolvedValue(['default', 'vip']);
+    await db.insert(schema.accountGroupRates).values({
+      accountId: account.id,
+      groupKey: 'vip',
+      groupName: 'VIP',
+      ratio: 0.8,
+      lastSyncedAt: '2026-07-10T00:00:00.000Z',
+    }).run();
 
     const response = await app.inject({
       method: 'GET',
@@ -772,8 +927,49 @@ describe('account tokens sync routes with site status', () => {
     expect(response.json()).toMatchObject({
       success: true,
       groups: ['default', 'vip'],
+      rates: [expect.objectContaining({ groupKey: 'vip', groupName: 'VIP', ratio: 0.8 })],
     });
     expect(getUserGroupsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes matching group rate metadata in the token list', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'vip-token',
+      token: 'sk-vip-token',
+      tokenGroup: 'vip',
+      source: 'manual',
+      enabled: true,
+    }).run();
+    await db.insert(schema.accountGroupRates).values({
+      accountId: account.id,
+      groupKey: 'vip',
+      groupName: 'VIP',
+      description: 'Premium group',
+      ratio: 0.8,
+      lastSyncedAt: '2026-07-10T00:00:00.000Z',
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/account-tokens?accountId=${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([
+      expect.objectContaining({
+        name: 'vip-token',
+        tokenGroup: 'vip',
+        groupRate: {
+          groupKey: 'vip',
+          groupName: 'VIP',
+          description: 'Premium group',
+          ratio: 0.8,
+          lastSyncedAt: '2026-07-10T00:00:00.000Z',
+        },
+      }),
+    ]);
   });
 
   it('deletes upstream token before removing local token', async () => {

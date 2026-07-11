@@ -74,6 +74,23 @@ vi.mock('./accountCredentialService.js', () => ({
   decryptAccountPassword: (...args: unknown[]) => decryptPasswordMock(...args),
 }));
 
+vi.mock('./accountSessionPersistenceService.js', () => ({
+  persistRecoveredAccountSession: async (input: any) => {
+    const extraConfig = input.mergeExtraConfig(input.account.extraConfig ?? null);
+    updateSetMock({
+      accessToken: input.accessToken,
+      extraConfig,
+      status: input.account.status === 'expired' ? 'active' : input.account.status,
+      updatedAt: new Date().toISOString(),
+    });
+    return {
+      account: { ...input.account, accessToken: input.accessToken, extraConfig },
+      accessToken: input.accessToken,
+      extraConfig,
+    };
+  },
+}));
+
 vi.mock('./accountHealthService.js', () => ({
   setAccountRuntimeHealth: (...args: unknown[]) => setAccountRuntimeHealthMock(...args),
   extractRuntimeHealth: (...args: unknown[]) => extractRuntimeHealthMock(...args),
@@ -109,12 +126,11 @@ describe('balanceService auto relogin', () => {
       {
         accounts: {
           id: 1,
-          username: 'linuxdo_11494',
+          username: 'person@example.com',
           accessToken: 'stale-token',
           status: 'active',
           extraConfig: JSON.stringify({
-            platformUserId: 11494,
-            autoRelogin: { username: 'linuxdo_11494', passwordCipher: 'cipher' },
+            autoRelogin: { username: 'person@example.com', passwordCipher: 'cipher' },
           }),
         },
         sites: {
@@ -130,7 +146,11 @@ describe('balanceService auto relogin', () => {
       .mockRejectedValueOnce(new Error('HTTP 401: access token required'))
       .mockResolvedValueOnce({ balance: 12, used: 1, quota: 13 });
     decryptPasswordMock.mockReturnValue('plain-password');
-    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+    adapterMock.login.mockResolvedValue({
+      success: true,
+      accessToken: 'fresh-token',
+      platformUserId: 11494,
+    });
 
     const { refreshBalance } = await import('./balanceService.js');
     const result = await refreshBalance(1);
@@ -140,7 +160,13 @@ describe('balanceService auto relogin', () => {
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
     expect(adapterMock.getBalance.mock.calls[0][1]).toBe('stale-token');
     expect(adapterMock.getBalance.mock.calls[1][1]).toBe('fresh-token');
+    expect(adapterMock.getBalance.mock.calls[0][2]).toBeUndefined();
+    expect(adapterMock.getBalance.mock.calls[1][2]).toBe(11494);
     expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'fresh-token')).toBe(true);
+    const reloginUpdate = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => payload.accessToken === 'fresh-token');
+    expect(JSON.parse(String(reloginUpdate?.extraConfig))).toMatchObject({ platformUserId: 11494 });
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
 

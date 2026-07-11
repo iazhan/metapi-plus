@@ -39,6 +39,8 @@ describe('Tokens mobile actions', () => {
         id: 1,
         accountId: 1,
         name: 'token-1',
+        tokenGroup: 'vip',
+        groupRate: { groupKey: 'vip', groupName: 'VIP', ratio: 0.8 },
         tokenMasked: 'sk-***1',
         enabled: true,
         isDefault: false,
@@ -149,6 +151,7 @@ describe('Tokens mobile actions', () => {
         .filter((child): child is string => typeof child === 'string')
         .join('');
       expect(expandedText).toContain('更新时间');
+      expect(JSON.stringify(root.toJSON())).toContain('VIP · 0.8x');
     } finally {
       root?.unmount();
     }

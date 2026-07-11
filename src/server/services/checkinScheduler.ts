@@ -19,10 +19,17 @@ let balanceTask: ScheduledTask | null = null;
 let dailySummaryTask: ScheduledTask | null = null;
 let logCleanupTask: ScheduledTask | null = null;
 const intervalAttemptByAccount = new Map<number, number>();
+const inFlightSchedulerTasks = new Set<Promise<void>>();
 
 const DAILY_SUMMARY_DEFAULT_CRON = '58 23 * * *';
 const LOG_CLEANUP_DEFAULT_CRON = '0 6 * * *';
 const CHECKIN_INTERVAL_POLL_MS = 60_000;
+
+function trackSchedulerTask(task: Promise<void>): Promise<void> {
+  inFlightSchedulerTasks.add(task);
+  void task.finally(() => inFlightSchedulerTasks.delete(task));
+  return task;
+}
 
 async function resolveJsonSetting<T>(
   settingKey: string,
@@ -58,7 +65,7 @@ async function resolvePositiveIntegerSetting(settingKey: string, fallback: numbe
 }
 
 function createCheckinTask(cronExpr: string) {
-  return cron.schedule(cronExpr, async () => {
+  return cron.schedule(cronExpr, () => trackSchedulerTask((async () => {
     console.log(`[Scheduler] Running check-in at ${new Date().toISOString()}`);
     try {
       const results = await checkinAll({ scheduleMode: 'cron' });
@@ -68,7 +75,7 @@ function createCheckinTask(cronExpr: string) {
     } catch (err) {
       console.error('[Scheduler] Check-in error:', err);
     }
-  });
+  })()));
 }
 
 type IntervalCheckinCandidate = {
@@ -152,7 +159,7 @@ function startCheckinSchedule() {
   stopCheckinSchedule();
   if (config.checkinScheduleMode === 'interval') {
     checkinIntervalTimer = setInterval(() => {
-      void runIntervalCheckinPass();
+      void trackSchedulerTask(runIntervalCheckinPass());
     }, CHECKIN_INTERVAL_POLL_MS);
     return;
   }
@@ -160,7 +167,7 @@ function startCheckinSchedule() {
 }
 
 function createBalanceTask(cronExpr: string) {
-  return cron.schedule(cronExpr, async () => {
+  return cron.schedule(cronExpr, () => trackSchedulerTask((async () => {
     console.log(`[Scheduler] Refreshing balances at ${new Date().toISOString()}`);
     try {
       await refreshAllBalances();
@@ -169,11 +176,11 @@ function createBalanceTask(cronExpr: string) {
     } catch (err) {
       console.error('[Scheduler] Balance refresh error:', err);
     }
-  });
+  })()));
 }
 
 function createDailySummaryTask(cronExpr: string) {
-  return cron.schedule(cronExpr, async () => {
+  return cron.schedule(cronExpr, () => trackSchedulerTask((async () => {
     console.log(`[Scheduler] Sending daily summary at ${new Date().toISOString()}`);
     try {
       const metrics = await collectDailySummaryMetrics();
@@ -187,11 +194,11 @@ function createDailySummaryTask(cronExpr: string) {
     } catch (err) {
       console.error('[Scheduler] Daily summary error:', err);
     }
-  });
+  })()));
 }
 
 function createLogCleanupTask(cronExpr: string) {
-  return cron.schedule(cronExpr, async () => {
+  return cron.schedule(cronExpr, () => trackSchedulerTask((async () => {
     if (!config.logCleanupConfigured) {
       console.log('[Scheduler] Log cleanup skipped: legacy fallback mode is active');
       return;
@@ -209,7 +216,7 @@ function createLogCleanupTask(cronExpr: string) {
     } catch (err) {
       console.error('[Scheduler] Log cleanup error:', err);
     }
-  });
+  })()));
 }
 
 export async function startScheduler() {
@@ -262,6 +269,17 @@ export async function startScheduler() {
   console.log(
     `[Scheduler] Log cleanup cron: ${activeLogCleanupCron} (configured=${config.logCleanupConfigured}, usage=${activeLogCleanupUsageLogsEnabled}, program=${activeLogCleanupProgramLogsEnabled}, retentionDays=${activeLogCleanupRetentionDays})`,
   );
+}
+
+export async function stopScheduler() {
+  stopCheckinSchedule();
+  balanceTask?.stop();
+  dailySummaryTask?.stop();
+  logCleanupTask?.stop();
+  balanceTask = null;
+  dailySummaryTask = null;
+  logCleanupTask = null;
+  await Promise.allSettled([...inFlightSchedulerTasks]);
 }
 
 export function updateCheckinCron(cronExpr: string) {
@@ -323,13 +341,7 @@ export function updateLogCleanupSettings(input: {
   logCleanupTask = createLogCleanupTask(cronExpr);
 }
 
-export function __resetCheckinSchedulerForTests() {
-  stopCheckinSchedule();
-  balanceTask?.stop();
-  dailySummaryTask?.stop();
-  logCleanupTask?.stop();
-  balanceTask = null;
-  dailySummaryTask = null;
-  logCleanupTask = null;
+export async function __resetCheckinSchedulerForTests() {
+  await stopScheduler();
   intervalAttemptByAccount.clear();
 }

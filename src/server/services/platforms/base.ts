@@ -37,11 +37,52 @@ export interface BalanceInfo {
   subscriptionSummary?: SubscriptionSummary;
 }
 
-interface LoginResult {
+export interface LoginResult {
   success: boolean;
   accessToken?: string;
   username?: string;
+  platformUserId?: number;
+  refreshToken?: string;
+  expiresAt?: number;
   message?: string;
+}
+
+export interface GroupRateInfo {
+  groupKey: string;
+  groupName: string;
+  ratio: number;
+  description?: string | null;
+}
+
+function parseSafeInteger(raw: unknown): number | undefined {
+  if (typeof raw === 'number') {
+    return Number.isSafeInteger(raw) ? raw : undefined;
+  }
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+export function parseSafePositiveInteger(raw: unknown): number | undefined {
+  const parsed = parseSafeInteger(raw);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
+export function parseSafeNonNegativeInteger(raw: unknown): number | undefined {
+  const parsed = parseSafeInteger(raw);
+  return parsed !== undefined && parsed >= 0 ? parsed : undefined;
+}
+
+export class PlatformHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly responseBody: string,
+  ) {
+    super(`HTTP ${status}: ${responseBody}`);
+    this.name = 'PlatformHttpError';
+  }
 }
 
 export interface UserInfo {
@@ -93,16 +134,17 @@ export interface CreateApiTokenOptions {
 export interface PlatformAdapter {
   readonly platformName: string;
   detect(url: string): Promise<boolean>;
-  login(baseUrl: string, username: string, password: string): Promise<LoginResult>;
+  login(baseUrl: string, username: string, password: string, signal?: AbortSignal): Promise<LoginResult>;
   getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
   verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult>;
   checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult>;
   getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo>;
   getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]>;
-  getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null>;
-  getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]>;
+  getApiToken(baseUrl: string, accessToken: string, platformUserId?: number, signal?: AbortSignal): Promise<string | null>;
+  getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number, signal?: AbortSignal): Promise<ApiTokenInfo[]>;
   getSiteAnnouncements(baseUrl: string, accessToken: string, platformUserId?: number): Promise<SiteAnnouncement[]>;
   getUserGroups(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string[]>;
+  getGroupRates?(baseUrl: string, accessToken: string, platformUserId?: number, signal?: AbortSignal): Promise<GroupRateInfo[]>;
   createApiToken(baseUrl: string, accessToken: string, platformUserId?: number, options?: CreateApiTokenOptions): Promise<boolean>;
   deleteApiToken(baseUrl: string, accessToken: string, tokenKey: string, platformUserId?: number): Promise<boolean>;
 }
@@ -156,31 +198,50 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     }
   }
 
-  async login(baseUrl: string, username: string, password: string): Promise<LoginResult> {
+  async login(baseUrl: string, username: string, password: string, signal?: AbortSignal): Promise<LoginResult> {
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
         body: JSON.stringify({ username, password }),
+        signal,
       });
       if (res?.success && res?.data) {
+        const rawPlatformUserId = typeof res.data === 'object'
+          ? res.data.id ?? res.data.user_id ?? res.data.userId
+          : undefined;
+        const parsedPlatformUserId = parseSafePositiveInteger(rawPlatformUserId);
         return {
           success: true,
           accessToken: typeof res.data === 'string' ? res.data : res.data.token || res.data.access_token,
           username,
+          ...(parsedPlatformUserId !== undefined
+            ? { platformUserId: parsedPlatformUserId }
+            : {}),
         };
       }
       return { success: false, message: res?.message || '登录失败' };
     } catch (err: any) {
+      signal?.throwIfAborted();
       return { success: false, message: err.message || '登录请求失败' };
     }
   }
 
-  async getApiToken(_baseUrl: string, _accessToken: string, _platformUserId?: number): Promise<string | null> {
+  async getApiToken(
+    _baseUrl: string,
+    _accessToken: string,
+    _platformUserId?: number,
+    _signal?: AbortSignal,
+  ): Promise<string | null> {
     return null;
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]> {
-    const token = await this.getApiToken(baseUrl, accessToken, platformUserId);
+  async getApiTokens(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    const token = await this.getApiToken(baseUrl, accessToken, platformUserId, signal);
     if (!token) return [];
     return [{ name: 'default', key: token, enabled: true, tokenGroup: 'default' }];
   }
@@ -232,7 +293,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
     const res = await fetch(url, proxiedRequestOptions);
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      throw new PlatformHttpError(res.status, await res.text());
     }
     return res.json() as Promise<T>;
   }
