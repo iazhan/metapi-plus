@@ -6,7 +6,11 @@ import {
   normalizeTokenRouterFailureCooldownMaxSec,
   TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
 } from '../config.js';
-import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
+import {
+  getCachedPricingDomainRoutingReferenceCost,
+  refreshPricingDomainRoutingReferenceCost,
+} from '../pricing/routingReferenceCost.js';
+import { refreshSitePriceSnapshot } from '../pricing/priceRefreshService.js';
 import { proxyChannelCoordinator, type ProxyChannelLoadSnapshot } from './proxyChannelCoordinator.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import {
@@ -1316,7 +1320,7 @@ type CandidateEligibilityOptions = {
 
 type CostSignal = {
   unitCost: number;
-  source: 'observed' | 'configured' | 'catalog' | 'fallback';
+  source: 'observed' | 'pricing_domain' | 'fallback';
 };
 
 export function isRegexModelPattern(pattern: string): boolean {
@@ -1566,8 +1570,6 @@ function formatChannelRuntimeLoad(snapshot: ProxyChannelLoadSnapshot): string {
 function resolveEffectiveUnitCost(candidate: RouteChannelCandidate, modelName: string): CostSignal {
   const successCount = Math.max(0, candidate.channel.successCount ?? 0);
   const totalCost = Math.max(0, candidate.channel.totalCost ?? 0);
-  const configured = candidate.account.unitCost ?? null;
-
   if (successCount > 0 && totalCost > 0) {
     return {
       unitCost: Math.max(totalCost / successCount, MIN_EFFECTIVE_UNIT_COST),
@@ -1575,22 +1577,15 @@ function resolveEffectiveUnitCost(candidate: RouteChannelCandidate, modelName: s
     };
   }
 
-  if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
-    return {
-      unitCost: Math.max(configured, MIN_EFFECTIVE_UNIT_COST),
-      source: 'configured',
-    };
-  }
-
-  const catalogCost = getCachedModelRoutingReferenceCost({
+  const catalogCost = getCachedPricingDomainRoutingReferenceCost({
     siteId: candidate.site.id,
     accountId: candidate.account.id,
     modelName,
   });
-  if (typeof catalogCost === 'number' && Number.isFinite(catalogCost) && catalogCost > 0) {
+  if (typeof catalogCost === 'number' && Number.isFinite(catalogCost) && catalogCost >= 0) {
     return {
-      unitCost: Math.max(catalogCost, MIN_EFFECTIVE_UNIT_COST),
-      source: 'catalog',
+      unitCost: catalogCost,
+      source: 'pricing_domain',
     };
   }
 
@@ -2410,7 +2405,7 @@ export class TokenRouter {
     const refreshedKeys = options.refreshedKeys ?? new Set<string>();
 
     await Promise.allSettled(match.channels.map(async (candidate) => {
-      const refreshKey = `${candidate.site.id}:${candidate.account.id}`;
+      const refreshKey = String(candidate.site.id);
       if (refreshedKeys.has(refreshKey)) return;
       refreshedKeys.add(refreshKey);
 
@@ -2419,18 +2414,12 @@ export class TokenRouter {
         : mappedModel;
       if (!modelName) return;
 
-      await refreshModelPricingCatalog({
-        site: {
-          id: candidate.site.id,
-          url: candidate.site.url,
-          platform: candidate.site.platform,
-          apiKey: candidate.site.apiKey,
-        },
-        account: {
-          id: candidate.account.id,
-          accessToken: candidate.account.accessToken,
-          apiToken: candidate.account.apiToken,
-        },
+      await refreshSitePriceSnapshot(candidate.site.id);
+      await refreshPricingDomainRoutingReferenceCost({
+        siteId: candidate.site.id,
+        accountId: candidate.account.id,
+        accountExtraConfig: candidate.account.extraConfig,
+        tokenGroup: candidate.token?.tokenGroup ?? null,
         modelName,
       });
     }));
@@ -3560,7 +3549,7 @@ export class TokenRouter {
     ));
 
     const valueScores = candidates.map((c, i) => {
-      const unitCost = effectiveCosts[i]?.unitCost || 1;
+      const unitCost = Math.max(effectiveCosts[i]?.unitCost ?? 1, MIN_EFFECTIVE_UNIT_COST);
       const balance = c.account.balance || 0;
       const totalUsed = (c.channel.successCount ?? 0) + (c.channel.failCount ?? 0);
       const recentUsage = Math.max(totalUsed, 1);
@@ -3651,7 +3640,7 @@ export class TokenRouter {
       const cost = effectiveCosts[i];
       const costSourceText = cost?.source === 'observed'
         ? '实测'
-        : (cost?.source === 'configured' ? '配置' : (cost?.source === 'catalog' ? '目录' : '默认'));
+        : (cost?.source === 'pricing_domain' ? '价格域' : '默认');
       const siteChannels = Math.max(1, siteChannelCounts.get(candidate.site.id) || 1);
       const downstreamSiteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
       const normalizedDownstreamSiteMultiplier =
@@ -3702,8 +3691,8 @@ export class TokenRouter {
           ? `${reasonPrefix}，近期成功率=${recentSuccessRateText}（样本=${siteRuntimeDetail.recentSampleCount.toFixed(2)}，置信=${siteRuntimeDetail.recentConfidence.toFixed(2)}），回退成功率=${historicalSuccessRateText}，综合近期成功率=${stableFirstSuccessRateText}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
           : (
             candidates.length === 1
-              ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
-              : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+              ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost ?? 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+              : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost ?? 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
           ),
       };
     });

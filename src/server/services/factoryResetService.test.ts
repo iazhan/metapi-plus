@@ -113,6 +113,57 @@ describe('factoryResetService', () => {
     expect(steps).toEqual(['stop', 'seed', `clear:${account.id}`, 'start']);
   });
 
+  it('clears every pricing-domain table and restores refresh defaults', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'priced-site', url: 'https://priced.example.com', platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id, username: 'priced-user', accessToken: 'token', status: 'active',
+    }).returning().get();
+    const now = new Date().toISOString();
+    await db.insert(schema.sitePricingProfiles).values({ siteId: site.id, paidCny: 2, creditedUsd: 10 }).run();
+    await db.insert(schema.officialModelPrices).values({
+      providerId: 'openai', modelId: 'gpt-4.1', displayName: 'GPT-4.1', fetchedAt: now,
+    }).run();
+    await db.insert(schema.siteModelPrices).values({
+      siteId: site.id, upstreamModelId: 'gpt-4.1', pricingSemantics: 'base_price', fetchedAt: now,
+    }).run();
+    await db.insert(schema.siteModelPriceRules).values({
+      siteId: site.id, upstreamModelId: 'custom', mappingMode: 'custom',
+    }).run();
+    await db.insert(schema.accountGroupRateRules).values({
+      accountId: account.id, groupKey: 'default', ratioOverride: 0,
+    }).run();
+    await db.insert(schema.pricingRefreshStates).values({
+      scopeType: 'official', scopeId: 0, failureActive: false,
+    }).run();
+
+    await performFactoryReset({
+      ensureDefaultSitesSeeded: async () => ({ seeded: 0, alreadyMarked: false, hadExistingSites: false }),
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      stopPriceRefreshScheduler: async () => undefined,
+      startPriceRefreshScheduler: async () => undefined,
+    });
+
+    for (const table of [
+      schema.sitePricingProfiles,
+      schema.officialModelPrices,
+      schema.siteModelPrices,
+      schema.siteModelPriceRules,
+      schema.accountGroupRateRules,
+      schema.pricingRefreshStates,
+    ]) {
+      expect(await db.select().from(table as any).all()).toHaveLength(0);
+    }
+    const settings = Object.fromEntries((await db.select().from(schema.settings).all())
+      .map((row) => [row.key, JSON.parse(row.value)]));
+    expect(settings).toMatchObject({
+      price_refresh_enabled: true,
+      price_refresh_cron: '0 0 * * *',
+    });
+  });
+
   it('rolls back persistent reset and restores prior runtime without clearing backoff on failure', async () => {
     config.dbType = 'sqlite';
     config.dbUrl = 'D:/custom/current.db';

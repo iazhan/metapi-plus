@@ -21,8 +21,9 @@ export type MysqlIndexPrefixRequirementMap = Record<string, Record<string, boole
 
 type Dialect = 'mysql' | 'postgres';
 type SqlDialect = 'sqlite' | Dialect;
-type SqlGenerationOptions = {
+export type SqlGenerationOptions = {
   mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap;
+  allowedColumnRemovals?: readonly string[];
 };
 
 function resolveDbDir(): string {
@@ -261,8 +262,13 @@ function serializeForeignKey(foreignKey: SchemaContractForeignKey): string {
   ].join('|');
 }
 
-function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContract: SchemaContract): void {
+function assertAdditiveSchemaDiff(
+  currentContract: SchemaContract,
+  previousContract: SchemaContract,
+  options?: SqlGenerationOptions,
+): void {
   const violations: string[] = [];
+  const allowedColumnRemovals = new Set(options?.allowedColumnRemovals ?? []);
 
   for (const [tableName, previousTable] of Object.entries(previousContract.tables)) {
     const currentTable = currentContract.tables[tableName];
@@ -274,7 +280,10 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
     for (const [columnName, previousColumn] of Object.entries(previousTable.columns)) {
       const currentColumn = currentTable.columns[columnName];
       if (!currentColumn) {
-        violations.push(`removed column ${tableName}.${columnName}`);
+        const removalKey = `${tableName}.${columnName}`;
+        if (!allowedColumnRemovals.has(removalKey)) {
+          violations.push(`removed column ${removalKey}`);
+        }
         continue;
       }
 
@@ -348,6 +357,14 @@ function buildAddColumnStatement(
   return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
 }
 
+function buildDropColumnStatement(
+  dialect: SqlDialect,
+  tableName: string,
+  columnName: string,
+): string {
+  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} DROP COLUMN ${quoteIdentifier(dialect, columnName)}`;
+}
+
 export function generateUpgradeSql(
   dialect: SqlDialect,
   currentContract: SchemaContract,
@@ -358,7 +375,7 @@ export function generateUpgradeSql(
     return `-- no previous schema contract available for ${dialect} additive upgrade generation\n`;
   }
 
-  assertAdditiveSchemaDiff(currentContract, previousContract);
+  assertAdditiveSchemaDiff(currentContract, previousContract, options);
 
   const previousTableNames = new Set(Object.keys(previousContract.tables));
   const currentTableNames = Object.keys(currentContract.tables).sort((left, right) => left.localeCompare(right, 'en'));
@@ -388,6 +405,22 @@ export function generateUpgradeSql(
     }
   }
 
+  const dropColumnStatements = (options?.allowedColumnRemovals ?? [])
+    .map((removalKey) => {
+      const separatorIndex = removalKey.indexOf('.');
+      const tableName = removalKey.slice(0, separatorIndex);
+      const columnName = removalKey.slice(separatorIndex + 1);
+      if (
+        separatorIndex <= 0
+        || !previousContract.tables[tableName]?.columns[columnName]
+        || currentContract.tables[tableName]?.columns[columnName]
+      ) {
+        return null;
+      }
+      return buildDropColumnStatement(dialect, tableName, columnName);
+    })
+    .filter((statement): statement is string => statement !== null);
+
   const previousUniqueNames = new Set(previousContract.uniques.map((unique) => unique.name));
   const uniqueStatements = currentContract.uniques
     .filter((unique) => !previousUniqueNames.has(unique.name))
@@ -404,7 +437,13 @@ export function generateUpgradeSql(
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
     .map((index) => buildIndexStatement(dialect, index, currentContract, options));
 
-  const statements = [...addedTableStatements, ...addColumnStatements, ...uniqueStatements, ...indexStatements];
+  const statements = [
+    ...addedTableStatements,
+    ...addColumnStatements,
+    ...dropColumnStatements,
+    ...uniqueStatements,
+    ...indexStatements,
+  ];
   if (statements.length === 0) {
     return `-- no schema changes detected for ${dialect}\n`;
   }
@@ -415,20 +454,22 @@ export function generateUpgradeSql(
 export function generateDialectArtifacts(
   contract: SchemaContract,
   previousContract?: SchemaContract | null,
+  options?: SqlGenerationOptions,
 ): GeneratedDialectArtifacts {
   return {
     mysqlBootstrap: generateBootstrapSql('mysql', contract),
     postgresBootstrap: generateBootstrapSql('postgres', contract),
-    mysqlUpgrade: generateUpgradeSql('mysql', contract, previousContract),
-    postgresUpgrade: generateUpgradeSql('postgres', contract, previousContract),
+    mysqlUpgrade: generateUpgradeSql('mysql', contract, previousContract, options),
+    postgresUpgrade: generateUpgradeSql('postgres', contract, previousContract, options),
   };
 }
 
 export function writeDialectArtifactFiles(
   contract: SchemaContract,
   previousContract?: SchemaContract | null,
+  options?: SqlGenerationOptions,
 ): GeneratedDialectArtifacts {
-  const artifacts = generateDialectArtifacts(contract, previousContract);
+  const artifacts = generateDialectArtifacts(contract, previousContract, options);
   const artifactEntries = [
     ['mysql.bootstrap.sql', artifacts.mysqlBootstrap],
     ['postgres.bootstrap.sql', artifacts.postgresBootstrap],

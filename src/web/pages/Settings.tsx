@@ -20,6 +20,7 @@ import {
 } from './settings/payloadRulesVisual.js';
 import { PAYLOAD_RULE_PROTOCOL_OPTIONS } from './settings/payloadRuleProtocolOptions.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
+import PricingRefreshSection from './settings/PricingRefreshSection.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -1355,6 +1356,7 @@ export default function Settings() {
       </div>
 
       <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <PricingRefreshSection />
         <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员登录令牌</div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 12 }}>
@@ -2119,7 +2121,7 @@ export default function Settings() {
           </div>
           <div style={{ marginBottom: 12, maxWidth: 280 }}>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                无实测/配置/目录价时默认单价
+                未知模型路由成本兜底
             </div>
             <input
               type="number"

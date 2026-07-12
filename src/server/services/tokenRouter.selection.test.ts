@@ -13,11 +13,11 @@ const mockedCatalogRoutingCost = vi.fn<(
   input: { siteId: number; accountId: number; modelName: string }
 ) => number | null>(() => null);
 
-vi.mock('./modelPricingService.js', async () => {
-  const actual = await vi.importActual<typeof import('./modelPricingService.js')>('./modelPricingService.js');
+vi.mock('../pricing/routingReferenceCost.js', async () => {
+  const actual = await vi.importActual<typeof import('../pricing/routingReferenceCost.js')>('../pricing/routingReferenceCost.js');
   return {
     ...actual,
-    getCachedModelRoutingReferenceCost: mockedCatalogRoutingCost,
+    getCachedPricingDomainRoutingReferenceCost: mockedCatalogRoutingCost,
   };
 });
 
@@ -498,7 +498,7 @@ describe('TokenRouter selection scoring', () => {
     expect(expensiveCandidate?.reason || '').toContain('成本=实测');
   });
 
-  it('uses runtime-configured fallback unit cost when observed and configured costs are missing', async () => {
+  it('uses runtime-configured fallback unit cost when observed and pricing-domain costs are missing', async () => {
     config.routingWeights = {
       baseWeightFactor: 0.35,
       valueScoreFactor: 0.65,
@@ -617,7 +617,7 @@ describe('TokenRouter selection scoring', () => {
     expect(fallbackCandidate?.reason || '').toContain('成本=默认:1000.000000');
   });
 
-  it('uses cached catalog routing cost when observed and configured costs are missing', async () => {
+  it('uses cached pricing-domain routing cost when observed costs are missing', async () => {
     config.routingWeights = {
       baseWeightFactor: 0.35,
       valueScoreFactor: 0.65,
@@ -672,8 +672,37 @@ describe('TokenRouter selection scoring', () => {
     expect(catalogCandidate).toBeTruthy();
     expect(fallbackCandidate).toBeTruthy();
     expect((catalogCandidate?.probability || 0)).toBeGreaterThan(fallbackCandidate?.probability || 0);
-    expect(catalogCandidate?.reason || '').toContain('成本=目录:0.200000');
+    expect(catalogCandidate?.reason || '').toContain('成本=价格域:0.200000');
     expect(fallbackCandidate?.reason || '').toContain('成本=默认:100.000000');
+  });
+
+  it('keeps a free pricing-domain reference at zero instead of falling back', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 0.35,
+      valueScoreFactor: 0.65,
+      costWeight: 1,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+    config.routingFallbackUnitCost = 100;
+
+    const route = await createRoute('free-model');
+    const siteFree = await createSite('free-site');
+    const accountFree = await createAccount(siteFree.id, 'free-user');
+    const tokenFree = await createToken(accountFree.id, 'free-token');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountFree.id,
+      tokenId: tokenFree.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+
+    mockedCatalogRoutingCost.mockReturnValue(0);
+
+    const decision = await new TokenRouter().explainSelection('free-model');
+    expect(decision.candidates[0]?.reason || '').toContain('成本=价格域:0.000000');
   });
 
   it('downweights a site after transient failures and restores it quickly after success', async () => {

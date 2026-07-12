@@ -42,6 +42,7 @@ import {
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
+import SitePricingPanel from './sites-pricing/SitePricingPanel.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -1727,6 +1728,10 @@ export default function Sites() {
               </div>
             )}
           </div>
+
+          {isEditing && (
+            <SitePricingPanel siteId={activeEditor.editingSiteId} isMobile={isMobile} />
+          )}
 
           {isEditing && (
             <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>

@@ -79,7 +79,6 @@ describe('sites token-router cache invalidation', () => {
       accessToken: 'target-access-token',
       apiToken: 'sk-target-api-token',
       status: 'active',
-      unitCost: 1,
       balance: 0,
     }).returning().get();
 
@@ -89,7 +88,6 @@ describe('sites token-router cache invalidation', () => {
       accessToken: 'competitor-access-token',
       apiToken: 'sk-competitor-api-token',
       status: 'active',
-      unitCost: 1,
       balance: 0,
     }).returning().get();
 

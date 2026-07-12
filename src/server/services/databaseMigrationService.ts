@@ -441,7 +441,7 @@ function buildStatements(
   for (const row of snapshot.accounts.accounts) {
     statements.push({
       table: 'accounts',
-      columns: ['id', 'site_id', 'username', 'access_token', 'api_token', 'balance', 'balance_used', 'quota', 'unit_cost', 'value_score', 'status', 'is_pinned', 'sort_order', 'checkin_enabled', 'last_checkin_at', 'last_balance_refresh', 'extra_config', 'created_at', 'updated_at'],
+      columns: ['id', 'site_id', 'username', 'access_token', 'api_token', 'balance', 'balance_used', 'quota', 'value_score', 'status', 'is_pinned', 'sort_order', 'checkin_enabled', 'last_checkin_at', 'last_balance_refresh', 'extra_config', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.siteId, 0),
@@ -451,7 +451,6 @@ function buildStatements(
         asNumber(row.balance, 0),
         asNumber(row.balanceUsed, 0),
         asNumber(row.quota, 0),
-        asNumber(row.unitCost, null),
         asNumber(row.valueScore, 0),
         asNullableString(row.status) ?? 'active',
         asBoolean(row.isPinned, false),

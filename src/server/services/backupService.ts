@@ -22,7 +22,7 @@ import {
 import { runRuntimeMaintenance } from './runtimeMaintenanceOwner.js';
 import { reconcileRuntimeSettingsFromPersistedSnapshot } from './runtimeSettingsReconciliation.js';
 
-const BACKUP_VERSION = '2.1';
+const BACKUP_VERSION = '2.2';
 
 export type BackupExportType = 'all' | 'accounts' | 'preferences';
 
@@ -67,6 +67,12 @@ type ProxyLogRow = typeof schema.proxyLogs.$inferSelect;
 type CheckinLogRow = typeof schema.checkinLogs.$inferSelect;
 type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
+type SitePricingProfileRow = typeof schema.sitePricingProfiles.$inferSelect;
+type OfficialModelPriceRow = typeof schema.officialModelPrices.$inferSelect;
+type SiteModelPriceRow = typeof schema.siteModelPrices.$inferSelect;
+type SiteModelPriceRuleRow = typeof schema.siteModelPriceRules.$inferSelect;
+type AccountGroupRateRuleRow = typeof schema.accountGroupRateRules.$inferSelect;
+type PricingRefreshStateRow = typeof schema.pricingRefreshStates.$inferSelect;
 
 type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>
   & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>;
@@ -129,6 +135,12 @@ interface AccountsBackupSection {
   siteDisabledModels?: BackupSiteDisabledModelRow[];
   manualModels?: BackupManualModelRow[];
   downstreamApiKeys?: BackupDownstreamApiKeyRow[];
+  sitePricingProfiles?: SitePricingProfileRow[];
+  officialModelPrices?: OfficialModelPriceRow[];
+  siteModelPrices?: SiteModelPriceRow[];
+  siteModelPriceRules?: SiteModelPriceRuleRow[];
+  accountGroupRateRules?: AccountGroupRateRuleRow[];
+  pricingRefreshStates?: PricingRefreshStateRow[];
 }
 
 interface PreferencesBackupSection {
@@ -900,7 +912,6 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
-      unitCost: null,
       valueScore: 0,
       status: asBoolean(row.disabled, false) ? 'disabled' : 'active',
       isPinned: false,
@@ -954,7 +965,6 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       balance: 0,
       balanceUsed: 0,
       quota: 0,
-      unitCost: null,
       valueScore: 0,
       status: 'active',
       isPinned: false,
@@ -1089,7 +1099,6 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
-      unitCost: null,
       valueScore: 0,
       status: asBoolean(item.disabled, false) ? 'disabled' : 'active',
       isPinned: false,
@@ -1342,6 +1351,12 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     siteDisabledModels,
     manualModels,
     downstreamApiKeys,
+    sitePricingProfiles,
+    officialModelPrices,
+    siteModelPrices,
+    siteModelPriceRules,
+    accountGroupRateRules,
+    pricingRefreshStates,
   ] = await Promise.all([
     db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all(),
     db.select().from(schema.siteApiEndpoints)
@@ -1365,6 +1380,12 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       .orderBy(asc(schema.modelAvailability.accountId), asc(schema.modelAvailability.modelName))
       .all(),
     db.select().from(schema.downstreamApiKeys).orderBy(asc(schema.downstreamApiKeys.id)).all(),
+    db.select().from(schema.sitePricingProfiles).orderBy(asc(schema.sitePricingProfiles.siteId)).all(),
+    db.select().from(schema.officialModelPrices).orderBy(asc(schema.officialModelPrices.id)).all(),
+    db.select().from(schema.siteModelPrices).orderBy(asc(schema.siteModelPrices.id)).all(),
+    db.select().from(schema.siteModelPriceRules).orderBy(asc(schema.siteModelPriceRules.id)).all(),
+    db.select().from(schema.accountGroupRateRules).orderBy(asc(schema.accountGroupRateRules.id)).all(),
+    db.select().from(schema.pricingRefreshStates).orderBy(asc(schema.pricingRefreshStates.id)).all(),
   ]);
 
   return {
@@ -1405,6 +1426,12 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       updatedAt: _updatedAt,
       ...row
     }) => row),
+    sitePricingProfiles,
+    officialModelPrices,
+    siteModelPrices,
+    siteModelPriceRules,
+    accountGroupRateRules,
+    pricingRefreshStates,
   };
 }
 
@@ -1473,6 +1500,12 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const downstreamApiKeys = Array.isArray(input.downstreamApiKeys)
     ? input.downstreamApiKeys as BackupDownstreamApiKeyRow[]
     : undefined;
+  const sitePricingProfiles = Array.isArray(input.sitePricingProfiles) ? input.sitePricingProfiles as SitePricingProfileRow[] : undefined;
+  const officialModelPrices = Array.isArray(input.officialModelPrices) ? input.officialModelPrices as OfficialModelPriceRow[] : undefined;
+  const siteModelPrices = Array.isArray(input.siteModelPrices) ? input.siteModelPrices as SiteModelPriceRow[] : undefined;
+  const siteModelPriceRules = Array.isArray(input.siteModelPriceRules) ? input.siteModelPriceRules as SiteModelPriceRuleRow[] : undefined;
+  const accountGroupRateRules = Array.isArray(input.accountGroupRateRules) ? input.accountGroupRateRules as AccountGroupRateRuleRow[] : undefined;
+  const pricingRefreshStates = Array.isArray(input.pricingRefreshStates) ? input.pricingRefreshStates as PricingRefreshStateRow[] : undefined;
 
   if (!sites || !accounts || !accountTokens || !tokenRoutes || !routeChannels) return null;
 
@@ -1488,6 +1521,12 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     siteDisabledModels,
     manualModels,
     downstreamApiKeys,
+    sitePricingProfiles,
+    officialModelPrices,
+    siteModelPrices,
+    siteModelPriceRules,
+    accountGroupRateRules,
+    pricingRefreshStates,
   };
 }
 
@@ -1572,10 +1611,26 @@ async function importAccountsSection(
   const shouldReplaceSiteDisabledModels = Array.isArray(section.siteDisabledModels);
   const shouldReplaceManualModels = Array.isArray(section.manualModels);
   const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
+  const shouldReplacePricingDomain = [
+    section.sitePricingProfiles,
+    section.officialModelPrices,
+    section.siteModelPrices,
+    section.siteModelPriceRules,
+    section.accountGroupRateRules,
+    section.pricingRefreshStates,
+  ].some(Array.isArray);
 
   if (shouldReplaceDownstreamApiKeys) {
       await tx.delete(schema.downstreamApiKeys).run();
   }
+    if (shouldReplacePricingDomain) {
+      await tx.delete(schema.pricingRefreshStates).run();
+      await tx.delete(schema.siteModelPriceRules).run();
+      await tx.delete(schema.siteModelPrices).run();
+      await tx.delete(schema.officialModelPrices).run();
+      await tx.delete(schema.sitePricingProfiles).run();
+      await tx.delete(schema.accountGroupRateRules).run();
+    }
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.routeChannels).run();
     await tx.delete(schema.routeGroupSources).run();
@@ -1644,7 +1699,6 @@ async function importAccountsSection(
         balance: row.balance,
         balanceUsed: runtimeAccount?.balanceUsed ?? row.balanceUsed,
         quota: row.quota,
-        unitCost: row.unitCost,
         valueScore: row.valueScore,
         status: row.status,
         isPinned: row.isPinned ?? false,
@@ -1670,6 +1724,15 @@ async function importAccountsSection(
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
+    }
+
+    if (shouldReplacePricingDomain) {
+      if ((section.sitePricingProfiles || []).length > 0) await tx.insert(schema.sitePricingProfiles).values(section.sitePricingProfiles!).run();
+      if ((section.officialModelPrices || []).length > 0) await tx.insert(schema.officialModelPrices).values(section.officialModelPrices!).run();
+      if ((section.siteModelPrices || []).length > 0) await tx.insert(schema.siteModelPrices).values(section.siteModelPrices!).run();
+      if ((section.siteModelPriceRules || []).length > 0) await tx.insert(schema.siteModelPriceRules).values(section.siteModelPriceRules!).run();
+      if ((section.accountGroupRateRules || []).length > 0) await tx.insert(schema.accountGroupRateRules).values(section.accountGroupRateRules!).run();
+      if ((section.pricingRefreshStates || []).length > 0) await tx.insert(schema.pricingRefreshStates).values(section.pricingRefreshStates!).run();
     }
 
     for (const row of section.accountTokens) {
@@ -2044,6 +2107,95 @@ function validateImportSections(
         `${row.accountId}::${row.modelName}`,
         'manualModels',
       );
+    }
+    const requireFiniteNumber = (
+      row: Record<string, unknown>,
+      label: string,
+      key: string,
+      options: { positive?: boolean } = {},
+    ): number => {
+      const value = row[key];
+      if (
+        typeof value !== 'number'
+        || !Number.isFinite(value)
+        || (options.positive ? value <= 0 : value < 0)
+      ) {
+        throw new Error(`导入数据格式错误：${label}.${key}无效`);
+      }
+      return value;
+    };
+    const validateNullablePrices = (row: Record<string, unknown>, label: string, keys: string[]) => {
+      for (const key of keys) {
+        if (row[key] != null) requireFiniteNumber(row, label, key);
+      }
+    };
+    const tokenPriceKeys = [
+      'inputPerMillionUsd', 'outputPerMillionUsd', 'cacheReadPerMillionUsd',
+      'cacheWritePerMillionUsd', 'reasoningPerMillionUsd',
+      'inputAudioPerMillionUsd', 'outputAudioPerMillionUsd',
+    ];
+    const profileSiteIds = new Set<number>();
+    for (const [index, value] of (accountsSection.sitePricingProfiles || []).entries()) {
+      const row = requireRecord(value, `sitePricingProfiles[${index}]`);
+      const siteId = requireId(row, `sitePricingProfiles[${index}]`, 'siteId');
+      if (!siteIds.has(siteId) || profileSiteIds.has(siteId)) throw new Error('导入数据格式错误：sitePricingProfiles 引用或唯一键无效');
+      profileSiteIds.add(siteId);
+      requireFiniteNumber(row, `sitePricingProfiles[${index}]`, 'paidCny', { positive: true });
+      requireFiniteNumber(row, `sitePricingProfiles[${index}]`, 'creditedUsd', { positive: true });
+    }
+    const officialKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.officialModelPrices || []).entries()) {
+      const row = requireRecord(value, `officialModelPrices[${index}]`);
+      const providerId = requireText(row, `officialModelPrices[${index}]`, 'providerId');
+      const modelId = requireText(row, `officialModelPrices[${index}]`, 'modelId');
+      requireText(row, `officialModelPrices[${index}]`, 'displayName');
+      requireUniqueCompositeKey(officialKeys, `${providerId}\0${modelId}`, 'officialModelPrices');
+      validateNullablePrices(row, `officialModelPrices[${index}]`, tokenPriceKeys);
+    }
+    const siteModelKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.siteModelPrices || []).entries()) {
+      const row = requireRecord(value, `siteModelPrices[${index}]`);
+      const siteId = requireId(row, `siteModelPrices[${index}]`, 'siteId');
+      const modelId = requireText(row, `siteModelPrices[${index}]`, 'upstreamModelId');
+      if (!siteIds.has(siteId)) throw new Error(`导入数据格式错误：siteModelPrices[${index}] 引用了不存在的站点`);
+      requireUniqueCompositeKey(siteModelKeys, `${siteId}\0${modelId}`, 'siteModelPrices');
+      if (!['base_price', 'price_includes_group_ratio', 'model_ratio'].includes(String(row.pricingSemantics))) throw new Error(`导入数据格式错误：siteModelPrices[${index}].pricingSemantics无效`);
+      validateNullablePrices(row, `siteModelPrices[${index}]`, [...tokenPriceKeys, 'perCallUsd']);
+    }
+    const siteRuleKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.siteModelPriceRules || []).entries()) {
+      const row = requireRecord(value, `siteModelPriceRules[${index}]`);
+      const siteId = requireId(row, `siteModelPriceRules[${index}]`, 'siteId');
+      const modelId = requireText(row, `siteModelPriceRules[${index}]`, 'upstreamModelId');
+      if (!siteIds.has(siteId)) throw new Error(`导入数据格式错误：siteModelPriceRules[${index}] 引用了不存在的站点`);
+      requireUniqueCompositeKey(siteRuleKeys, `${siteId}\0${modelId}`, 'siteModelPriceRules');
+      const mode = row.mappingMode;
+      const validManual = mode === 'manual' && typeof row.mappedProviderId === 'string' && !!row.mappedProviderId.trim() && typeof row.mappedModelId === 'string' && !!row.mappedModelId.trim();
+      const validCustom = mode === 'custom' && row.mappedProviderId == null && row.mappedModelId == null;
+      if (!validManual && !validCustom) throw new Error(`导入数据格式错误：siteModelPriceRules[${index}]映射无效`);
+      validateNullablePrices(row, `siteModelPriceRules[${index}]`, [
+        'inputOverrideUsd', 'outputOverrideUsd', 'cacheReadOverrideUsd',
+        'cacheWriteOverrideUsd', 'reasoningOverrideUsd', 'inputAudioOverrideUsd',
+        'outputAudioOverrideUsd', 'perCallOverrideUsd',
+      ]);
+    }
+    const groupRuleKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.accountGroupRateRules || []).entries()) {
+      const row = requireRecord(value, `accountGroupRateRules[${index}]`);
+      const accountId = requireId(row, `accountGroupRateRules[${index}]`, 'accountId');
+      const groupKey = requireText(row, `accountGroupRateRules[${index}]`, 'groupKey');
+      if (!accountIds.has(accountId)) throw new Error(`导入数据格式错误：accountGroupRateRules[${index}] 引用了不存在的账号`);
+      requireUniqueCompositeKey(groupRuleKeys, `${accountId}\0${groupKey}`, 'accountGroupRateRules');
+      requireFiniteNumber(row, `accountGroupRateRules[${index}]`, 'ratioOverride');
+    }
+    const refreshStateKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.pricingRefreshStates || []).entries()) {
+      const row = requireRecord(value, `pricingRefreshStates[${index}]`);
+      const scopeType = row.scopeType;
+      const scopeId = row.scopeId;
+      if ((scopeType !== 'official' && scopeType !== 'site') || !Number.isInteger(scopeId) || Number(scopeId) < 0) throw new Error(`导入数据格式错误：pricingRefreshStates[${index}]范围无效`);
+      if (scopeType === 'site' && !siteIds.has(Number(scopeId))) throw new Error(`导入数据格式错误：pricingRefreshStates[${index}] 引用了不存在的站点`);
+      requireUniqueCompositeKey(refreshStateKeys, `${scopeType}\0${scopeId}`, 'pricingRefreshStates');
     }
     const parseIdList = (raw: unknown, label: string): number[] => {
       if (raw == null || raw === '') return [];

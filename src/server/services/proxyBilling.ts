@@ -1,9 +1,9 @@
 import {
-  buildProxyBillingDetails,
-  estimateProxyCost,
-  type ProxyBillingDetails,
-  type ProxyBillingPricingOverride,
-} from './modelPricingService.js';
+  buildBillingSnapshot,
+  type BillingSnapshotInput,
+} from '../pricing/billingSnapshotService.js';
+import type { PricingBillingSnapshot } from '../pricing/contracts.js';
+import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 import type { SelfLogBillingMeta } from './proxyUsageFallbackService.js';
 
 interface ProxyBillingUsageSummary {
@@ -35,58 +35,72 @@ interface ResolveProxyLogBillingInput {
     id: number;
     accessToken?: string | null;
     apiToken?: string | null;
+    extraConfig?: string | null;
   };
+  tokenGroup?: string | null;
   modelName: string;
   parsedUsage: ProxyBillingUsageSummary;
   resolvedUsage: ResolvedProxyUsageSummary;
 }
 
-function toPricingOverride(meta: SelfLogBillingMeta | null): ProxyBillingPricingOverride | null {
-  if (!meta) return null;
+type PerCallProxyBillingInput = Pick<ResolveProxyLogBillingInput, 'site' | 'account' | 'tokenGroup' | 'modelName'>;
+
+export type ProxyBillingDetails = PricingBillingSnapshot;
+
+function buildSnapshotInput(input: ResolveProxyLogBillingInput): BillingSnapshotInput {
+  const selfLogMeta = input.resolvedUsage.selfLogBillingMeta;
+  const credentialKind = getCredentialModeFromExtraConfig(input.account.extraConfig) === 'apikey'
+    ? 'api_key' as const
+    : 'session' as const;
   return {
-    modelRatio: meta.modelRatio,
-    completionRatio: meta.completionRatio,
-    cacheRatio: meta.cacheRatio,
-    cacheCreationRatio: meta.cacheCreationRatio,
-    groupRatio: meta.groupRatio,
+    siteId: input.site.id,
+    accountId: input.account.id,
+    tokenGroup: credentialKind === 'api_key' ? 'default' : (input.tokenGroup ?? null),
+    credentialKind,
+    upstreamModelId: input.modelName,
+    promptTokens: input.resolvedUsage.promptTokens,
+    completionTokens: input.resolvedUsage.completionTokens,
+    cacheReadTokens: selfLogMeta?.cacheReadTokens ?? input.parsedUsage.cacheReadTokens,
+    cacheWriteTokens: selfLogMeta?.cacheCreationTokens ?? input.parsedUsage.cacheCreationTokens,
+    promptTokensIncludeCache: selfLogMeta?.promptTokensIncludeCache
+      ?? input.parsedUsage.promptTokensIncludeCache,
+  };
+}
+
+function buildPerCallSnapshotInput(input: PerCallProxyBillingInput): BillingSnapshotInput {
+  const credentialKind = getCredentialModeFromExtraConfig(input.account.extraConfig) === 'apikey'
+    ? 'api_key' as const
+    : 'session' as const;
+  return {
+    siteId: input.site.id,
+    accountId: input.account.id,
+    tokenGroup: credentialKind === 'api_key' ? 'default' : (input.tokenGroup ?? null),
+    credentialKind,
+    upstreamModelId: input.modelName,
+    promptTokens: 0,
+    completionTokens: 0,
+  };
+}
+
+function toResolvedBilling(billingDetails: PricingBillingSnapshot | null) {
+  return {
+    estimatedCost: billingDetails?.siteCostUsd ?? 0,
+    actualCostCny: billingDetails?.actualCostCny ?? 0,
+    billingDetails,
   };
 }
 
 export async function resolveProxyLogBilling(
   input: ResolveProxyLogBillingInput,
-): Promise<{ estimatedCost: number; billingDetails: ProxyBillingDetails | null }> {
-  const selfLogMeta = input.resolvedUsage.selfLogBillingMeta;
-  const billingPricingOverride = toPricingOverride(selfLogMeta);
-  const cacheReadTokens = selfLogMeta?.cacheReadTokens ?? input.parsedUsage.cacheReadTokens;
-  const cacheCreationTokens = selfLogMeta?.cacheCreationTokens ?? input.parsedUsage.cacheCreationTokens;
-  const promptTokensIncludeCache = selfLogMeta?.promptTokensIncludeCache
-    ?? input.parsedUsage.promptTokensIncludeCache;
+): Promise<{
+  estimatedCost: number;
+  actualCostCny: number;
+  billingDetails: ProxyBillingDetails | null;
+}> {
+  const billingDetails = await buildBillingSnapshot(buildSnapshotInput(input));
+  return toResolvedBilling(billingDetails);
+}
 
-  const billingInput = {
-    site: input.site,
-    account: input.account,
-    modelName: input.modelName,
-    promptTokens: input.resolvedUsage.promptTokens,
-    completionTokens: input.resolvedUsage.completionTokens,
-    totalTokens: input.resolvedUsage.totalTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    promptTokensIncludeCache,
-    billingPricingOverride,
-  };
-
-  let estimatedCost = await estimateProxyCost(billingInput);
-  const billingDetails = await buildProxyBillingDetails(billingInput);
-
-  if (
-    input.resolvedUsage.estimatedCostFromQuota > 0
-    && (input.resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)
-  ) {
-    estimatedCost = input.resolvedUsage.estimatedCostFromQuota;
-  }
-
-  return {
-    estimatedCost,
-    billingDetails,
-  };
+export async function resolvePerCallProxyBilling(input: PerCallProxyBillingInput) {
+  return toResolvedBilling(await buildBillingSnapshot(buildPerCallSnapshotInput(input)));
 }

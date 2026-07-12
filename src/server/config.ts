@@ -6,6 +6,10 @@ import {
   normalizeAccountGroupRateRefreshIntervalMinutes,
 } from './shared/accountGroupRateRefresh.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
+import {
+  PRICE_REFRESH_DEFAULT_CRON,
+  PRICE_REFRESH_DEFAULT_ENABLED,
+} from './pricing/settings.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -97,6 +101,11 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
     ),
     accountGroupRateRefreshIntervalMinutes,
+    priceRefreshEnabled: parseBoolean(
+      env.PRICE_REFRESH_ENABLED,
+      PRICE_REFRESH_DEFAULT_ENABLED,
+    ),
+    priceRefreshCron: env.PRICE_REFRESH_CRON || PRICE_REFRESH_DEFAULT_CRON,
     logCleanupCron: env.LOG_CLEANUP_CRON || '0 6 * * *',
     logCleanupConfigured: false,
     logCleanupUsageLogsEnabled: parseBoolean(env.LOG_CLEANUP_USAGE_LOGS_ENABLED, false),

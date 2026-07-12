@@ -4,7 +4,7 @@ import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
-import { estimateProxyCost } from '../../services/modelPricingService.js';
+import { resolvePerCallProxyBilling } from '../../services/proxyBilling.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
@@ -146,21 +146,21 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
         const latency = Date.now() - startTime;
         let estimatedCost = 0;
+        let actualCostCny = 0;
+        let billingDetails: unknown = null;
         await recordTokenRouterEventBestEffort('estimate proxy cost', async () => {
-          estimatedCost = await estimateProxyCost({
+          ({ estimatedCost, actualCostCny, billingDetails } = await resolvePerCallProxyBilling({
             site: selected.site,
             account: selected.account,
+            tokenGroup: selected.token?.tokenGroup ?? null,
             modelName: upstreamModel,
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-          });
+          }));
         });
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(selected.channel.id, latency, actualCostCny, upstreamModel)
         ));
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
-          recordDownstreamCostUsage(request, estimatedCost)
+          recordDownstreamCostUsage(request, actualCostCny)
         ));
         logProxy(
           selected,
@@ -176,6 +176,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           clientContext,
           false,
           firstByteLatencyMs,
+          billingDetails,
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
@@ -366,21 +367,21 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
         const latency = Date.now() - startTime;
         let estimatedCost = 0;
+        let actualCostCny = 0;
+        let billingDetails: unknown = null;
         await recordTokenRouterEventBestEffort('estimate proxy cost', async () => {
-          estimatedCost = await estimateProxyCost({
+          ({ estimatedCost, actualCostCny, billingDetails } = await resolvePerCallProxyBilling({
             site: selected.site,
             account: selected.account,
+            tokenGroup: selected.token?.tokenGroup ?? null,
             modelName: upstreamModel,
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-          });
+          }));
         });
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(selected.channel.id, latency, actualCostCny, upstreamModel)
         ));
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
-          recordDownstreamCostUsage(request, estimatedCost)
+          recordDownstreamCostUsage(request, actualCostCny)
         ));
         logProxy(
           selected,
@@ -396,6 +397,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           clientContext,
           false,
           firstByteLatencyMs,
+          billingDetails,
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
@@ -472,6 +474,7 @@ async function logProxy(
   clientContext: DownstreamClientContext | null = null,
   isStream = false,
   firstByteLatencyMs: number | null = null,
+  billingDetails: unknown = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -500,6 +503,7 @@ async function logProxy(
       completionTokens: 0,
       totalTokens: 0,
       estimatedCost,
+      billingDetails,
       clientFamily: clientContext?.clientKind || null,
       clientAppId: clientContext?.clientAppId || null,
       clientAppName: clientContext?.clientAppName || null,

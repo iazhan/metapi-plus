@@ -18,6 +18,14 @@ import {
   stopAccountRateRefreshScheduler,
 } from './accountRateRefreshScheduler.js';
 import { runRuntimeMaintenance } from './runtimeMaintenanceOwner.js';
+import {
+  startPriceRefreshScheduler,
+  stopPriceRefreshScheduler,
+} from '../pricing/priceRefreshScheduler.js';
+import {
+  PRICE_REFRESH_DEFAULT_CRON,
+  PRICE_REFRESH_DEFAULT_ENABLED,
+} from '../pricing/settings.js';
 
 export const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 
@@ -29,6 +37,8 @@ type FactoryResetDependencies = {
   startAccountRateRefreshScheduler?: typeof startAccountRateRefreshScheduler;
   stopAccountRateRefreshScheduler?: typeof stopAccountRateRefreshScheduler;
   clearAccountRateRefreshFailureState?: typeof clearAccountRateRefreshFailureState;
+  startPriceRefreshScheduler?: typeof startPriceRefreshScheduler;
+  stopPriceRefreshScheduler?: typeof stopPriceRefreshScheduler;
   restorePriorRuntime?: () => Promise<void>;
 };
 
@@ -49,6 +59,12 @@ const FACTORY_RESET_DEFAULT_SITES: Array<typeof schema.sites.$inferInsert> = [
 ];
 
 async function clearAllBusinessData(tx: typeof db): Promise<void> {
+  await tx.delete(schema.pricingRefreshStates).run();
+  await tx.delete(schema.siteModelPriceRules).run();
+  await tx.delete(schema.siteModelPrices).run();
+  await tx.delete(schema.officialModelPrices).run();
+  await tx.delete(schema.sitePricingProfiles).run();
+  await tx.delete(schema.accountGroupRateRules).run();
   await tx.delete(schema.routeChannels).run();
   await tx.delete(schema.routeGroupSources).run();
   await tx.delete(schema.tokenModelAvailability).run();
@@ -119,6 +135,8 @@ async function restoreInfrastructureSettings(
   await upsertSetting('db_type', preserved.dbType, tx);
   await upsertSetting('db_url', preserved.dbUrl, tx);
   await upsertSetting('db_ssl', preserved.dbSsl, tx);
+  await upsertSetting('price_refresh_enabled', PRICE_REFRESH_DEFAULT_ENABLED, tx);
+  await upsertSetting('price_refresh_cron', PRICE_REFRESH_DEFAULT_CRON, tx);
 }
 
 async function seedFactoryDefaults(tx: typeof db): Promise<void> {
@@ -130,6 +148,8 @@ export async function performFactoryReset(deps: FactoryResetDependencies = {}): 
   const stopScheduler = deps.stopAccountRateRefreshScheduler ?? stopAccountRateRefreshScheduler;
   const startScheduler = deps.startAccountRateRefreshScheduler ?? startAccountRateRefreshScheduler;
   const clearFailure = deps.clearAccountRateRefreshFailureState ?? clearAccountRateRefreshFailureState;
+  const stopPriceScheduler = deps.stopPriceRefreshScheduler ?? stopPriceRefreshScheduler;
+  const startPriceScheduler = deps.startPriceRefreshScheduler ?? startPriceRefreshScheduler;
   const preserved = captureInfrastructureState();
   const priorRuntime = captureRuntimeSettingsSnapshot();
 
@@ -151,8 +171,19 @@ export async function performFactoryReset(deps: FactoryResetDependencies = {}): 
     resetRuntimeConfigToInitialState(preserved);
     for (const accountId of accountIds) clearFailure(accountId);
   }, {
-    stop: () => stopScheduler({ resumePendingUpdates: false }),
-    start: startScheduler,
+    stop: async () => {
+      await Promise.all([
+        stopScheduler({ resumePendingUpdates: false }),
+        stopPriceScheduler(),
+      ]);
+    },
+    start: async () => {
+      startScheduler();
+      await startPriceScheduler({
+        enabled: config.priceRefreshEnabled,
+        cronExpr: config.priceRefreshCron,
+      });
+    },
     restorePriorRuntime: deps.restorePriorRuntime ?? (async () => {
       restoreRuntimeSettingsSnapshot(priorRuntime);
     }),

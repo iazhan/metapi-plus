@@ -183,6 +183,16 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.accountGroupRateRefreshIntervalMinutes = accountGroupRateRefreshIntervalMinutes;
   }
 
+  const priceRefreshEnabled = parseSettingFromMap<boolean>(settingsMap, 'price_refresh_enabled');
+  if (typeof priceRefreshEnabled === 'boolean') {
+    config.priceRefreshEnabled = priceRefreshEnabled;
+  }
+
+  const priceRefreshCron = parseSettingFromMap<string>(settingsMap, 'price_refresh_cron');
+  if (typeof priceRefreshCron === 'string' && priceRefreshCron) {
+    config.priceRefreshCron = priceRefreshCron;
+  }
+
   const logCleanupCron = parseSettingFromMap<string>(settingsMap, 'log_cleanup_cron');
   if (typeof logCleanupCron === 'string' && logCleanupCron) config.logCleanupCron = logCleanupCron;
 

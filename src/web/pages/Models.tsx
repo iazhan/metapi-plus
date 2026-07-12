@@ -37,6 +37,15 @@ interface ModelPricingSource {
   ownerBy: string | null;
   enableGroups: string[];
   groupPricing: Record<string, ModelGroupPricing>;
+  priceSourcesByGroup?: Record<string, Record<string, string>>;
+  mappingSourceByGroup?: Record<string, string>;
+}
+
+function pricingSourceLabel(source: string | undefined): string {
+  if (source === 'manual') return '手动';
+  if (source === 'site') return '站点';
+  if (source === 'models_dev') return 'models.dev';
+  return '缺失';
 }
 
 interface ModelAccountInfo {
@@ -765,7 +774,7 @@ export default function Models() {
                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                   {Object.entries(source.groupPricing).map(([group, pricing]) => (
                                     <span key={group} className="badge badge-info">
-                                      {group}: {renderGroupPricingValue(pricing)}
+                                      {group}: {renderGroupPricingValue(pricing)} · 输入来源 {pricingSourceLabel(source.priceSourcesByGroup?.[group]?.inputPerMillionUsd)}
                                     </span>
                                   ))}
                                 </div>
@@ -964,7 +973,7 @@ export default function Models() {
                                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                           {Object.entries(source.groupPricing).map(([group, pricing]) => (
                                             <span key={group} className="badge badge-info">
-                                              {group}: {renderGroupPricingValue(pricing)}
+                                              {group}: {renderGroupPricingValue(pricing)} · 输入来源 {pricingSourceLabel(source.priceSourcesByGroup?.[group]?.inputPerMillionUsd)}
                                             </span>
                                           ))}
                                         </div>

@@ -2,6 +2,7 @@ import baselineContract from './generated/fixtures/2026-03-14-baseline.schemaCon
 import currentContract from './generated/schemaContract.json' with { type: 'json' };
 import { classifyLegacyCompatMutation } from './legacySchemaCompat.js';
 import { generateUpgradeSql } from './schemaArtifactGenerator.js';
+import { INTENTIONAL_SCHEMA_COLUMN_REMOVALS } from './schemaEvolution.js';
 import type { SchemaContract, SchemaContractColumn } from './schemaContract.js';
 import { describe, expect, it } from 'vitest';
 import {
@@ -51,7 +52,9 @@ describe('runtime schema bootstrap', () => {
   it.each(['mysql', 'postgres'] as const)('executes live-schema upgrade statements for %s', async (dialect) => {
     const executedSql: string[] = [];
     const expectedUpgradeSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql(dialect, currentContract, baselineContract),
+      generateUpgradeSql(dialect, currentContract, baselineContract, {
+        allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+      }),
     );
 
     await ensureRuntimeDatabaseSchema(createStubClient(dialect, executedSql), {
@@ -103,10 +106,14 @@ describe('runtime schema bootstrap', () => {
   it('ignores duplicate mysql index and column errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const duplicateColumnSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('mysql', currentContract, baselineContract),
+      generateUpgradeSql('mysql', currentContract, baselineContract, {
+        allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+      }),
     ).find((sqlText) => sqlText.includes('ALTER TABLE `model_availability` ADD COLUMN `is_manual`'));
     const duplicateIndexSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('mysql', currentContract, baselineContract),
+      generateUpgradeSql('mysql', currentContract, baselineContract, {
+        allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+      }),
     ).find((sqlText) => sqlText.includes('proxy_files_public_id_unique'));
 
     expect(duplicateColumnSql).toBeDefined();
@@ -140,7 +147,9 @@ describe('runtime schema bootstrap', () => {
   it('ignores postgres relation-already-exists errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const targetSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('postgres', currentContract, baselineContract),
+      generateUpgradeSql('postgres', currentContract, baselineContract, {
+        allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+      }),
     ).find((sqlText) => sqlText.includes('proxy_files_public_id_unique'));
 
     expect(targetSql).toBeDefined();

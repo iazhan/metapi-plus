@@ -55,6 +55,122 @@ export const siteDisabledModels = sqliteTable('site_disabled_models', {
   siteIdIdx: index('site_disabled_models_site_id_idx').on(table.siteId),
 }));
 
+export const sitePricingProfiles = sqliteTable('site_pricing_profiles', {
+  siteId: integer('site_id').primaryKey().references(() => sites.id, { onDelete: 'cascade' }),
+  paidCny: real('paid_cny').notNull().default(1),
+  creditedUsd: real('credited_usd').notNull().default(1),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  positiveAmounts: check(
+    'site_pricing_profiles_positive_amounts',
+    sql`${table.paidCny} > 0 and ${table.creditedUsd} > 0`,
+  ),
+}));
+
+export const officialModelPrices = sqliteTable('official_model_prices', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  providerId: text('provider_id').notNull(),
+  modelId: text('model_id').notNull(),
+  displayName: text('display_name').notNull(),
+  inputPerMillionUsd: real('input_per_million_usd'),
+  outputPerMillionUsd: real('output_per_million_usd'),
+  cacheReadPerMillionUsd: real('cache_read_per_million_usd'),
+  cacheWritePerMillionUsd: real('cache_write_per_million_usd'),
+  reasoningPerMillionUsd: real('reasoning_per_million_usd'),
+  inputAudioPerMillionUsd: real('input_audio_per_million_usd'),
+  outputAudioPerMillionUsd: real('output_audio_per_million_usd'),
+  tiersJson: text('tiers_json'),
+  sourceUpdatedAt: text('source_updated_at'),
+  fetchedAt: text('fetched_at').notNull(),
+}, (table) => ({
+  providerModelUnique: uniqueIndex('official_model_prices_provider_model_unique').on(table.providerId, table.modelId),
+  modelIdIdx: index('official_model_prices_model_id_idx').on(table.modelId),
+  nonNegativePrices: check(
+    'official_model_prices_non_negative',
+    sql`(${table.inputPerMillionUsd} is null or ${table.inputPerMillionUsd} >= 0)
+      and (${table.outputPerMillionUsd} is null or ${table.outputPerMillionUsd} >= 0)
+      and (${table.cacheReadPerMillionUsd} is null or ${table.cacheReadPerMillionUsd} >= 0)
+      and (${table.cacheWritePerMillionUsd} is null or ${table.cacheWritePerMillionUsd} >= 0)
+      and (${table.reasoningPerMillionUsd} is null or ${table.reasoningPerMillionUsd} >= 0)
+      and (${table.inputAudioPerMillionUsd} is null or ${table.inputAudioPerMillionUsd} >= 0)
+      and (${table.outputAudioPerMillionUsd} is null or ${table.outputAudioPerMillionUsd} >= 0)`,
+  ),
+}));
+
+export const siteModelPrices = sqliteTable('site_model_prices', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  upstreamModelId: text('upstream_model_id').notNull(),
+  inputPerMillionUsd: real('input_per_million_usd'),
+  outputPerMillionUsd: real('output_per_million_usd'),
+  cacheReadPerMillionUsd: real('cache_read_per_million_usd'),
+  cacheWritePerMillionUsd: real('cache_write_per_million_usd'),
+  reasoningPerMillionUsd: real('reasoning_per_million_usd'),
+  inputAudioPerMillionUsd: real('input_audio_per_million_usd'),
+  outputAudioPerMillionUsd: real('output_audio_per_million_usd'),
+  perCallUsd: real('per_call_usd'),
+  pricingSemantics: text('pricing_semantics').notNull(),
+  rawMetadataJson: text('raw_metadata_json'),
+  fetchedAt: text('fetched_at').notNull(),
+}, (table) => ({
+  siteModelUnique: uniqueIndex('site_model_prices_site_model_unique').on(table.siteId, table.upstreamModelId),
+  siteIdIdx: index('site_model_prices_site_id_idx').on(table.siteId),
+  validSemantics: check(
+    'site_model_prices_semantics_valid',
+    sql`${table.pricingSemantics} in ('base_price', 'price_includes_group_ratio', 'model_ratio')`,
+  ),
+  nonNegativePrices: check(
+    'site_model_prices_non_negative',
+    sql`(${table.inputPerMillionUsd} is null or ${table.inputPerMillionUsd} >= 0)
+      and (${table.outputPerMillionUsd} is null or ${table.outputPerMillionUsd} >= 0)
+      and (${table.cacheReadPerMillionUsd} is null or ${table.cacheReadPerMillionUsd} >= 0)
+      and (${table.cacheWritePerMillionUsd} is null or ${table.cacheWritePerMillionUsd} >= 0)
+      and (${table.reasoningPerMillionUsd} is null or ${table.reasoningPerMillionUsd} >= 0)
+      and (${table.inputAudioPerMillionUsd} is null or ${table.inputAudioPerMillionUsd} >= 0)
+      and (${table.outputAudioPerMillionUsd} is null or ${table.outputAudioPerMillionUsd} >= 0)
+      and (${table.perCallUsd} is null or ${table.perCallUsd} >= 0)`,
+  ),
+}));
+
+export const siteModelPriceRules = sqliteTable('site_model_price_rules', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  upstreamModelId: text('upstream_model_id').notNull(),
+  mappedProviderId: text('mapped_provider_id'),
+  mappedModelId: text('mapped_model_id'),
+  mappingMode: text('mapping_mode').notNull(),
+  inputOverrideUsd: real('input_override_usd'),
+  outputOverrideUsd: real('output_override_usd'),
+  cacheReadOverrideUsd: real('cache_read_override_usd'),
+  cacheWriteOverrideUsd: real('cache_write_override_usd'),
+  reasoningOverrideUsd: real('reasoning_override_usd'),
+  inputAudioOverrideUsd: real('input_audio_override_usd'),
+  outputAudioOverrideUsd: real('output_audio_override_usd'),
+  perCallOverrideUsd: real('per_call_override_usd'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteModelUnique: uniqueIndex('site_model_price_rules_site_model_unique').on(table.siteId, table.upstreamModelId),
+  siteIdIdx: index('site_model_price_rules_site_id_idx').on(table.siteId),
+  mappingShape: check(
+    'site_model_price_rules_mapping_shape',
+    sql`(${table.mappingMode} = 'manual' and ${table.mappedProviderId} is not null and ${table.mappedModelId} is not null)
+      or (${table.mappingMode} = 'custom' and ${table.mappedProviderId} is null and ${table.mappedModelId} is null)`,
+  ),
+  nonNegativeOverrides: check(
+    'site_model_price_rules_non_negative',
+    sql`(${table.inputOverrideUsd} is null or ${table.inputOverrideUsd} >= 0)
+      and (${table.outputOverrideUsd} is null or ${table.outputOverrideUsd} >= 0)
+      and (${table.cacheReadOverrideUsd} is null or ${table.cacheReadOverrideUsd} >= 0)
+      and (${table.cacheWriteOverrideUsd} is null or ${table.cacheWriteOverrideUsd} >= 0)
+      and (${table.reasoningOverrideUsd} is null or ${table.reasoningOverrideUsd} >= 0)
+      and (${table.inputAudioOverrideUsd} is null or ${table.inputAudioOverrideUsd} >= 0)
+      and (${table.outputAudioOverrideUsd} is null or ${table.outputAudioOverrideUsd} >= 0)
+      and (${table.perCallOverrideUsd} is null or ${table.perCallOverrideUsd} >= 0)`,
+  ),
+}));
+
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
@@ -64,7 +180,6 @@ export const accounts = sqliteTable('accounts', {
   balance: real('balance').default(0),
   balanceUsed: real('balance_used').default(0),
   quota: real('quota').default(0),
-  unitCost: real('unit_cost'),
   valueScore: real('value_score').default(0),
   status: text('status').default('active'), // 'active' | 'disabled' | 'expired'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
@@ -118,6 +233,19 @@ export const accountGroupRates = sqliteTable('account_group_rates', {
   accountGroupUnique: uniqueIndex('account_group_rates_account_group_unique').on(table.accountId, table.groupKey),
   accountIdIdx: index('account_group_rates_account_id_idx').on(table.accountId),
   nonNegativeRatio: check('account_group_rates_ratio_non_negative', sql`${table.ratio} >= 0`),
+}));
+
+export const accountGroupRateRules = sqliteTable('account_group_rate_rules', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  groupKey: text('group_key').notNull(),
+  ratioOverride: real('ratio_override').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  accountGroupUnique: uniqueIndex('account_group_rate_rules_account_group_unique').on(table.accountId, table.groupKey),
+  accountIdIdx: index('account_group_rate_rules_account_id_idx').on(table.accountId),
+  nonNegativeRatio: check('account_group_rate_rules_ratio_non_negative', sql`${table.ratioOverride} >= 0`),
 }));
 
 export const checkinLogs = sqliteTable('checkin_logs', {
@@ -395,6 +523,21 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value'), // JSON
 });
+
+export const pricingRefreshStates = sqliteTable('pricing_refresh_states', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scopeType: text('scope_type').notNull(),
+  scopeId: integer('scope_id').notNull().default(0),
+  lastSuccessAt: text('last_success_at'),
+  lastFailureAt: text('last_failure_at'),
+  lastFailureKind: text('last_failure_kind'),
+  failureActive: integer('failure_active', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  scopeUnique: uniqueIndex('pricing_refresh_states_scope_unique').on(table.scopeType, table.scopeId),
+  validScope: check('pricing_refresh_states_scope_valid', sql`${table.scopeType} in ('official', 'site')`),
+}));
 
 export const adminSnapshots = sqliteTable('admin_snapshots', {
   id: integer('id').primaryKey({ autoIncrement: true }),

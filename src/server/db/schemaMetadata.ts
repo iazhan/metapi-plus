@@ -38,6 +38,7 @@ function isDateTimeLikeColumn(columnName: string, defaultValue: string | null): 
 
 function isJsonLikeColumn(columnName: string): boolean {
   const normalizedColumn = columnName.toLowerCase();
+  if (normalizedColumn.endsWith('_mode')) return false;
   return normalizedColumn.endsWith('_json')
     || normalizedColumn.endsWith('_snapshot')
     || normalizedColumn.includes('mapping')

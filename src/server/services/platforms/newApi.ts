@@ -16,6 +16,8 @@ import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
+import { normalizeNewApiPricingPayload } from '../../pricing/platformQuoteNormalizers.js';
 
 const SHIELD_VM_TIMEOUT_MS = 1_000;
 
@@ -36,6 +38,26 @@ export class NewApiAdapter extends BasePlatformAdapter {
     } catch {
       return false;
     }
+  }
+
+  async getPricing(
+    baseUrl: string,
+    credential: PricingCredential,
+    signal?: AbortSignal,
+  ): Promise<PlatformPriceQuote[]> {
+    const headers = credential.kind === 'session' && credential.value.includes('=')
+      ? {
+          Cookie: credential.value,
+          ...(credential.platformUserId
+            ? { 'New-Api-User': String(credential.platformUserId) }
+            : {}),
+        }
+      : this.authHeaders(credential.value, credential.platformUserId);
+    const payload = await this.fetchJson<unknown>(`${baseUrl}/api/pricing`, {
+      headers,
+      signal,
+    });
+    return normalizeNewApiPricingPayload(payload);
   }
 
   override async getSiteAnnouncements(baseUrl: string, _accessToken: string): Promise<SiteAnnouncement[]> {

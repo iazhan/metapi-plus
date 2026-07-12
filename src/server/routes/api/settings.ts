@@ -1713,11 +1713,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (body.routingFallbackUnitCost !== undefined) {
       const nextRoutingFallbackUnitCost = Number(body.routingFallbackUnitCost);
       if (!Number.isFinite(nextRoutingFallbackUnitCost) || nextRoutingFallbackUnitCost <= 0) {
-        return reply.code(400).send({ success: false, message: '无价模型默认单价必须是大于 0 的数字' });
+        return reply.code(400).send({ success: false, message: '未知模型路由成本兜底必须是大于 0 的数字' });
       }
       const normalized = Math.max(1e-6, nextRoutingFallbackUnitCost);
       if (Math.abs(normalized - config.routingFallbackUnitCost) > 1e-12) {
-        changedLabels.push(`无价模型默认单价（${config.routingFallbackUnitCost} -> ${normalized}）`);
+        changedLabels.push(`未知模型路由成本兜底（${config.routingFallbackUnitCost} -> ${normalized}）`);
       }
       config.routingFallbackUnitCost = normalized;
       upsertSetting('routing_fallback_unit_cost', normalized);

@@ -5,6 +5,7 @@ const calls = vi.hoisted(() => ({
   hydrate: vi.fn(), updateCheckin: vi.fn(), updateBalance: vi.fn(),
   updateLogCleanup: vi.fn(), startModel: vi.fn(), stopModel: vi.fn(),
   startLegacy: vi.fn(), stopLegacy: vi.fn(), invalidate: vi.fn(),
+  updatePriceRefresh: vi.fn(), invalidatePricing: vi.fn(),
 }));
 
 describe('runtimeSettingsReconciliation', () => {
@@ -21,6 +22,8 @@ describe('runtimeSettingsReconciliation', () => {
       config.logCleanupProgramLogsEnabled = false; config.logCleanupRetentionDays = 14;
       config.logCleanupConfigured = input.cleanupConfigured;
       config.modelAvailabilityProbeEnabled = input.probeEnabled;
+      config.priceRefreshEnabled = false;
+      config.priceRefreshCron = '0 6 * * *';
       return new Map();
     });
     const { reconcileRuntimeSettingsFromPersistedSnapshot } = await import('./runtimeSettingsReconciliation.js');
@@ -30,6 +33,8 @@ describe('runtimeSettingsReconciliation', () => {
       startModelProbe: calls.startModel, stopModelProbe: calls.stopModel,
       startLegacyLogRetention: calls.startLegacy, stopLegacyLogRetention: calls.stopLegacy,
       invalidateProxyCache: calls.invalidate,
+      updatePriceRefresh: calls.updatePriceRefresh,
+      invalidatePricingCache: calls.invalidatePricing,
     });
     expect(calls.hydrate).toHaveBeenCalledTimes(1);
     expect(calls.updateCheckin).toHaveBeenCalledWith({ mode: 'interval', cronExpr: '0 3 * * *', intervalHours: 6 });
@@ -38,5 +43,7 @@ describe('runtimeSettingsReconciliation', () => {
     expect(calls[input.logAction as keyof typeof calls]).toHaveBeenCalledTimes(1);
     expect(calls[input.modelAction as keyof typeof calls]).toHaveBeenCalledTimes(1);
     expect(calls.invalidate).toHaveBeenCalledTimes(1);
+    expect(calls.updatePriceRefresh).toHaveBeenCalledWith({ enabled: false, cronExpr: '0 6 * * *' });
+    expect(calls.invalidatePricing).toHaveBeenCalledTimes(1);
   });
 });

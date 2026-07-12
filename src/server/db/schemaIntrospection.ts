@@ -20,6 +20,7 @@ import type {
 } from './schemaContract.js';
 import { resolveMigrationsFolder } from './schemaContract.js';
 import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
+import { INTENTIONAL_SCHEMA_COLUMN_REMOVALS } from './schemaEvolution.js';
 import {
   normalizeLogicalColumnType,
   type LogicalColumnType,
@@ -844,7 +845,12 @@ export async function applyContractFixtureThenUpgrade(
   options: ApplyContractFixtureThenUpgradeOptions = {},
 ): Promise<string> {
   const bootstrapStatements = splitSqlStatements(generateBootstrapSql(dialect, baselineContract));
-  const upgradeStatements = splitSqlStatements(generateUpgradeSql(dialect, currentContract, baselineContract));
+  const upgradeStatements = splitSqlStatements(generateUpgradeSql(
+    dialect,
+    currentContract,
+    baselineContract,
+    { allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS },
+  ));
 
   if (dialect === 'sqlite') {
     const sqlitePath = createTemporarySqlitePath();

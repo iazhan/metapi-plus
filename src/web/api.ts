@@ -424,7 +424,7 @@ export type ProxyLogStatusFilter = "all" | "success" | "failed";
 export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 
-export type ProxyLogBillingDetails = {
+export type LegacyProxyLogBillingDetails = {
   quotaType: number;
   usage: {
     promptTokens: number;
@@ -453,7 +453,32 @@ export type ProxyLogBillingDetails = {
     cacheCreationCost: number;
     totalCost: number;
   };
-} | null;
+};
+
+export type PricingDomainBillingDetails = {
+  currency: "CNY";
+  priceSources: Record<string, "manual" | "site" | "models_dev" | "missing">;
+  providerId: string | null;
+  catalogModelId: string | null;
+  upstreamModelId: string;
+  inputPerMillionUsd: number | null;
+  outputPerMillionUsd: number | null;
+  cacheReadPerMillionUsd: number | null;
+  cacheWritePerMillionUsd: number | null;
+  reasoningPerMillionUsd: number | null;
+  inputAudioPerMillionUsd: number | null;
+  outputAudioPerMillionUsd: number | null;
+  perCallUsd: number | null;
+  groupRatio: number;
+  groupRatioApplied: boolean;
+  paidCny: number;
+  creditedUsd: number;
+  siteCostUsd: number;
+  actualCostCny: number;
+  pricedAt: string;
+};
+
+export type ProxyLogBillingDetails = LegacyProxyLogBillingDetails | PricingDomainBillingDetails | null;
 
 export type ProxyLogListItem = {
   id: number;
@@ -499,6 +524,63 @@ export type ProxyLogDetail = ProxyLogListItem & {
   channelId?: number | null;
   httpStatus?: number | null;
   billingDetails?: ProxyLogBillingDetails;
+};
+
+export type PricingSemantics =
+  | "base_price"
+  | "price_includes_group_ratio"
+  | "model_ratio";
+export type PricingSource = "manual" | "site" | "models_dev" | "missing";
+export type PricingProfile = { paidCny: number; creditedUsd: number };
+export type SiteModelPriceRulePayload = {
+  mappingMode: "manual" | "custom";
+  mappedProviderId?: string | null;
+  mappedModelId?: string | null;
+  inputOverrideUsd?: number | null;
+  outputOverrideUsd?: number | null;
+  cacheReadOverrideUsd?: number | null;
+  cacheWriteOverrideUsd?: number | null;
+  reasoningOverrideUsd?: number | null;
+  inputAudioOverrideUsd?: number | null;
+  outputAudioOverrideUsd?: number | null;
+  perCallOverrideUsd?: number | null;
+};
+export type SitePricingView = {
+  siteId: number;
+  profile: PricingProfile;
+  models: Array<Record<string, unknown> & { upstreamModelId: string }>;
+  rules: Array<Record<string, unknown> & SiteModelPriceRulePayload & { upstreamModelId: string }>;
+  catalog: Array<Record<string, unknown> & { providerId: string; modelId: string; displayName: string }>;
+  referenceAccountId: number | null;
+  effectiveModels: Array<Record<string, unknown> & {
+    upstreamModelId: string;
+    mappingSource: "manual" | "exact" | "date_suffix" | "custom" | "unmapped";
+    inputPerMillionUsd: number | null;
+    outputPerMillionUsd: number | null;
+    cacheReadPerMillionUsd: number | null;
+    cacheWritePerMillionUsd: number | null;
+    reasoningPerMillionUsd: number | null;
+    inputAudioPerMillionUsd: number | null;
+    outputAudioPerMillionUsd: number | null;
+    perCallUsd: number | null;
+    groupRatio: number;
+    groupRatioApplied: boolean;
+    priceSources: Record<string, PricingSource>;
+  }>;
+  refreshState: Record<string, unknown> | null;
+};
+export type PricingSettingsView = {
+  enabled: boolean;
+  cronExpr: string;
+  timeZone: string;
+  refreshStates: Array<{
+    scopeType: "official" | "site";
+    scopeId: number;
+    lastSuccessAt?: string | null;
+    lastFailureAt?: string | null;
+    lastFailureKind?: string | null;
+    failureActive: boolean;
+  }>;
 };
 
 export type ProxyLogsSummary = {
@@ -777,7 +859,10 @@ export type AccountGroupRateDto = {
   groupName: string;
   description?: string | null;
   ratio: number;
-  lastSyncedAt: string;
+  lastSyncedAt: string | null;
+  synchronizedRatio?: number | null;
+  overrideRatio?: number | null;
+  effectiveRatio?: number;
 };
 
 export type AccountTokenRateSyncDto =
@@ -843,6 +928,41 @@ export type AccountLoginResponseDto =
   };
 
 export const api = {
+  getPricingSettings: () => request<PricingSettingsView>("/api/pricing/settings"),
+  savePricingSettings: (data: { enabled: boolean; cronExpr: string }) =>
+    request<PricingSettingsView>("/api/pricing/settings", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  refreshPricing: () => request("/api/pricing/refresh", { method: "POST" }),
+  getSitePricing: (siteId: number) =>
+    request<SitePricingView>(`/api/sites/${siteId}/pricing`),
+  saveSitePricingProfile: (siteId: number, data: PricingProfile) =>
+    request(`/api/sites/${siteId}/pricing/profile`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  saveSiteModelPriceRule: (
+    siteId: number,
+    upstreamModelId: string,
+    data: SiteModelPriceRulePayload,
+  ) => request(
+    `/api/sites/${siteId}/pricing/models/${encodeURIComponent(upstreamModelId)}/rule`,
+    { method: "PUT", body: JSON.stringify(data) },
+  ),
+  deleteSiteModelPriceRule: (siteId: number, upstreamModelId: string) =>
+    request(`/api/sites/${siteId}/pricing/models/${encodeURIComponent(upstreamModelId)}/rule`, {
+      method: "DELETE",
+    }),
+  saveAccountGroupRateRule: (accountId: number, groupKey: string, ratioOverride: number) =>
+    request(`/api/accounts/${accountId}/group-rates/${encodeURIComponent(groupKey)}/rule`, {
+      method: "PUT",
+      body: JSON.stringify({ ratioOverride }),
+    }),
+  deleteAccountGroupRateRule: (accountId: number, groupKey: string) =>
+    request(`/api/accounts/${accountId}/group-rates/${encodeURIComponent(groupKey)}/rule`, {
+      method: "DELETE",
+    }),
   // Sites
   getSites: () => request("/api/sites"),
   addSite: (data: any) =>

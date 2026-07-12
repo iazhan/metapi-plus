@@ -197,6 +197,13 @@
       "when": 1783648540592,
       "tag": "0028_silent_calypso",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1783795379984,
+      "tag": "0029_pricing_domain",
+      "breakpoints": true
     }
   ]
 }

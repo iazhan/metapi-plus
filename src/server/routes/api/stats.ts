@@ -8,6 +8,8 @@ import { buildModelAnalysis } from "../../services/modelAnalysisService.js";
 import {
   fetchModelPricingCatalog,
 } from "../../services/modelPricingService.js";
+import { resolveEffectivePrice } from "../../pricing/effectivePriceResolver.js";
+import { toMarketplaceGroupPricing } from "../../pricing/marketplacePricing.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
@@ -25,6 +27,7 @@ import { estimateRewardWithTodayIncomeFallback } from "../../services/todayIncom
 import {
   getProxyLogBaseSelectFields,
   parseProxyLogBillingDetails,
+  parseProxyLogCostSnapshot,
   parseProxyLogCompatibilityNotes,
   withProxyLogSelectFields,
 } from "../../services/proxyLogStore.js";
@@ -33,7 +36,7 @@ import {
   listProxyDebugTraces,
 } from "../../services/proxyDebugTraceStore.js";
 import { parseProxyLogMessageMeta } from "../../services/proxyLogMessage.js";
-import { requiresManagedAccountTokens } from "../../services/accountExtraConfig.js";
+import { getCredentialModeFromExtraConfig, requiresManagedAccountTokens } from "../../services/accountExtraConfig.js";
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from "../../services/accountTokenService.js";
 import {
   formatLocalDateTime,
@@ -885,7 +888,7 @@ export async function statsRoutes(app: FastifyInstance) {
       }>
     >;
 
-    const [clientOptionRows, summaryRow, siteRows] = await Promise.all([
+    const [clientOptionRows, summaryRow, costRows, siteRows] = await Promise.all([
       clientOptionRowsPromise,
       (async () => {
         let summaryQuery = db
@@ -893,7 +896,6 @@ export async function statsRoutes(app: FastifyInstance) {
             totalCount: sql<number>`count(*)`,
             successCount: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
             failedCount: sql<number>`coalesce(sum(case when coalesce(${schema.proxyLogs.status}, '') <> 'success' then 1 else 0 end), 0)`,
-            totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
             totalTokensAll: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
           })
           .from(schema.proxyLogs)
@@ -916,6 +918,23 @@ export async function statsRoutes(app: FastifyInstance) {
         }
         return summaryQuery.get();
       })(),
+      withProxyLogSelectFields(
+        ({ fields, includeBillingDetails }) => {
+          if (!includeBillingDetails) return Promise.resolve([]);
+          let query = db
+            .select({ billingDetails: fields.billingDetails! })
+            .from(schema.proxyLogs)
+            .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+            .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+            .leftJoin(
+              schema.downstreamApiKeys,
+              eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id),
+            );
+          if (summaryWhere) query = query.where(summaryWhere) as typeof query;
+          return query.all();
+        },
+        { includeBillingDetails: true, includeClientFields: false },
+      ) as Promise<Array<{ billingDetails?: string | null }>>,
       db
         .select({
           id: schema.sites.id,
@@ -932,7 +951,9 @@ export async function statsRoutes(app: FastifyInstance) {
         totalCount: Number(summaryRow?.totalCount || 0),
         successCount: Number(summaryRow?.successCount || 0),
         failedCount: Number(summaryRow?.failedCount || 0),
-        totalCost: toRoundedMicroNumber(summaryRow?.totalCost),
+        totalCost: toRoundedMicroNumber(costRows.reduce((total, row) => (
+          total + (parseProxyLogCostSnapshot(row.billingDetails)?.actualCostCny ?? 0)
+        ), 0)),
         totalTokensAll: Number(summaryRow?.totalTokensAll || 0),
       },
       sites: siteRows,
@@ -1197,6 +1218,8 @@ export async function statsRoutes(app: FastifyInstance) {
           username: string | null;
           ownerBy: string | null;
           enableGroups: string[];
+          priceSourcesByGroup: Record<string, Record<string, string>>;
+          mappingSourceByGroup: Record<string, string>;
           groupPricing: Record<
             string,
             {
@@ -1274,14 +1297,35 @@ export async function statsRoutes(app: FastifyInstance) {
               aggregate.supportedEndpointTypes.add(endpointType);
             }
 
+            const credentialKind = getCredentialModeFromExtraConfig(result.account.extraConfig) === 'apikey'
+              ? 'api_key' as const
+              : 'session' as const;
+            const enableGroups = credentialKind === 'api_key'
+              ? ['default']
+              : (model.enableGroups.length > 0 ? model.enableGroups : ['default']);
+            const effectiveByGroup = await Promise.all(enableGroups.map(async (group) => ({
+              group,
+              price: await resolveEffectivePrice({
+                siteId: result.site.id,
+                accountId: result.account.id,
+                credentialKind,
+                tokenGroup: group,
+                upstreamModelId: model.modelName,
+              }),
+            })));
             aggregate.pricingSources.push({
               siteId: result.site.id,
               siteName: result.site.name,
               accountId: result.account.id,
               username: result.account.username,
               ownerBy: model.ownerBy,
-              enableGroups: model.enableGroups,
-              groupPricing: model.groupPricing,
+              enableGroups,
+              groupPricing: Object.fromEntries(effectiveByGroup.map(({ group, price }) => [
+                group,
+                toMarketplaceGroupPricing(price),
+              ])),
+              priceSourcesByGroup: Object.fromEntries(effectiveByGroup.map(({ group, price }) => [group, price.priceSources])),
+              mappingSourceByGroup: Object.fromEntries(effectiveByGroup.map(({ group, price }) => [group, price.mappingSource])),
             });
           }
         }
@@ -1298,7 +1342,6 @@ export async function statsRoutes(app: FastifyInstance) {
               site: string;
               username: string | null;
               latency: number | null;
-              unitCost: number | null;
               balance: number;
               tokens: Array<{ id: number; name: string; isDefault: boolean }>;
             }
@@ -1333,7 +1376,6 @@ export async function statsRoutes(app: FastifyInstance) {
             site: s.name,
             username: a.username,
             latency: m.latencyMs,
-            unitCost: a.unitCost,
             balance: a.balance || 0,
             tokens: [{ id: t.id, name: t.name, isDefault: !!t.isDefault }],
           });
@@ -1375,7 +1417,6 @@ export async function statsRoutes(app: FastifyInstance) {
             site: s.name,
             username: a.username,
             latency: m.latencyMs,
-            unitCost: a.unitCost,
             balance: a.balance || 0,
             tokens: [],
           });

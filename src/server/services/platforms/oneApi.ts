@@ -1,4 +1,6 @@
 import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
+import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
+import { normalizeNewApiPricingPayload } from '../../pricing/platformQuoteNormalizers.js';
 
 type CreateApiTokenPayload = {
   name: string;
@@ -13,6 +15,18 @@ type CreateApiTokenPayload = {
 
 export class OneApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'one-api';
+
+  async getPricing(
+    baseUrl: string,
+    credential: PricingCredential,
+    signal?: AbortSignal,
+  ): Promise<PlatformPriceQuote[]> {
+    const payload = await this.fetchJson<unknown>(`${baseUrl}/api/pricing`, {
+      headers: { Authorization: `Bearer ${credential.value}` },
+      signal,
+    });
+    return normalizeNewApiPricingPayload(payload);
+  }
 
   private normalizeTokenKeyForCompare(value?: string | null): string {
     const trimmed = (value || '').trim();

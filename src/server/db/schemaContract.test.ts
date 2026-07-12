@@ -11,6 +11,20 @@ describe('schema contract generation', () => {
       primaryKey: false,
     });
     expect(contract.tables.account_tokens.columns.token_group).toBeDefined();
+    expect(contract.tables.accounts.columns.unit_cost).toBeUndefined();
+    expect(contract.tables.site_pricing_profiles.columns.paid_cny).toMatchObject({
+      logicalType: 'real',
+      notNull: true,
+    });
+    expect(contract.tables.site_pricing_profiles.columns.credited_usd).toMatchObject({
+      logicalType: 'real',
+      notNull: true,
+    });
+    expect(contract.tables.official_model_prices).toBeDefined();
+    expect(contract.tables.site_model_prices).toBeDefined();
+    expect(contract.tables.site_model_price_rules).toBeDefined();
+    expect(contract.tables.account_group_rate_rules).toBeDefined();
+    expect(contract.tables.pricing_refresh_states).toBeDefined();
     expect(contract.tables.account_tokens.columns.value_status).toMatchObject({
       logicalType: 'text',
       notNull: true,
@@ -45,6 +59,41 @@ describe('schema contract generation', () => {
     );
     expect(contract.uniques).toContainEqual(
       expect.objectContaining({
+        name: 'official_model_prices_provider_model_unique',
+        table: 'official_model_prices',
+        columns: ['provider_id', 'model_id'],
+      }),
+    );
+    expect(contract.uniques).toContainEqual(
+      expect.objectContaining({
+        name: 'site_model_prices_site_model_unique',
+        table: 'site_model_prices',
+        columns: ['site_id', 'upstream_model_id'],
+      }),
+    );
+    expect(contract.uniques).toContainEqual(
+      expect.objectContaining({
+        name: 'site_model_price_rules_site_model_unique',
+        table: 'site_model_price_rules',
+        columns: ['site_id', 'upstream_model_id'],
+      }),
+    );
+    expect(contract.uniques).toContainEqual(
+      expect.objectContaining({
+        name: 'account_group_rate_rules_account_group_unique',
+        table: 'account_group_rate_rules',
+        columns: ['account_id', 'group_key'],
+      }),
+    );
+    expect(contract.uniques).toContainEqual(
+      expect.objectContaining({
+        name: 'pricing_refresh_states_scope_unique',
+        table: 'pricing_refresh_states',
+        columns: ['scope_type', 'scope_id'],
+      }),
+    );
+    expect(contract.uniques).toContainEqual(
+      expect.objectContaining({
         name: 'site_disabled_models_site_model_unique',
         table: 'site_disabled_models',
         columns: ['site_id', 'model_name'],
@@ -55,6 +104,24 @@ describe('schema contract generation', () => {
         name: 'model_availability_account_model_unique',
         table: 'model_availability',
         columns: ['account_id', 'model_name'],
+      }),
+    );
+    expect(contract.foreignKeys).toContainEqual(
+      expect.objectContaining({
+        table: 'site_pricing_profiles',
+        columns: ['site_id'],
+        referencedTable: 'sites',
+        referencedColumns: ['id'],
+        onDelete: 'CASCADE',
+      }),
+    );
+    expect(contract.foreignKeys).toContainEqual(
+      expect.objectContaining({
+        table: 'account_group_rate_rules',
+        columns: ['account_id'],
+        referencedTable: 'accounts',
+        referencedColumns: ['id'],
+        onDelete: 'CASCADE',
       }),
     );
     expect(contract.foreignKeys).toContainEqual(

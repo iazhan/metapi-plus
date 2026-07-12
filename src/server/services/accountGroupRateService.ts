@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import type { GroupRateInfo } from './platforms/base.js';
+import { invalidateEffectivePriceCacheEntries } from '../pricing/effectivePriceCache.js';
 
 export type AccountGroupRate = typeof schema.accountGroupRates.$inferSelect;
 
@@ -86,6 +87,7 @@ export async function replaceAccountGroupRates(
   await db.transaction(async (tx: typeof db) => {
     await replaceNormalizedAccountGroupRates(tx, accountId, normalizedRates, lastSyncedAt);
   });
+  invalidateEffectivePriceCacheEntries({ accountId });
 
   return { total: normalizedRates.length };
 }
@@ -99,7 +101,7 @@ export async function replaceAccountGroupRatesForSession(
 ): Promise<{ status: 'persisted'; total: number } | { status: 'stale' }> {
   const normalizedRates = normalizeGroupRates(rates);
 
-  return db.transaction(async (tx: typeof db) => {
+  const result = await db.transaction(async (tx: typeof db) => {
     const account = await tx.select()
       .from(schema.accounts)
       .where(eq(schema.accounts.id, accountId))
@@ -140,6 +142,8 @@ export async function replaceAccountGroupRatesForSession(
 
     return { status: 'persisted' as const, total: normalizedRates.length };
   });
+  if (result.status === 'persisted') invalidateEffectivePriceCacheEntries({ accountId });
+  return result;
 }
 
 export async function listAccountGroupRates(accountId: number): Promise<AccountGroupRate[]> {

@@ -6,7 +6,7 @@ import { mkdtempSync } from 'node:fs';
 
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
-type ModelPricingServiceModule = typeof import('../../services/modelPricingService.js');
+type PriceRefreshServiceModule = typeof import('../../pricing/priceRefreshService.js');
 type ConfigModule = typeof import('../../config.js');
 
 const { fetchMock, withSiteProxyRequestInitMock } = vi.hoisted(() => ({
@@ -40,7 +40,7 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
-  let fetchModelPricingCatalog: ModelPricingServiceModule['fetchModelPricingCatalog'];
+  let refreshSitePriceSnapshot: PriceRefreshServiceModule['refreshSitePriceSnapshot'];
   let config: ConfigModule['config'];
   let originalRoutingWeights: typeof config.routingWeights;
   let originalRoutingFallbackUnitCost: number;
@@ -55,12 +55,12 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./tokens.js');
     const tokenRouterModule = await import('../../services/tokenRouter.js');
-    const modelPricingServiceModule = await import('../../services/modelPricingService.js');
+    const priceRefreshServiceModule = await import('../../pricing/priceRefreshService.js');
     const configModule = await import('../../config.js');
     db = dbModule.db;
     schema = dbModule.schema;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
-    fetchModelPricingCatalog = modelPricingServiceModule.fetchModelPricingCatalog;
+    refreshSitePriceSnapshot = priceRefreshServiceModule.refreshSitePriceSnapshot;
     config = configModule.config;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
@@ -176,34 +176,8 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
       },
     ]).run();
 
-    await fetchModelPricingCatalog({
-      site: {
-        id: siteA.id,
-        url: siteA.url,
-        platform: siteA.platform,
-        apiKey: siteA.apiKey,
-      },
-      account: {
-        id: accountA.id,
-        accessToken: accountA.accessToken,
-        apiToken: accountA.apiToken,
-      },
-      modelName: 'gpt-4o-mini',
-    });
-    await fetchModelPricingCatalog({
-      site: {
-        id: siteB.id,
-        url: siteB.url,
-        platform: siteB.platform,
-        apiKey: siteB.apiKey,
-      },
-      account: {
-        id: accountB.id,
-        accessToken: accountB.accessToken,
-        apiToken: accountB.apiToken,
-      },
-      modelName: 'gpt-4o-mini',
-    });
+    await refreshSitePriceSnapshot(siteA.id);
+    await refreshSitePriceSnapshot(siteB.id);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -237,8 +211,8 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
     expect(candidateA).toBeTruthy();
     expect(candidateB).toBeTruthy();
     expect(candidateB?.probability || 0).toBeGreaterThan(candidateA?.probability || 0);
-    expect(candidateA?.reason || '').toContain('成本=目录');
-    expect(candidateB?.reason || '').toContain('成本=目录');
+    expect(candidateA?.reason || '').toContain('成本=价格域');
+    expect(candidateB?.reason || '').toContain('成本=价格域');
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

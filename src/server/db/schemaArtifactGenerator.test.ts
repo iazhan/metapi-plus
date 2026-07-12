@@ -172,4 +172,35 @@ describe('schema artifact generator', () => {
 
     expect(() => generateDialectArtifacts(current, previous)).toThrow(/non-additive schema diff/i);
   });
+
+  it('generates explicitly allowed column removals without allowing unrelated destructive diffs', () => {
+    const previous: SchemaContract = {
+      tables: {
+        accounts: {
+          columns: {
+            id: makeColumn({ logicalType: 'integer', notNull: true, primaryKey: true }),
+            unit_cost: makeColumn({ logicalType: 'real' }),
+            status: makeColumn({ logicalType: 'text' }),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [],
+    };
+    const current = structuredClone(previous);
+    delete current.tables.accounts.columns.unit_cost;
+
+    const artifacts = generateDialectArtifacts(current, previous, {
+      allowedColumnRemovals: ['accounts.unit_cost'],
+    });
+
+    expect(artifacts.mysqlUpgrade).toContain('ALTER TABLE `accounts` DROP COLUMN `unit_cost`');
+    expect(artifacts.postgresUpgrade).toContain('ALTER TABLE "accounts" DROP COLUMN "unit_cost"');
+
+    delete current.tables.accounts.columns.status;
+    expect(() => generateDialectArtifacts(current, previous, {
+      allowedColumnRemovals: ['accounts.unit_cost'],
+    })).toThrow(/removed column accounts\.status/);
+  });
 });

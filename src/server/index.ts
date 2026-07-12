@@ -22,6 +22,7 @@ import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
+import { pricingRoutes } from './routes/api/pricing.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler, stopScheduler } from './services/checkinScheduler.js';
 import * as routeRefreshWorkflow from './services/routeRefreshWorkflow.js';
@@ -61,6 +62,10 @@ import {
   startAccountRateRefreshScheduler,
   stopAccountRateRefreshScheduler,
 } from './services/accountRateRefreshScheduler.js';
+import {
+  startPriceRefreshScheduler,
+  stopPriceRefreshScheduler,
+} from './pricing/priceRefreshScheduler.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
@@ -243,6 +248,7 @@ await app.register(taskRoutes);
 await app.register(testRoutes);
 await app.register(downstreamApiKeysRoutes);
 await app.register(oauthRoutes);
+await app.register(pricingRoutes);
 
 // Register OpenAI-compatible proxy routes
 await app.register(proxyRoutes);
@@ -280,6 +286,10 @@ await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
 startAccountRateRefreshScheduler();
+await startPriceRefreshScheduler({
+  enabled: config.priceRefreshEnabled,
+  cronExpr: config.priceRefreshCron,
+});
 startChannelRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
@@ -295,6 +305,7 @@ startProxyFileRetentionService();
 app.addHook('onClose', async () => {
   const checkinSchedulerDrain = stopScheduler();
   const backupWebdavDrain = stopBackupWebdavScheduler();
+  const priceRefreshDrain = stopPriceRefreshScheduler();
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
@@ -306,7 +317,7 @@ app.addHook('onClose', async () => {
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
-  await Promise.all([checkinSchedulerDrain, backupWebdavDrain]);
+  await Promise.all([checkinSchedulerDrain, backupWebdavDrain, priceRefreshDrain]);
 });
 
 const gracefulShutdown = createGracefulShutdown({

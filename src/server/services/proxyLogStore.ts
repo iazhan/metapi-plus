@@ -243,6 +243,27 @@ export function parseProxyLogBillingDetails(value: unknown): Record<string, unkn
   }
 }
 
+export function parseProxyLogCostSnapshot(value: unknown): {
+  siteCostUsd: number;
+  actualCostCny: number;
+} | null {
+  const details = parseProxyLogBillingDetails(value);
+  if (!details) return null;
+  const siteCostUsd = details.siteCostUsd;
+  const actualCostCny = details.actualCostCny;
+  if (
+    typeof siteCostUsd !== 'number'
+    || !Number.isFinite(siteCostUsd)
+    || siteCostUsd < 0
+    || typeof actualCostCny !== 'number'
+    || !Number.isFinite(actualCostCny)
+    || actualCostCny < 0
+  ) {
+    return null;
+  }
+  return { siteCostUsd, actualCostCny };
+}
+
 export function parseProxyLogCompatibilityNotes(value: unknown): ProxyLogCompatibilityNotes | null {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as ProxyLogCompatibilityNotes;

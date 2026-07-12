@@ -49,6 +49,29 @@ describe('database schema parity', () => {
     expect(postgresUpgrade).toContain('CREATE INDEX "account_group_rates_account_id_idx"');
   });
 
+  it('keeps pricing-domain tables and account unit-cost removal in generated artifacts', () => {
+    const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
+    const mysqlBootstrap = readFileSync(resolve(generatedDir, 'mysql.bootstrap.sql'), 'utf8');
+    const postgresBootstrap = readFileSync(resolve(generatedDir, 'postgres.bootstrap.sql'), 'utf8');
+
+    expect(contract.tables.accounts.columns.unit_cost).toBeUndefined();
+    expect(contract.tables.site_model_price_rules.columns.mapping_mode.logicalType).toBe('text');
+    for (const tableName of [
+      'site_pricing_profiles',
+      'official_model_prices',
+      'site_model_prices',
+      'site_model_price_rules',
+      'account_group_rate_rules',
+      'pricing_refresh_states',
+    ]) {
+      expect(contract.tables[tableName], tableName).toBeDefined();
+      expect(mysqlBootstrap).toContain(`\`${tableName}\``);
+      expect(postgresBootstrap).toContain(`"${tableName}"`);
+    }
+    expect(mysqlBootstrap).not.toContain('`unit_cost`');
+    expect(postgresBootstrap).not.toContain('"unit_cost"');
+  });
+
   it('keeps runtime support modules scoped to contract-defined tables and indexes', () => {
     const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
     const supportContent = supportPaths
