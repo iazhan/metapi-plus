@@ -17,7 +17,6 @@ import {
 } from '../transformers/gemini/generate-content/requestBridge.js';
 import {
   buildClaudeRuntimeHeaders,
-  getInputHeader,
   headerValueToString,
 } from '../proxy-core/providers/headerUtils.js';
 import { stripResponsesImageGenerationTools } from '../proxy-core/responsesCompatibility.js';
@@ -93,8 +92,6 @@ const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
   'x-metapi-responses-websocket-transport',
 ]);
 
-const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
-
 function shouldSkipPassthroughHeader(key: string): boolean {
   if (HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key)) return true;
   if (METAPI_INTERNAL_HEADER_BLOCKLIST.has(key)) return true;
@@ -169,28 +166,6 @@ function extractResponsesPassthroughHeaders(
   return forwarded;
 }
 
-function extractCodexPassthroughHeaders(
-  headers?: Record<string, unknown>,
-): Record<string, string> {
-  if (!headers) return {};
-
-  const forwarded: Record<string, string> = {};
-  for (const [rawKey, rawValue] of Object.entries(headers)) {
-    const key = rawKey.toLowerCase();
-    const shouldForward = (
-      key === 'version'
-      || key === 'x-responsesapi-include-timing-metrics'
-    );
-    if (!shouldForward) continue;
-
-    const value = headerValueToString(rawValue);
-    if (!value) continue;
-    forwarded[key] = value;
-  }
-
-  return forwarded;
-}
-
 function extractClaudeBetasFromBody(body: Record<string, unknown>): {
   body: Record<string, unknown>;
   betas: string[];
@@ -228,19 +203,6 @@ function stripClaudeMessagesContinuationFields(
   delete next.previous_response_id;
   delete next.prompt_cache_key;
   return next;
-}
-
-function buildAntigravityRuntimeHeaders(input: {
-  baseHeaders: Record<string, string>;
-  stream: boolean;
-}): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: input.baseHeaders.Authorization,
-    'Content-Type': 'application/json',
-    Accept: input.stream ? 'text/event-stream' : 'application/json',
-    'User-Agent': ANTIGRAVITY_RUNTIME_USER_AGENT,
-  };
-  return headers;
 }
 
 function ensureStreamAcceptHeader(
@@ -407,8 +369,6 @@ export function buildUpstreamEndpointRequest(input: {
   modelName: string;
   stream: boolean;
   tokenValue: string;
-  oauthProvider?: string;
-  oauthProjectId?: string;
   sitePlatform?: string;
   siteUrl?: string;
   openaiBody: Record<string, unknown>;
@@ -418,9 +378,6 @@ export function buildUpstreamEndpointRequest(input: {
   responsesOriginalBody?: Record<string, unknown>;
   responsesStripImageGenerationEnabled?: boolean;
   downstreamHeaders?: Record<string, unknown>;
-  providerHeaders?: Record<string, string>;
-  codexSessionCacheKey?: string | null;
-  codexExplicitSessionId?: string | null;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -432,10 +389,9 @@ export function buildUpstreamEndpointRequest(input: {
     };
   } | null;
   runtime?: {
-    executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
+    executor: 'default' | 'gemini-native' | 'claude';
     modelName?: string;
     stream?: boolean;
-    oauthProjectId?: string | null;
     action?: 'generateContent' | 'streamGenerateContent' | 'countTokens';
   };
 } {
@@ -443,10 +399,6 @@ export function buildUpstreamEndpointRequest(input: {
   const providerProfile = resolveProviderProfile(sitePlatform);
   const isClaudeUpstream = sitePlatform === 'claude';
   const isGeminiUpstream = sitePlatform === 'gemini';
-  const isGeminiCliUpstream = sitePlatform === 'gemini-cli';
-  const isAntigravityUpstream = sitePlatform === 'antigravity';
-  const isInternalGeminiUpstream = isGeminiCliUpstream || isAntigravityUpstream;
-  const isClaudeOauthUpstream = isClaudeUpstream && input.oauthProvider === 'claude';
 
   const hasAssistantToolCallHistory = (body: Record<string, unknown>): boolean => {
     const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -493,16 +445,6 @@ export function buildUpstreamEndpointRequest(input: {
       return '/v1/chat/completions';
     }
 
-    if (sitePlatform === 'codex') {
-      return '/responses';
-    }
-
-    if (sitePlatform === 'gemini-cli' || sitePlatform === 'antigravity') {
-      return input.stream
-        ? '/v1internal:streamGenerateContent?alt=sse'
-        : '/v1internal:generateContent';
-    }
-
     if (sitePlatform === 'claude') {
       return '/v1/messages';
     }
@@ -513,14 +455,9 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   const passthroughHeaders = extractSafePassthroughHeaders(input.downstreamHeaders);
-  const codexPassthroughHeaders = sitePlatform === 'codex'
-    ? extractCodexPassthroughHeaders(input.downstreamHeaders)
-    : {};
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
-    ...codexPassthroughHeaders,
     'Content-Type': 'application/json',
-    ...(input.providerHeaders || {}),
   };
   if (!isClaudeUpstream) {
     commonHeaders.Authorization = `Bearer ${input.tokenValue}`;
@@ -528,7 +465,7 @@ export function buildUpstreamEndpointRequest(input: {
 
   const stripGeminiUnsupportedFields = (body: Record<string, unknown>) => {
     const next = { ...body };
-    if (isGeminiUpstream || isInternalGeminiUpstream) {
+    if (isGeminiUpstream) {
       for (const key of [
         'frequency_penalty',
         'presence_penalty',
@@ -545,20 +482,9 @@ export function buildUpstreamEndpointRequest(input: {
 
   const openaiBody = stripGeminiUnsupportedFields(input.openaiBody);
   const runtime = {
-    executor: (
-      sitePlatform === 'codex'
-        ? 'codex'
-        : sitePlatform === 'gemini-cli'
-          ? 'gemini-cli'
-          : sitePlatform === 'antigravity'
-            ? 'antigravity'
-            : sitePlatform === 'claude'
-              ? 'claude'
-              : 'default'
-    ) as 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude',
+    executor: (sitePlatform === 'claude' ? 'claude' : 'default') as 'default' | 'claude',
     modelName: input.modelName,
     stream: input.stream,
-    oauthProjectId: asTrimmedString(input.oauthProjectId) || null,
   };
   const requestedModelForPayloadRules = resolveRequestedModelForPayloadRules(input);
   const applyConfiguredPayloadRules = <T extends Record<string, unknown>>(body: T): T => (
@@ -596,37 +522,6 @@ export function buildUpstreamEndpointRequest(input: {
     };
   };
 
-  if (isInternalGeminiUpstream) {
-    const instructions = (
-      input.downstreamFormat === 'responses'
-      && typeof input.responsesOriginalBody?.instructions === 'string'
-    )
-      ? input.responsesOriginalBody.instructions
-      : undefined;
-    const geminiRequest = buildGeminiGenerateContentRequestFromOpenAi({
-      body: openaiBody,
-      modelName: input.modelName,
-      instructions,
-    });
-    const configuredGeminiRequest = applyConfiguredPayloadRules(geminiRequest);
-    if (!providerProfile) {
-      throw new Error(`missing provider profile for platform: ${sitePlatform}`);
-    }
-    return providerProfile.prepareRequest({
-      endpoint: input.endpoint,
-      modelName: input.modelName,
-      stream: input.stream,
-      tokenValue: input.tokenValue,
-      oauthProvider: input.oauthProvider,
-      oauthProjectId: input.oauthProjectId,
-      sitePlatform,
-      baseHeaders: commonHeaders,
-      providerHeaders: input.providerHeaders,
-      body: configuredGeminiRequest,
-      action: input.stream ? 'streamGenerateContent' : 'generateContent',
-    });
-  }
-
   if (isGeminiUpstream && input.endpoint === 'chat' && hasAssistantToolCallHistory(openaiBody)) {
     const geminiRequest = buildGeminiGenerateContentRequestFromOpenAi({
       body: openaiBody,
@@ -642,7 +537,6 @@ export function buildUpstreamEndpointRequest(input: {
         executor: 'gemini-native',
         modelName: input.modelName,
         stream: input.stream,
-        oauthProjectId: null,
         action,
       },
     };
@@ -691,8 +585,6 @@ export function buildUpstreamEndpointRequest(input: {
         modelName: input.modelName,
         stream: input.stream,
         tokenValue: input.tokenValue,
-        oauthProvider: input.oauthProvider,
-        oauthProjectId: input.oauthProjectId,
         sitePlatform,
         baseHeaders: commonHeaders,
         claudeHeaders,
@@ -705,7 +597,6 @@ export function buildUpstreamEndpointRequest(input: {
       claudeHeaders,
       anthropicVersion,
       stream: input.stream,
-      isClaudeOauthUpstream,
       tokenValue: input.tokenValue,
     });
 
@@ -718,10 +609,6 @@ export function buildUpstreamEndpointRequest(input: {
   }
 
   if (input.endpoint === 'responses') {
-    const responsesWebsocketTransport = getInputHeader(
-      input.downstreamHeaders,
-      'x-metapi-responses-websocket-transport',
-    ) === '1';
     const websocketMode = Object.entries(input.downstreamHeaders || {}).find(([rawKey]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-mode');
     const preserveWebsocketIncrementalMode = asTrimmedString(websocketMode?.[1]).toLowerCase() === 'incremental';
     const responsesHeaders = input.downstreamFormat === 'responses'
@@ -752,33 +639,6 @@ export function buildUpstreamEndpointRequest(input: {
       sitePlatform,
     );
     const responsesCompatibility = applyResponsesStripImageGenerationCompatibility(configuredResponsesBody);
-
-    if (sitePlatform === 'codex') {
-      if (providerProfile?.id !== 'codex') {
-        throw new Error(`missing codex provider profile for platform: ${sitePlatform}`);
-      }
-      return {
-        ...providerProfile.prepareRequest({
-          endpoint: 'responses',
-          modelName: input.modelName,
-          stream: input.stream,
-          tokenValue: input.tokenValue,
-          oauthProvider: input.oauthProvider,
-          oauthProjectId: input.oauthProjectId,
-          sitePlatform,
-          baseHeaders: {
-            ...commonHeaders,
-            ...responsesHeaders,
-          },
-          providerHeaders: input.providerHeaders,
-          codexSessionCacheKey: input.codexSessionCacheKey,
-          codexExplicitSessionId: input.codexExplicitSessionId,
-          responsesWebsocketTransport,
-          body: responsesCompatibility.body,
-        }),
-        compatibilityNotes: responsesCompatibility.compatibilityNotes,
-      };
-    }
 
     const headers = ensureResponsesAcceptHeader({
       ...commonHeaders,
@@ -818,7 +678,6 @@ export function buildUpstreamEndpointRequest(input: {
 export function buildClaudeCountTokensUpstreamRequest(input: {
   modelName: string;
   tokenValue: string;
-  oauthProvider?: string;
   sitePlatform?: string;
   claudeBody: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
@@ -864,7 +723,6 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
       modelName: input.modelName,
       stream: false,
       tokenValue: input.tokenValue,
-      oauthProvider: input.oauthProvider,
       sitePlatform,
       baseHeaders: {
         'Content-Type': 'application/json',
@@ -891,7 +749,6 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
     effectiveClaudeHeaders['anthropic-version']
     || '2023-06-01'
   );
-  const isClaudeOauthUpstream = sitePlatform === 'claude' && input.oauthProvider === 'claude';
   const headers = buildClaudeRuntimeHeaders({
     baseHeaders: {
       'Content-Type': 'application/json',
@@ -899,7 +756,6 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
     claudeHeaders: effectiveClaudeHeaders,
     anthropicVersion,
     stream: false,
-    isClaudeOauthUpstream,
     tokenValue: input.tokenValue,
   });
 

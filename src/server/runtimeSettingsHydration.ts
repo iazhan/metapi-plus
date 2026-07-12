@@ -96,11 +96,6 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.modelAvailabilityProbeEnabled = modelAvailabilityProbeEnabled;
   }
 
-  const codexUpstreamWebsocketEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_upstream_websocket_enabled');
-  if (typeof codexUpstreamWebsocketEnabled === 'boolean') {
-    config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
-  }
-
   const responsesCompactFallbackToResponsesEnabled = parseSettingFromMap<boolean>(settingsMap, 'responses_compact_fallback_to_responses_enabled');
   if (typeof responsesCompactFallbackToResponsesEnabled === 'boolean') {
     config.responsesCompactFallbackToResponsesEnabled = responsesCompactFallbackToResponsesEnabled;
@@ -129,19 +124,6 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const globalAllowedModels = parseSettingFromMap<string[] | string>(settingsMap, 'global_allowed_models');
   if (globalAllowedModels !== undefined) {
     config.globalAllowedModels = toStringList(globalAllowedModels);
-  }
-
-  const codexHeaderDefaults = parseSettingFromMap<unknown>(settingsMap, 'codex_header_defaults');
-  if (codexHeaderDefaults && typeof codexHeaderDefaults === 'object') {
-    const next = codexHeaderDefaults as Record<string, unknown>;
-    config.codexHeaderDefaults = {
-      userAgent: typeof next.userAgent === 'string'
-        ? next.userAgent.trim()
-        : (typeof next['user-agent'] === 'string' ? next['user-agent'].trim() : config.codexHeaderDefaults.userAgent),
-      betaFeatures: typeof next.betaFeatures === 'string'
-        ? next.betaFeatures.trim()
-        : (typeof next['beta-features'] === 'string' ? next['beta-features'].trim() : config.codexHeaderDefaults.betaFeatures),
-    };
   }
 
   if (settingsMap.has('payload_rules')) {

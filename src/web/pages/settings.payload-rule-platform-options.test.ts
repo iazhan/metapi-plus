@@ -7,7 +7,6 @@ describe('payload rule platform options', () => {
 
     expect(values).toEqual(expect.arrayContaining([
       '',
-      'codex',
       'sub2api',
       'new-api',
       'one-api',
@@ -15,8 +14,6 @@ describe('payload rule platform options', () => {
       'openai',
       'claude',
       'gemini',
-      'gemini-cli',
-      'antigravity',
       'done-hub',
       'one-hub',
       'veloera',

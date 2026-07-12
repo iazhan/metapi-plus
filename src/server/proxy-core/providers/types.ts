@@ -1,8 +1,4 @@
-export type ProviderProfileId =
-  | 'codex'
-  | 'claude'
-  | 'gemini-cli'
-  | 'antigravity';
+export type ProviderProfileId = 'claude';
 
 export type ProviderEndpoint =
   | 'chat'
@@ -15,10 +11,9 @@ export type ProviderAction =
   | 'countTokens';
 
 export type ProviderRuntimeDescriptor = {
-  executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
+  executor: 'default' | 'gemini-native' | 'claude';
   modelName?: string;
   stream?: boolean;
-  oauthProjectId?: string | null;
   action?: ProviderAction;
 };
 
@@ -34,15 +29,9 @@ export type PrepareProviderRequestInput = {
   modelName: string;
   stream: boolean;
   tokenValue: string;
-  oauthProvider?: string;
-  oauthProjectId?: string;
   sitePlatform?: string;
   baseHeaders: Record<string, string>;
-  providerHeaders?: Record<string, string>;
   claudeHeaders?: Record<string, string>;
-  codexSessionCacheKey?: string | null;
-  codexExplicitSessionId?: string | null;
-  responsesWebsocketTransport?: boolean;
   body: Record<string, unknown>;
   action?: ProviderAction;
 };

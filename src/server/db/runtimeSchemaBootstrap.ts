@@ -12,7 +12,14 @@ import {
   generateUpgradeSql,
   type MysqlIndexPrefixRequirementMap,
 } from './schemaArtifactGenerator.js';
-import { INTENTIONAL_SCHEMA_COLUMN_REMOVALS } from './schemaEvolution.js';
+import {
+  INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+  INTENTIONAL_SCHEMA_TABLE_REMOVALS,
+} from './schemaEvolution.js';
+import {
+  buildOauthRetirementStatements,
+  isOauthRetirementRequired,
+} from './oauthRetirement.js';
 import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
 import { introspectLiveSchema } from './schemaIntrospection.js';
 import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
@@ -204,6 +211,11 @@ function buildCompatibleRuntimeBaseline(
   for (const [tableName, liveTable] of Object.entries(liveContract.tables)) {
     const currentTable = currentContract.tables[tableName];
     if (!currentTable) {
+      if (INTENTIONAL_SCHEMA_TABLE_REMOVALS.includes(
+        tableName as typeof INTENTIONAL_SCHEMA_TABLE_REMOVALS[number],
+      )) {
+        baseline.tables[tableName] = liveTable;
+      }
       continue;
     }
 
@@ -225,6 +237,9 @@ function buildCompatibleRuntimeBaseline(
   const currentIndexes = new Map(currentContract.indexes.map((index) => [index.name, index]));
   baseline.indexes = liveContract.indexes
     .filter((index) => {
+      if (INTENTIONAL_SCHEMA_TABLE_REMOVALS.includes(
+        index.table as typeof INTENTIONAL_SCHEMA_TABLE_REMOVALS[number],
+      )) return true;
       const currentIndex = currentIndexes.get(index.name);
       return currentIndex && serializeIndex(currentIndex) === serializeIndex(index);
     });
@@ -232,13 +247,24 @@ function buildCompatibleRuntimeBaseline(
   const currentUniques = new Map(currentContract.uniques.map((unique) => [unique.name, unique]));
   baseline.uniques = liveContract.uniques
     .filter((unique) => {
+      if (INTENTIONAL_SCHEMA_TABLE_REMOVALS.includes(
+        unique.table as typeof INTENTIONAL_SCHEMA_TABLE_REMOVALS[number],
+      )) return true;
       const currentUnique = currentUniques.get(unique.name);
       return currentUnique && serializeUnique(currentUnique) === serializeUnique(unique);
     });
 
   const currentForeignKeys = new Set(currentContract.foreignKeys.map(serializeForeignKey));
   baseline.foreignKeys = liveContract.foreignKeys
-    .filter((foreignKey) => currentForeignKeys.has(serializeForeignKey(foreignKey)));
+    .filter((foreignKey) => (
+      INTENTIONAL_SCHEMA_TABLE_REMOVALS.includes(
+        foreignKey.table as typeof INTENTIONAL_SCHEMA_TABLE_REMOVALS[number],
+      )
+      || INTENTIONAL_SCHEMA_TABLE_REMOVALS.includes(
+        foreignKey.referencedTable as typeof INTENTIONAL_SCHEMA_TABLE_REMOVALS[number],
+      )
+      || currentForeignKeys.has(serializeForeignKey(foreignKey))
+    ));
 
   return baseline;
 }
@@ -445,6 +471,7 @@ function buildExternalUpgradeStatements(
   return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline, {
     mysqlIndexPrefixRequirements,
     allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+    allowedTableRemovals: INTENTIONAL_SCHEMA_TABLE_REMOVALS,
   }));
 }
 
@@ -459,20 +486,43 @@ export async function ensureRuntimeDatabaseSchema(
     statements = splitSqlStatements(generateBootstrapSql('sqlite', currentContract));
   } else {
     const liveContract = await resolveLiveContract(client, options.liveContract);
+    const retirementRequired = isOauthRetirementRequired(liveContract);
     const mysqlIndexPrefixRequirements = client.dialect === 'mysql'
       ? await resolveMySqlIndexPrefixRequirements(client, currentContract)
       : undefined;
 
-    statements = buildExternalUpgradeStatements(
+    const upgradeStatements = buildExternalUpgradeStatements(
       client.dialect,
       currentContract,
       liveContract,
       mysqlIndexPrefixRequirements,
     );
+    statements = [
+      ...(retirementRequired
+        ? buildOauthRetirementStatements(client.dialect)
+        : []),
+      ...upgradeStatements,
+    ];
+    if (client.dialect === 'mysql' && retirementRequired) {
+      console.warn('[db] MySQL OAuth retirement includes DDL with implicit commits; restore requires a pre-upgrade database backup.');
+    }
   }
 
-  for (const sqlText of statements) {
-    await executeBootstrapStatement(client, sqlText);
+  if (client.dialect === 'sqlite') {
+    for (const sqlText of statements) {
+      await executeBootstrapStatement(client, sqlText);
+    }
+  } else {
+    await client.begin();
+    try {
+      for (const sqlText of statements) {
+        await executeBootstrapStatement(client, sqlText);
+      }
+      await client.commit();
+    } catch (error) {
+      await client.rollback().catch(() => undefined);
+      throw error;
+    }
   }
 
   await ensureLegacySchemaCompatibility(createLegacySchemaInspector(client));

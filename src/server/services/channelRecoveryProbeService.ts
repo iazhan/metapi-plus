@@ -1,7 +1,6 @@
 import { and, eq, gt, inArray, isNotNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { isUsableAccountToken } from './accountTokenService.js';
-import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { proxyChannelCoordinator } from './proxyChannelCoordinator.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
 import { tokenRouter } from './tokenRouter.js';
@@ -66,11 +65,6 @@ function resolveProbeTokenValue(row: {
     if (!row.account_tokens || !isUsableAccountToken(row.account_tokens)) return null;
     const tokenValue = String(row.account_tokens.token || '').trim();
     return tokenValue || null;
-  }
-
-  if (getOauthInfoFromAccount(row.accounts)) {
-    const accessToken = String(row.accounts.accessToken || '').trim();
-    return accessToken || null;
   }
 
   const fallbackApiToken = String(row.accounts.apiToken || '').trim();

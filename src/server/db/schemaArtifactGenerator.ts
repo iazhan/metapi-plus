@@ -24,6 +24,7 @@ type SqlDialect = 'sqlite' | Dialect;
 export type SqlGenerationOptions = {
   mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap;
   allowedColumnRemovals?: readonly string[];
+  allowedTableRemovals?: readonly string[];
 };
 
 function resolveDbDir(): string {
@@ -269,11 +270,14 @@ function assertAdditiveSchemaDiff(
 ): void {
   const violations: string[] = [];
   const allowedColumnRemovals = new Set(options?.allowedColumnRemovals ?? []);
+  const allowedTableRemovals = new Set(options?.allowedTableRemovals ?? []);
 
   for (const [tableName, previousTable] of Object.entries(previousContract.tables)) {
     const currentTable = currentContract.tables[tableName];
     if (!currentTable) {
-      violations.push(`removed table ${tableName}`);
+      if (!allowedTableRemovals.has(tableName)) {
+        violations.push(`removed table ${tableName}`);
+      }
       continue;
     }
 
@@ -297,7 +301,9 @@ function assertAdditiveSchemaDiff(
   for (const previousIndex of previousContract.indexes) {
     const currentIndex = currentIndexes.get(previousIndex.name);
     if (!currentIndex) {
-      violations.push(`removed index ${previousIndex.name}`);
+      const removalAllowed = allowedTableRemovals.has(previousIndex.table)
+        || previousIndex.columns.some((columnName) => allowedColumnRemovals.has(`${previousIndex.table}.${columnName}`));
+      if (!removalAllowed) violations.push(`removed index ${previousIndex.name}`);
       continue;
     }
     if (serializeIndex(currentIndex) !== serializeIndex(previousIndex)) {
@@ -309,7 +315,9 @@ function assertAdditiveSchemaDiff(
   for (const previousUnique of previousContract.uniques) {
     const currentUnique = currentUniques.get(previousUnique.name);
     if (!currentUnique) {
-      violations.push(`removed unique ${previousUnique.name}`);
+      const removalAllowed = allowedTableRemovals.has(previousUnique.table)
+        || previousUnique.columns.some((columnName) => allowedColumnRemovals.has(`${previousUnique.table}.${columnName}`));
+      if (!removalAllowed) violations.push(`removed unique ${previousUnique.name}`);
       continue;
     }
     if (serializeUnique(currentUnique) !== serializeUnique(previousUnique)) {
@@ -320,7 +328,12 @@ function assertAdditiveSchemaDiff(
   const currentForeignKeys = new Set(currentContract.foreignKeys.map(serializeForeignKey));
   for (const previousForeignKey of previousContract.foreignKeys) {
     if (!currentForeignKeys.has(serializeForeignKey(previousForeignKey))) {
-      violations.push(`removed foreign key ${previousForeignKey.table}(${previousForeignKey.columns.join(',')})`);
+      const removalAllowed = allowedTableRemovals.has(previousForeignKey.table)
+        || allowedTableRemovals.has(previousForeignKey.referencedTable)
+        || previousForeignKey.columns.some((columnName) => allowedColumnRemovals.has(`${previousForeignKey.table}.${columnName}`));
+      if (!removalAllowed) {
+        violations.push(`removed foreign key ${previousForeignKey.table}(${previousForeignKey.columns.join(',')})`);
+      }
     }
   }
 
@@ -363,6 +376,10 @@ function buildDropColumnStatement(
   columnName: string,
 ): string {
   return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} DROP COLUMN ${quoteIdentifier(dialect, columnName)}`;
+}
+
+function buildDropTableStatement(dialect: SqlDialect, tableName: string): string {
+  return `DROP TABLE ${quoteIdentifier(dialect, tableName)}`;
 }
 
 export function generateUpgradeSql(
@@ -421,6 +438,12 @@ export function generateUpgradeSql(
     })
     .filter((statement): statement is string => statement !== null);
 
+  const allowedRemovedTables = new Set(options?.allowedTableRemovals ?? []);
+  const dropTableStatements = sortTableNamesForCreation(previousContract)
+    .reverse()
+    .filter((tableName) => allowedRemovedTables.has(tableName) && !currentContract.tables[tableName])
+    .map((tableName) => buildDropTableStatement(dialect, tableName));
+
   const previousUniqueNames = new Set(previousContract.uniques.map((unique) => unique.name));
   const uniqueStatements = currentContract.uniques
     .filter((unique) => !previousUniqueNames.has(unique.name))
@@ -441,6 +464,7 @@ export function generateUpgradeSql(
     ...addedTableStatements,
     ...addColumnStatements,
     ...dropColumnStatements,
+    ...dropTableStatements,
     ...uniqueStatements,
     ...indexStatements,
   ];

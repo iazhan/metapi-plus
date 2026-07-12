@@ -57,15 +57,6 @@ vi.mock('../orchestration/upstreamRequest.js', () => ({
   buildUpstreamUrl: vi.fn(),
 }));
 
-vi.mock('../../services/oauth/quota.js', () => ({
-  recordOauthQuotaHeadersSnapshot: vi.fn(),
-  recordOauthQuotaResetHint: vi.fn(),
-}));
-
-vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
-  refreshOauthAccessTokenSingleflight: vi.fn(),
-}));
-
 vi.mock('../../services/proxyChannelCoordinator.js', () => ({
   proxyChannelCoordinator: {
     buildStickySessionKey: vi.fn(),
@@ -112,7 +103,7 @@ describe('shared surface usage source logging', () => {
     await toolkit.log({
       selected: {
         channel: { id: 11, routeId: 22 },
-        account: { id: 33, username: 'oauth-user' },
+        account: { id: 33, username: 'session-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
       },

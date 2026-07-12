@@ -391,9 +391,11 @@ describe('sqlite migrate bootstrap', () => {
       '0011_downstream_api_key_metadata',
       '0012_account_token_value_status',
       '0013_oauth_multi_provider',
+      '0030_remove_oauth_native_connections',
       // 0008 creates downstream_api_keys, so later table-dependent migrations
       // must stay missing in this partial-journal fixture too.
       '0020_downstream_api_key_exclusions',
+      '0021_young_shriek',
     ]);
     const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
 
@@ -515,12 +517,15 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
-  it('deduplicates legacy duplicate sites before applying the oauth site unique index', async () => {
+  it('retires official ChatGPT Codex sites and reclassifies legacy non-official Codex sites', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-duplicate-sites-'));
     const dbPath = join(dataDir, 'hub.db');
     const sqlite = new Database(dbPath);
     const journalEntries = readMigrationJournalEntries();
-    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0013_oauth_multi_provider');
+    const appliedEntries = journalEntries.filter((entry) => (
+      entry.tag !== '0013_oauth_multi_provider'
+      && entry.tag !== '0030_remove_oauth_native_connections'
+    ));
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
@@ -532,18 +537,17 @@ describe('sqlite migrate bootstrap', () => {
       INSERT INTO sites (id, name, url, platform, status, is_pinned, sort_order, global_weight)
       VALUES
         (101, 'Primary Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'active', 0, 0, 1),
-        (202, 'Duplicate Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'disabled', 1, 9, 3);
+        (202, 'Legacy Codex', 'https://workspace.example.com/v1', 'codex', 'active', 1, 9, 3);
 
       INSERT INTO accounts (site_id, username, access_token, status, checkin_enabled)
       VALUES
         (101, 'first@example.com', 'token-a', 'active', 0),
-        (202, 'second@example.com', 'token-b', 'disabled', 0);
+        (202, 'second@example.com', 'token-b', 'active', 0);
 
       INSERT INTO site_disabled_models (site_id, model_name)
       VALUES
         (101, 'gpt-5'),
-        (202, 'gpt-5'),
-        (202, 'gpt-5-mini');
+        (202, 'gpt-5');
     `);
 
     sqlite.close();
@@ -577,19 +581,17 @@ describe('sqlite migrate bootstrap', () => {
 
     expect(sites).toEqual([
       expect.objectContaining({
-        id: 101,
-        name: 'Primary Codex',
-        url: 'https://chatgpt.com/backend-api/codex',
-        platform: 'codex',
+        id: 202,
+        name: 'Legacy Codex',
+        url: 'https://workspace.example.com/v1',
+        platform: 'openai',
       }),
     ]);
     expect(accounts).toEqual([
-      { username: 'first@example.com', site_id: 101 },
-      { username: 'second@example.com', site_id: 101 },
+      { username: 'second@example.com', site_id: 202 },
     ]);
     expect(disabledModels).toEqual([
-      { site_id: 101, model_name: 'gpt-5' },
-      { site_id: 101, model_name: 'gpt-5-mini' },
+      { site_id: 202, model_name: 'gpt-5' },
     ]);
 
     verified.close();

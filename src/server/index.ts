@@ -19,7 +19,6 @@ import { eventsRoutes } from './routes/api/events.js';
 import { taskRoutes } from './routes/api/tasks.js';
 import { testRoutes } from './routes/api/test.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
-import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
 import { pricingRoutes } from './routes/api/pricing.js';
@@ -32,9 +31,6 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
-import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
-import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
-import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling, stopSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import {
   startModelAvailabilityProbeScheduler,
@@ -198,7 +194,6 @@ const startupInitialization = await initializeRuntimeBeforeCompatibility({
     await repairStoredCreatedAtValues();
     await migrateSiteApiKeysToAccounts();
     await ensureDefaultSitesSeeded();
-    await ensureOauthIdentityBackfill();
     await routeRefreshWorkflow.rebuildRoutesOnly();
   },
 });
@@ -216,8 +211,6 @@ if (startupInitialization.compatibilityError !== undefined) {
     }`,
   );
 }
-
-await ensureOauthProviderSitesExist();
 
 const app = Fastify(buildFastifyOptions(config));
 
@@ -247,7 +240,6 @@ await app.register(updateCenterRoutes);
 await app.register(taskRoutes);
 await app.register(testRoutes);
 await app.register(downstreamApiKeysRoutes);
-await app.register(oauthRoutes);
 await app.register(pricingRoutes);
 
 // Register OpenAI-compatible proxy routes
@@ -295,11 +287,6 @@ startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
 startAdminSnapshotWarmScheduler();
-try {
-  await startOAuthLoopbackCallbackServers();
-} catch (error) {
-  console.warn(`Failed to start OAuth callback listeners: ${(error as Error)?.message || 'unknown error'}`);
-}
 setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 startProxyFileRetentionService();
 app.addHook('onClose', async () => {
@@ -316,7 +303,6 @@ app.addHook('onClose', async () => {
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();
-  await stopOAuthLoopbackCallbackServers();
   await Promise.all([checkinSchedulerDrain, backupWebdavDrain, priceRefreshDrain]);
 });
 

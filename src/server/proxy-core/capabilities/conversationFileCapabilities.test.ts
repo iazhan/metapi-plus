@@ -52,7 +52,7 @@ describe('conversationFileCapabilities', () => {
     });
 
     expect(resolveConversationFileEndpointCapability({
-      sitePlatform: 'gemini-cli',
+      sitePlatform: 'gemini',
       endpoint: 'chat',
     })).toMatchObject({
       image: 'native',

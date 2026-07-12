@@ -25,8 +25,6 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
-const CODEX_DEFAULT_INSTRUCTIONS = 'You are a helpful coding assistant.';
-
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
   return {
@@ -426,67 +424,6 @@ describe('responses proxy compact upstream routing', () => {
     expect(response.statusCode).toBe(422);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/v1/responses/compact');
-  });
-
-  it('strips stream fields and store when forwarding compact requests to codex upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
-      account: {
-        id: 33,
-        username: 'codex-user@example.com',
-        extraConfig: JSON.stringify({
-          credentialMode: 'session',
-          oauth: {
-            provider: 'codex',
-            accountId: 'chatgpt-account-123',
-            email: 'codex-user@example.com',
-            planType: 'plus',
-          },
-        }),
-      },
-      tokenName: 'default',
-      tokenValue: 'sk-demo',
-      actualModel: 'gpt-5.4',
-    });
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      id: 'cmp_123',
-      object: 'response.compaction',
-      input_tokens: 4,
-      output_tokens: 2,
-      total_tokens: 6,
-      output: [
-        {
-          id: 'rs_123',
-          type: 'compaction',
-          encrypted_content: 'enc-compact-payload',
-        },
-      ],
-    }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/responses/compact',
-      payload: {
-        model: 'gpt-5.4',
-        input: 'hello',
-        stream_options: { include_obfuscation: true },
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
-    expect(targetUrl).toContain('/responses/compact');
-    const forwardedBody = JSON.parse(String(options.body));
-    expect(forwardedBody.stream).toBeUndefined();
-    expect(forwardedBody.stream_options).toBeUndefined();
-    expect(forwardedBody.instructions).toBe(CODEX_DEFAULT_INSTRUCTIONS);
-    expect(forwardedBody.store).toBeUndefined();
-    expect(options.headers.Accept || options.headers.accept).toBe('application/json');
   });
 
   it('strips stream fields and store when forwarding compact requests to sub2api upstreams', async () => {

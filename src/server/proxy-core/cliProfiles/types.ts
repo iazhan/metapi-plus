@@ -1,8 +1,7 @@
 export type CliProfileId =
   | 'generic'
   | 'codex'
-  | 'claude_code'
-  | 'gemini_cli';
+  | 'claude_code';
 
 export type CliProfileCapabilities = {
   supportsResponsesCompact: boolean;

@@ -78,7 +78,6 @@ type RuntimeSettings = {
   logCleanupProgramLogsEnabled: boolean;
   logCleanupRetentionDays: number;
   modelAvailabilityProbeEnabled: boolean;
-  codexUpstreamWebsocketEnabled: boolean;
   responsesCompactFallbackToResponsesEnabled: boolean;
   disableCrossProtocolFallback: boolean;
   proxySessionChannelConcurrencyLimit: number;
@@ -362,7 +361,6 @@ export default function Settings() {
     logCleanupProgramLogsEnabled: false,
     logCleanupRetentionDays: 30,
     modelAvailabilityProbeEnabled: false,
-    codexUpstreamWebsocketEnabled: false,
     responsesCompactFallbackToResponsesEnabled: false,
     disableCrossProtocolFallback: false,
     proxySessionChannelConcurrencyLimit: 2,
@@ -628,7 +626,6 @@ export default function Settings() {
     };
   };
 
-  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? '上游 WebSocket 已启用' : 'HTTP 优先';
   const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionChannelConcurrencyLimit} 并发 / ${runtime.proxySessionChannelQueueWaitMs}ms`;
   const modelAvailabilityProbeDirty = runtime.modelAvailabilityProbeEnabled !== savedModelAvailabilityProbeEnabled;
   const modelAvailabilityProbeStatusTone: SettingsPillTone = modelAvailabilityProbeDirty
@@ -698,7 +695,6 @@ export default function Settings() {
           ? Math.trunc(Number(runtimeInfo.logCleanupRetentionDays))
           : 30,
         modelAvailabilityProbeEnabled: !!runtimeInfo.modelAvailabilityProbeEnabled,
-        codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
         proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
@@ -931,16 +927,12 @@ export default function Settings() {
     setSavingProxyTransport(true);
     try {
       const res = await api.updateRuntimeSettings({
-        codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
         proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
       });
       setRuntime((prev) => ({
         ...prev,
-        codexUpstreamWebsocketEnabled: typeof res?.codexUpstreamWebsocketEnabled === 'boolean'
-          ? res.codexUpstreamWebsocketEnabled
-          : prev.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
           ? res.responsesCompactFallbackToResponsesEnabled
           : prev.responsesCompactFallbackToResponsesEnabled,
@@ -1856,34 +1848,17 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-4" style={settingsModernCardStyle} data-settings-card="proxy-transport">
           <div style={settingsModernHeaderStyle}>
             <div style={settingsModernTitleBlockStyle}>
-              <div style={settingsModernTitleStyle}>Codex 上游传输与会话并发</div>
+              <div style={settingsModernTitleStyle}>代理会话并发</div>
               <div style={settingsModernDescriptionStyle}>
-                默认采用 HTTP 优先。只有这里开启后，metapi 才会在 Codex 请求上尝试把上游升级为 WebSocket。下游 Codex 客户端也必须同时启用 `/v1/responses` websocket，单开这里不会生效。
+                控制稳定会话在同一上游通道上的并发和排队策略；Responses 请求始终通过通用 HTTP 上游转发。
               </div>
             </div>
             <div style={settingsModernPillRowStyle}>
-              <span style={getSettingsPillStyle(runtime.codexUpstreamWebsocketEnabled ? 'primary' : 'neutral')}>
-                {proxyTransportModeLabel}
-              </span>
               <span style={getSettingsPillStyle('neutral')}>
                 {proxyTransportQueueLabel}
               </span>
             </div>
           </div>
-          <label style={settingsModernToggleStyle}>
-            <div style={settingsModernToggleCopyStyle}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>允许 metapi 到 Codex 上游使用 WebSocket</span>
-              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
-                仅在下游 Codex 客户端已同步开启 `/v1/responses` websocket 时启用；否则仍按 HTTP 优先执行。
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={runtime.codexUpstreamWebsocketEnabled}
-              onChange={(e) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: e.target.checked }))}
-              style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
-            />
-          </label>
           <label style={settingsModernToggleStyle}>
             <div style={settingsModernToggleCopyStyle}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Compact 明确不支持时回退到普通 Responses</span>
@@ -2237,7 +2212,7 @@ export default function Settings() {
                 失败时不尝试其他协议
               </span>
               <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                仅影响 chat / messages / responses 之间的协议切换；不会关闭同协议兼容重试、OAuth 刷新或通道级重试。
+                仅影响 chat / messages / responses 之间的协议切换；不会关闭同协议兼容重试或通道级重试。
               </span>
             </span>
           </label>

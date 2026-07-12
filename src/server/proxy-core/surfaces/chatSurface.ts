@@ -33,19 +33,11 @@ import {
   resolveOpenAiBodyInputFiles,
 } from '../../services/proxyInputFileResolver.js';
 import {
-  buildOauthProviderHeaders,
-} from '../../services/oauth/service.js';
-import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
-import {
   collectResponsesFinalPayloadFromSse,
   collectResponsesFinalPayloadFromSseText,
   createSingleChunkStreamReader,
   looksLikeResponsesSseText,
 } from '../runtime/responsesSseFinal.js';
-import {
-  createGeminiCliStreamReader,
-  unwrapGeminiCliPayload,
-} from '../../transformers/gemini/generate-content/cliBridge.js';
 import { geminiGenerateContentTransformer } from '../../transformers/gemini/generate-content/index.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
@@ -66,7 +58,6 @@ import {
   getSurfaceStickyPreferredChannelId,
   recordSurfaceSuccess,
   selectSurfaceChannelForAttempt,
-  trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
@@ -256,12 +247,6 @@ export async function handleChatSurfaceRequest(
     downstreamFormat === 'claude'
     && shouldPreferResponsesForAnthropicContinuation(claudeOriginalBody)
   );
-  const codexSessionCacheKey = deriveCodexSessionCacheKey({
-    downstreamFormat,
-    body: downstreamFormat === 'claude' ? claudeOriginalBody : request.body,
-    requestedModel,
-    proxyToken: getProxyAuthContext(request)?.token || null,
-  });
   const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
   const maxRetries = getProxyMaxChannelRetries();
   const failureToolkit = createSurfaceFailureToolkit({
@@ -355,14 +340,6 @@ export async function handleChatSurfaceRequest(
     });
 
     const modelName = selected.actualModel || requestedModel;
-    const oauth = getOauthInfoFromAccount(selected.account);
-    const isCodexSite = String(selected.site.platform || '').trim().toLowerCase() === 'codex';
-    const buildProviderHeaders = () => (
-      buildOauthProviderHeaders({
-        account: selected.account,
-        downstreamHeaders: request.headers as Record<string, unknown>,
-      })
-    );
     const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
       let endpointCandidates = [
         ...await resolveUpstreamEndpointCandidates(
@@ -380,9 +357,6 @@ export async function handleChatSurfaceRequest(
             hasNonImageFileInput,
             conversationFileSummary,
             wantsContinuationAwareResponses,
-          },
-          {
-            oauthProvider: oauth?.provider,
           },
         ),
       ];
@@ -405,8 +379,6 @@ export async function handleChatSurfaceRequest(
           downstreamFormat,
           stickySessionKey,
           stickyPreferredChannelId,
-          oauthProvider: oauth?.provider || null,
-          isCodexSite,
           wantsContinuationAwareResponses,
         },
       });
@@ -427,7 +399,7 @@ export async function handleChatSurfaceRequest(
                 requestedModel,
                 actualModel: modelName,
                 sitePlatform: selected.site.platform,
-                accountType: oauth?.planType,
+                accountType: undefined,
               },
               rules: (config as any).openAiServiceTierRules,
             });
@@ -447,8 +419,6 @@ export async function handleChatSurfaceRequest(
           modelName,
           stream: upstreamStream,
           tokenValue: selected.tokenValue,
-          oauthProvider: oauth?.provider,
-          oauthProjectId: oauth?.projectId,
           sitePlatform: selected.site.platform,
           siteUrl: siteApiBaseUrl,
           openaiBody: bodyForEndpoint,
@@ -456,8 +426,6 @@ export async function handleChatSurfaceRequest(
           claudeOriginalBody,
           forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
-          providerHeaders: buildProviderHeaders(),
-          codexSessionCacheKey,
         });
         return {
           endpoint,
@@ -485,21 +453,6 @@ export async function handleChatSurfaceRequest(
         ),
         dispatchRequest,
       });
-      const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
-        if ((ctx.response.status === 401 || ctx.response.status === 403) && oauth) {
-          const recovered = await trySurfaceOauthRefreshRecovery({
-            ctx,
-            selected,
-            siteUrl: siteApiBaseUrl,
-            buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-            dispatchRequest,
-          });
-          if (recovered?.upstream?.ok) {
-            return recovered;
-          }
-        }
-        return endpointStrategy.tryRecover(ctx);
-      };
       const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
       return executeEndpointFlow({
         siteUrl: siteApiBaseUrl,
@@ -508,7 +461,7 @@ export async function handleChatSurfaceRequest(
         endpointCandidates,
         buildRequest: (endpoint) => buildEndpointRequest(endpoint),
         dispatchRequest,
-        tryRecover,
+        tryRecover: endpointStrategy.tryRecover,
         shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
           ctx.response.status,
           ctx.rawErrText || ctx.errText,
@@ -672,7 +625,6 @@ export async function handleChatSurfaceRequest(
             modelName,
             parsedUsage,
             upstreamUsagePresent,
-            upstreamHeaders: upstream.headers,
             requestStartedAtMs: startTime,
             isStream: true,
             firstByteLatencyMs,
@@ -848,9 +800,6 @@ export async function handleChatSurfaceRequest(
           } catch {
             fallbackData = fallbackText;
           }
-          if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
-            fallbackData = unwrapGeminiCliPayload(fallbackData);
-          }
           upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(fallbackData);
           parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
           const latency = Date.now() - startTime;
@@ -943,9 +892,7 @@ export async function handleChatSurfaceRequest(
           return;
         } else {
           const upstreamReader = getRuntimeResponseReader(upstream);
-          const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
-            ? createGeminiCliStreamReader(upstreamReader)
-            : upstreamReader;
+          const baseReader = upstreamReader;
           const decoder = new TextDecoder();
           const reader = baseReader
             ? {
@@ -1049,10 +996,6 @@ export async function handleChatSurfaceRequest(
           }
         }
       }
-      if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
-        upstreamData = unwrapGeminiCliPayload(upstreamData);
-      }
-
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
       const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
@@ -1101,7 +1044,6 @@ export async function handleChatSurfaceRequest(
         modelName,
         parsedUsage,
         upstreamUsagePresent,
-        upstreamHeaders: upstream.headers,
         requestStartedAtMs: startTime,
         isStream: false,
         firstByteLatencyMs,
@@ -1212,29 +1154,6 @@ export async function handleChatSurfaceRequest(
         channelLease.release();
       }
     }
-}
-
-function deriveCodexSessionCacheKey(input: {
-  downstreamFormat: DownstreamFormat | 'responses';
-  body: unknown;
-  requestedModel: string;
-  proxyToken: string | null;
-}): string | null {
-  if (isRecord(input.body)) {
-    if (input.downstreamFormat === 'claude' && isRecord(input.body.metadata)) {
-      const userId = asTrimmedString(input.body.metadata.user_id);
-      if (userId) return `${input.requestedModel}:claude:${userId}`;
-    }
-    const promptCacheKey = asTrimmedString(input.body.prompt_cache_key);
-    if (promptCacheKey) return `${input.requestedModel}:responses:${promptCacheKey}`;
-  }
-
-  const proxyToken = asTrimmedString(input.proxyToken);
-  if (proxyToken) {
-    return `${input.requestedModel}:proxy:${proxyToken}`;
-  }
-
-  return null;
 }
 
 export async function handleClaudeCountTokensSurfaceRequest(
@@ -1410,7 +1329,6 @@ export async function handleClaudeCountTokensSurfaceRequest(
         },
       });
     }
-    const oauth = getOauthInfoFromAccount(selected.account);
     const startTime = Date.now();
     const leaseResult = await acquireSurfaceChannelLease({
       stickySessionKey,
@@ -1454,7 +1372,6 @@ export async function handleClaudeCountTokensSurfaceRequest(
       const upstreamRequest = buildClaudeCountTokensUpstreamRequest({
         modelName,
         tokenValue: selected.tokenValue,
-        oauthProvider: oauth?.provider,
         sitePlatform: selected.site.platform,
         claudeBody: rawBody,
         downstreamHeaders: request.headers as Record<string, unknown>,
@@ -1470,38 +1387,13 @@ export async function handleClaudeCountTokensSurfaceRequest(
 
     try {
       const countTokensResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
-        let upstreamRequest = buildRequest();
+        const upstreamRequest = buildRequest();
         const dispatchRequest = createSurfaceDispatchRequest({
           site: selected.site,
           siteUrl: target.baseUrl,
           accountExtraConfig: selected.account.extraConfig,
         });
-        let upstream = await dispatchRequest(upstreamRequest);
-        let recoverApplied = false;
-
-        if ((upstream.status === 401 || upstream.status === 403) && oauth) {
-          const recoverContext = {
-            request: upstreamRequest,
-            response: upstream,
-            rawErrText: '',
-          };
-          const recovered = await trySurfaceOauthRefreshRecovery({
-            ctx: recoverContext,
-            selected,
-            siteUrl: target.baseUrl,
-            buildRequest: () => buildRequest(),
-            dispatchRequest,
-            captureFailureBody: false,
-          });
-          if (recovered?.upstream?.ok) {
-            upstreamRequest = buildRequest();
-            upstream = recovered.upstream;
-            recoverApplied = true;
-          } else {
-            upstreamRequest = recoverContext.request;
-            upstream = recoverContext.response;
-          }
-        }
+        const upstream = await dispatchRequest(upstreamRequest);
 
         const latency = Date.now() - startTime;
         const contentType = upstream.headers.get('content-type') || 'application/json';
@@ -1524,7 +1416,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
           responseHeaders: buildSurfaceProxyDebugResponseHeaders(upstream),
           responseBody: payload,
           rawErrorText: upstream.ok ? null : text,
-          recoverApplied,
+          recoverApplied: false,
           downgradeDecision: false,
           downgradeReason: null,
           memoryWrite: null,

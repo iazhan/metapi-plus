@@ -5,9 +5,9 @@ import type { ScheduledTask } from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { isChatGptCodexSite } from '../db/oauthRetirement.js';
 import { getCredentialModeFromExtraConfig, mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { normalizeGroupRate } from './accountGroupRateService.js';
-import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 import {
   captureRuntimeSettingsSnapshot,
@@ -74,7 +74,14 @@ type SiteModelPriceRuleRow = typeof schema.siteModelPriceRules.$inferSelect;
 type AccountGroupRateRuleRow = typeof schema.accountGroupRateRules.$inferSelect;
 type PricingRefreshStateRow = typeof schema.pricingRefreshStates.$inferSelect;
 
-type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>
+type BackupAccountRow = Omit<AccountRow,
+  'balanceUsed'
+  | 'lastCheckinAt'
+  | 'lastBalanceRefresh'
+  | 'oauthProvider'
+  | 'oauthAccountKey'
+  | 'oauthProjectId'
+>
   & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>;
 
 type BackupRouteChannelRow = Omit<RouteChannelRow,
@@ -88,6 +95,7 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
   | 'consecutiveFailCount'
   | 'cooldownLevel'
   | 'cooldownUntil'
+  | 'oauthRouteUnitId'
 > & Partial<Pick<RouteChannelRow,
   'successCount'
   | 'failCount'
@@ -288,9 +296,6 @@ const DIRECT_API_PLATFORMS = new Set([
   'claude',
   'gemini',
   'cliproxyapi',
-  'codex',
-  'gemini-cli',
-  'antigravity',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -310,6 +315,36 @@ function asBoolean(value: unknown, fallback = false): boolean {
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function containsRemovedOauthBackupData(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsRemovedOauthBackupData(item));
+  if (!isRecord(value)) return false;
+
+  for (const key of ['oauthProvider', 'oauthAccountKey', 'oauthProjectId'] as const) {
+    if (asString(value[key])) return true;
+  }
+  if (value.oauthRouteUnitId !== null && value.oauthRouteUnitId !== undefined) return true;
+
+  const platform = asString(value.platform).toLowerCase();
+  const siteUrl = asString(value.url).toLowerCase();
+  if (platform === 'gemini-cli' || platform === 'antigravity') return true;
+  if (isChatGptCodexSite(platform, siteUrl)) return true;
+
+  const extraConfig = (() => {
+    if (isRecord(value.extraConfig)) return value.extraConfig;
+    if (typeof value.extraConfig !== 'string' || !value.extraConfig.trim()) return null;
+    try {
+      const parsed = JSON.parse(value.extraConfig);
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (extraConfig && isRecord(extraConfig.oauth) && Object.keys(extraConfig.oauth).length > 0) return true;
+  if (isRecord(value.oauth) && Object.keys(value.oauth).length > 0) return true;
+
+  return Object.values(value).some((item) => containsRemovedOauthBackupData(item));
 }
 
 function toIsoString(value: unknown): string {
@@ -333,18 +368,6 @@ function normalizeLegacyQuota(raw: unknown): number {
   return value;
 }
 
-function resolveImportedOauthColumns(row: Pick<AccountRow, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId' | 'extraConfig'>) {
-  const oauth = getOauthInfoFromAccount(row);
-  const oauthProvider = row.oauthProvider || oauth?.provider || null;
-  const oauthAccountKey = row.oauthAccountKey || oauth?.accountKey || oauth?.accountId || null;
-  const oauthProjectId = row.oauthProjectId || oauth?.projectId || null;
-  return {
-    oauthProvider,
-    oauthAccountKey,
-    oauthProjectId,
-  };
-}
-
 function buildSiteIdentityKey(row: Pick<SiteRow, 'platform' | 'url'>): string {
   return `${asString(row.platform).toLowerCase()}::${normalizeOriginUrl(asString(row.url))}`;
 }
@@ -354,17 +377,7 @@ function buildAccountIdentityKey(input: {
   username?: string | null;
   accessToken?: string | null;
   apiToken?: string | null;
-  oauthProvider?: string | null;
-  oauthAccountKey?: string | null;
-  oauthProjectId?: string | null;
 }): string {
-  const oauthProvider = asString(input.oauthProvider).toLowerCase();
-  const oauthAccountKey = asString(input.oauthAccountKey);
-  const oauthProjectId = asString(input.oauthProjectId);
-  if (oauthProvider || oauthAccountKey || oauthProjectId) {
-    return `oauth::${input.siteKey}::${oauthProvider}::${oauthAccountKey}::${oauthProjectId}`;
-  }
-
   const apiToken = asString(input.apiToken);
   if (apiToken) {
     return `api::${input.siteKey}::${apiToken}`;
@@ -438,15 +451,11 @@ function buildRuntimeIdentityIndexesFromSection(section: AccountsBackupSection):
   for (const row of section.accounts) {
     const siteKey = siteKeyById.get(row.siteId);
     if (!siteKey) continue;
-    const oauthColumns = resolveImportedOauthColumns(row);
     const accountKey = buildAccountIdentityKey({
       siteKey,
       username: row.username,
       accessToken: row.accessToken,
       apiToken: row.apiToken,
-      oauthProvider: oauthColumns.oauthProvider,
-      oauthAccountKey: oauthColumns.oauthAccountKey,
-      oauthProjectId: oauthColumns.oauthProjectId,
     });
     accountKeyById.set(row.id, accountKey);
     accountIdByKey.set(accountKey, row.id);
@@ -528,15 +537,11 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
   for (const row of accounts) {
     const siteKey = siteKeyById.get(row.siteId);
     if (!siteKey) continue;
-    const oauthColumns = resolveImportedOauthColumns(row);
     const accountKey = buildAccountIdentityKey({
       siteKey,
       username: row.username,
       accessToken: row.accessToken,
       apiToken: row.apiToken,
-      oauthProvider: oauthColumns.oauthProvider,
-      oauthAccountKey: oauthColumns.oauthAccountKey,
-      oauthProjectId: oauthColumns.oauthProjectId,
     });
     accountKeyById.set(row.id, accountKey);
     accountRuntimeByKey.set(accountKey, {
@@ -664,6 +669,7 @@ function normalizeOriginUrl(raw: string): string {
 
 function resolveImportedPlatform(rawPlatform: unknown, rawUrl: string): string {
   const rawPlatformText = asString(rawPlatform).toLowerCase();
+  if (rawPlatformText === 'codex') return 'openai';
   const normalizedPlatform = rawPlatformText
     ? (
       Object.prototype.hasOwnProperty.call(PLATFORM_ALIASES, rawPlatformText)
@@ -906,9 +912,6 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       username,
       accessToken,
       apiToken,
-      oauthProvider: null,
-      oauthAccountKey: null,
-      oauthProjectId: null,
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
@@ -959,9 +962,6 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       username: asString(profile.name) || asString(profile.id) || baseUrl,
       accessToken: '',
       apiToken: apiKey,
-      oauthProvider: null,
-      oauthAccountKey: null,
-      oauthProjectId: null,
       balance: 0,
       balanceUsed: 0,
       quota: 0,
@@ -1005,7 +1005,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
   if (!rows) return null;
 
   const sites: SiteRow[] = [];
-  const accounts: AccountRow[] = [];
+  const accounts: BackupAccountRow[] = [];
   const accountTokens: AccountTokenRow[] = [];
   const tokenRoutes: TokenRouteRow[] = [];
   const routeChannels: RouteChannelRow[] = [];
@@ -1093,9 +1093,6 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
       username,
       accessToken: accountAccessToken,
       apiToken,
-      oauthProvider: null,
-      oauthAccountKey: null,
-      oauthProjectId: null,
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
@@ -1391,7 +1388,15 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
   return {
     sites,
     siteApiEndpoints,
-    accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }) => row),
+    accounts: accounts.map(({
+      balanceUsed: _balanceUsed,
+      lastCheckinAt: _lastCheckinAt,
+      lastBalanceRefresh: _lastBalanceRefresh,
+      oauthProvider: _oauthProvider,
+      oauthAccountKey: _oauthAccountKey,
+      oauthProjectId: _oauthProjectId,
+      ...row
+    }) => row),
     accountGroupRates,
     accountTokens,
     tokenRoutes,
@@ -1406,6 +1411,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       consecutiveFailCount: _consecutiveFailCount,
       cooldownLevel: _cooldownLevel,
       cooldownUntil: _cooldownUntil,
+      oauthRouteUnitId: _oauthRouteUnitId,
       ...row
     }) => row),
     routeGroupSources,
@@ -1684,7 +1690,6 @@ async function importAccountsSection(
     }
 
     for (const row of section.accounts) {
-      const oauthColumns = resolveImportedOauthColumns(row);
       const accountKey = importedIndexes.accountKeyById.get(row.id);
       const runtimeAccount = accountKey ? runtimeState.accountRuntimeByKey.get(accountKey) : undefined;
       await tx.insert(schema.accounts).values({
@@ -1693,9 +1698,6 @@ async function importAccountsSection(
         username: row.username,
         accessToken: row.accessToken,
         apiToken: row.apiToken,
-        oauthProvider: oauthColumns.oauthProvider,
-        oauthAccountKey: oauthColumns.oauthAccountKey,
-        oauthProjectId: oauthColumns.oauthProjectId,
         balance: row.balance,
         balanceUsed: runtimeAccount?.balanceUsed ?? row.balanceUsed,
         quota: row.quota,
@@ -2226,6 +2228,10 @@ export async function importBackup(
 ): Promise<BackupImportResult> {
   if (!isRecord(data)) {
     throw new Error('导入数据格式错误：必须为 JSON 对象');
+  }
+
+  if (containsRemovedOauthBackupData(data)) {
+    throw new Error('备份包含已移除的 OAuth 连接，无法导入');
   }
 
   if (!('timestamp' in data) || data.timestamp === null || data.timestamp === undefined) {

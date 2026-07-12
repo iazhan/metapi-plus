@@ -226,7 +226,7 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
-  it('renders oauth route unit summary and members after expanding a pooled route', async () => {
+  it('ignores retired OAuth route unit summaries after expanding a route', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 31, modelPattern: 'gpt-4.1', displayName: null,
@@ -279,19 +279,18 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       const text = collectText(root.root);
-      expect(text).toContain('Codex Pool A');
-      expect(text).toContain('3 个成员');
-      expect(text).toContain('单个用到不可用再切');
-      expect(text).toContain('成员摘要');
+      expect(text).not.toContain('Codex Pool A');
+      expect(text).not.toContain('3 个成员');
+      expect(text).not.toContain('成员摘要');
       expect(text).toContain('route-unit-anchor');
-      expect(text).toContain('route-unit-backup');
-      expect(text).toContain('route-unit-third');
+      expect(text).not.toContain('route-unit-backup');
+      expect(text).not.toContain('route-unit-third');
     } finally {
       root?.unmount();
     }
   });
 
-  it('shows oauth route unit summary and member details after expanding a pooled route', async () => {
+  it('does not show retired OAuth route unit member details', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 1, modelPattern: 'gpt-5-codex', displayName: 'gpt-5-codex',
@@ -346,12 +345,11 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       const expandedText = collectText(root.root);
-      expect(expandedText).toContain('OAuth 路由池');
-      expect(expandedText).toContain('Codex 池');
-      expect(expandedText).toContain('3 个成员');
-      expect(expandedText).toContain('单个用到不可用再切');
-      expect(expandedText).toContain('成员摘要');
-      expect(expandedText).toContain('user_a @ site-a、user_b @ site-b、user_c @ site-c');
+      expect(expandedText).not.toContain('OAuth 路由池');
+      expect(expandedText).not.toContain('Codex 池');
+      expect(expandedText).not.toContain('3 个成员');
+      expect(expandedText).not.toContain('成员摘要');
+      expect(expandedText).not.toContain('user_a @ site-a、user_b @ site-b、user_c @ site-c');
     } finally {
       root?.unmount();
     }

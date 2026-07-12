@@ -99,6 +99,16 @@ AnyRouter-style deployments should use the `new-api` platform. Existing `anyrout
 
 ---
 
+## 2.0.0 Breaking Upgrade
+
+Version 2.0.0 completely removes OAuth account proxying. The upgrade permanently deletes OAuth login accounts, refresh tokens, quota state, OAuth route pools, and dedicated ChatGPT Codex, Gemini CLI, and Antigravity host sites. Claude/Anthropic-compatible, OpenAI-compatible, and Gemini API-key sites are preserved; non-official `platform = codex` API-key sites are migrated to `openai`.
+
+- SQLite creates `*.pre-oauth-removal-YYYYMMDD-HHmmss.bak` next to the database before the migration runs for the first time.
+- MySQL and Postgres are not backed up by the application. Operators must create a restorable database backup before upgrading.
+- A rollback must restore both the old application version and the pre-migration database. Rolling back only the application cannot recover deleted credentials or schema.
+
+---
+
 ## Screenshots
 
 <table>

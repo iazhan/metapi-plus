@@ -58,14 +58,12 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('gemini')?.platformName).toBe('gemini');
   });
 
-  it('supports antigravity adapter aliases', () => {
-    expect(getAdapter('antigravity')?.platformName).toBe('antigravity');
-    expect(getAdapter('anti-gravity')?.platformName).toBe('antigravity');
-  });
-
-  it('supports dedicated codex adapter and aliases', () => {
-    expect(getAdapter('codex')?.platformName).toBe('codex');
-    expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
+  it('does not expose retired native oauth platform adapters', () => {
+    expect(getAdapter('codex')).toBeUndefined();
+    expect(getAdapter('chatgpt-codex')).toBeUndefined();
+    expect(getAdapter('gemini-cli')).toBeUndefined();
+    expect(getAdapter('antigravity')).toBeUndefined();
+    expect(getAdapter('anti-gravity')).toBeUndefined();
   });
 
   it('detects anyrouter URLs as new-api sites', async () => {

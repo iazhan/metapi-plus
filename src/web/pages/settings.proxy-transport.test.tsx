@@ -55,7 +55,6 @@ describe('Settings proxy transport', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      codexUpstreamWebsocketEnabled: false,
       responsesCompactFallbackToResponsesEnabled: false,
       proxySessionChannelConcurrencyLimit: 4,
       proxySessionChannelQueueWaitMs: 3200,
@@ -74,7 +73,6 @@ describe('Settings proxy transport', () => {
     });
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
-      codexUpstreamWebsocketEnabled: true,
       responsesCompactFallbackToResponsesEnabled: true,
       proxySessionChannelConcurrencyLimit: 6,
       proxySessionChannelQueueWaitMs: 4200,
@@ -86,7 +84,7 @@ describe('Settings proxy transport', () => {
     vi.clearAllMocks();
   });
 
-  it('saves codex upstream websocket and session lease settings from the settings page', async () => {
+  it('saves compact fallback and session lease settings from the settings page', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -104,15 +102,8 @@ describe('Settings proxy transport', () => {
         node.type === 'div'
         && node.props['data-settings-card'] === 'proxy-transport'
       ));
-      expect(collectText(proxyTransportCard)).toContain('HTTP 优先');
+      expect(collectText(proxyTransportCard)).toContain('代理会话并发');
       expect(collectText(proxyTransportCard)).toContain('会话池 4 并发 / 3200ms');
-
-      const websocketToggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('允许 metapi 到 Codex 上游使用 WebSocket')
-      ));
-      const websocketToggle = websocketToggleLabel.findByType('input');
-      expect(websocketToggle.props.checked).toBe(false);
 
       const compactFallbackToggleLabel = root.root.find((node) => (
         node.type === 'label'
@@ -133,13 +124,11 @@ describe('Settings proxy transport', () => {
       ));
 
       await act(async () => {
-        websocketToggle.props.onChange({ target: { checked: true } });
         compactFallbackToggle.props.onChange({ target: { checked: true } });
         concurrencyInput.props.onChange({ target: { value: '6' } });
         queueWaitInput.props.onChange({ target: { value: '4200' } });
       });
 
-      expect(collectText(proxyTransportCard)).toContain('上游 WebSocket 已启用');
       expect(collectText(proxyTransportCard)).toContain('会话池 6 并发 / 4200ms');
 
       const saveButton = root.root.find((node) => (
@@ -153,7 +142,6 @@ describe('Settings proxy transport', () => {
       await flushMicrotasks();
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        codexUpstreamWebsocketEnabled: true,
         responsesCompactFallbackToResponsesEnabled: true,
         proxySessionChannelConcurrencyLimit: 6,
         proxySessionChannelQueueWaitMs: 4200,

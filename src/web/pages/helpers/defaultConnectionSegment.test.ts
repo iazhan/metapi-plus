@@ -10,7 +10,6 @@ describe('defaultConnectionSegment', () => {
     expect(resolveInitialConnectionSegment('one-hub')).toBe('session');
     expect(resolveInitialConnectionSegment('done-hub')).toBe('session');
     expect(resolveInitialConnectionSegment('sub2api')).toBe('session');
-    expect(resolveInitialConnectionSegment('codex')).toBe('session');
   });
 
   it('maps API-key-only platforms to the apikey segment', () => {
@@ -23,5 +22,6 @@ describe('defaultConnectionSegment', () => {
   it('falls back to the apikey segment for unknown platforms', () => {
     expect(resolveInitialConnectionSegment('')).toBe('apikey');
     expect(resolveInitialConnectionSegment('unknown-platform')).toBe('apikey');
+    expect(resolveInitialConnectionSegment('codex')).toBe('apikey');
   });
 });

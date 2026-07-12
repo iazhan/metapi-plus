@@ -164,28 +164,6 @@ describe('detectCliProfile', () => {
     });
   });
 
-  it('detects Gemini CLI internal routes and exposes Gemini CLI capability flags', () => {
-    expect(detectCliProfile({
-      downstreamPath: '/v1internal:countTokens',
-      body: {
-        model: 'gpt-4.1',
-        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
-      },
-    })).toEqual({
-      id: 'gemini_cli',
-      clientAppId: 'gemini_cli',
-      clientAppName: 'Gemini CLI',
-      clientConfidence: 'exact',
-      capabilities: {
-        supportsResponsesCompact: false,
-        supportsResponsesWebsocketIncremental: false,
-        preservesContinuation: false,
-        supportsCountTokens: true,
-        echoesTurnState: false,
-      },
-    });
-  });
-
   it('falls back to generic for native Gemini routes', () => {
     expect(detectCliProfile({
       downstreamPath: '/v1beta/models/gemini-2.5-flash:generateContent',

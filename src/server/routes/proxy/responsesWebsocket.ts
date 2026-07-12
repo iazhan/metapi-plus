@@ -3,20 +3,14 @@ import type { FastifyInstance } from 'fastify';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../../proxy-core/runtime/codexWebsocketRuntime.js';
-import { buildCodexSessionResponseStoreKey } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
   isModelAllowedByPolicyOrAllowedRoutes,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
-import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
-import { buildUpstreamEndpointRequest } from './upstreamEndpoint.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../../proxy-core/serviceTierPolicy.js';
 
@@ -24,7 +18,6 @@ const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
 const RESPONSES_WEBSOCKET_MODE_HEADER = 'x-metapi-responses-websocket-mode';
 const RESPONSES_WEBSOCKET_TRANSPORT_HEADER = 'x-metapi-responses-websocket-transport';
-const codexWebsocketRuntime = createCodexWebsocketRuntime();
 
 type SelectedChannel = NonNullable<Awaited<ReturnType<typeof tokenRouter.selectChannel>>>;
 type ResponsesWebsocketAuthContext = DownstreamTokenAuthSuccess;
@@ -65,90 +58,6 @@ function headerValueToTrimmedString(value: unknown): string {
   return '';
 }
 
-function toBooleanLike(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
-  }
-  return null;
-}
-
-function parseExtraConfigRecord(extraConfig: unknown): Record<string, unknown> | null {
-  if (isRecord(extraConfig)) return extraConfig;
-  if (typeof extraConfig !== 'string') return null;
-  try {
-    const parsed = JSON.parse(extraConfig);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function readNestedRecord(value: unknown, key: string): Record<string, unknown> | null {
-  if (!isRecord(value)) return null;
-  const nested = value[key];
-  return isRecord(nested) ? nested : null;
-}
-function selectedChannelModelMatches(
-  selectedChannel: SelectedChannel | null,
-  requestModel: string,
-): boolean {
-  if (!selectedChannel) return false;
-  const selectedModel = asTrimmedString(selectedChannel.actualModel).toLowerCase();
-  const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
-  if (!selectedModel || !normalizedRequestModel) return true;
-  return selectedModel === normalizedRequestModel;
-}
-
-function selectedChannelSupportsCodexWebsocketTransport(
-  selectedChannel: SelectedChannel | null,
-  requestModel: string,
-): boolean {
-  if (!selectedChannel) return false;
-  const platform = asTrimmedString(selectedChannel.site?.platform).toLowerCase();
-  if (platform !== 'codex') return false;
-  if (!selectedChannelModelMatches(selectedChannel, requestModel)) return false;
-  if (!config.codexUpstreamWebsocketEnabled) return false;
-
-  const extraConfig = parseExtraConfigRecord(selectedChannel.account.extraConfig);
-  const oauth = readNestedRecord(extraConfig, 'oauth');
-  const providerData = readNestedRecord(oauth, 'providerData');
-  const candidateFlags = [
-    extraConfig?.websockets,
-    readNestedRecord(extraConfig, 'attributes')?.websockets,
-    readNestedRecord(extraConfig, 'metadata')?.websockets,
-    providerData?.websockets,
-    readNestedRecord(providerData, 'attributes')?.websockets,
-    readNestedRecord(providerData, 'metadata')?.websockets,
-  ];
-  for (const candidate of candidateFlags) {
-    const parsed = toBooleanLike(candidate);
-    if (parsed !== null) return parsed;
-  }
-  return true;
-}
-
-function selectedChannelSupportsIncrementalInput(
-  selectedChannel: SelectedChannel | null,
-  requestModel: string,
-): boolean {
-  return selectedChannelSupportsCodexWebsocketTransport(selectedChannel, requestModel);
-}
-
-function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntimeError {
-  if (error instanceof CodexWebsocketRuntimeError) return error;
-  if (error instanceof SiteApiEndpointRequestError && error.cause instanceof CodexWebsocketRuntimeError) {
-    return error.cause;
-  }
-  return new CodexWebsocketRuntimeError(
-    error instanceof Error && error.message.trim()
-      ? error.message
-      : 'upstream websocket request failed',
-  );
-}
-
 function shouldReuseSelectedChannel(
   selectedChannel: SelectedChannel | null,
   requestModel: string,
@@ -158,11 +67,6 @@ function shouldReuseSelectedChannel(
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
-}
-
-function deriveCodexExplicitSessionId(body: Record<string, unknown>, sessionId: string): string {
-  void body;
-  return sessionId;
 }
 
 function parseJsonObject(raw: RawData): Record<string, unknown> | null {
@@ -536,51 +440,16 @@ function writeUpgradeHttpError(socket: Duplex, status: number, message: string):
   );
 }
 
-async function supportsResponsesWebsocketIncrementalInput(
-  parsed: Record<string, unknown>,
-  lastRequest: Record<string, unknown> | null,
-  authContext: ResponsesWebsocketAuthContext,
-): Promise<boolean> {
-  const requestModel = asTrimmedString(parsed.model) || asTrimmedString(lastRequest?.model);
-  if (!requestModel) return false;
-
-  try {
-    const selected = await tokenRouter.previewSelectedChannel(requestModel, authContext.policy);
-    return selectedChannelSupportsIncrementalInput(selected, requestModel);
-  } catch {
-    return false;
-  }
-}
-
 async function handleResponsesWebsocketConnection(
   app: FastifyInstance,
   socket: WebSocket,
   request: IncomingMessage,
   authContext: ResponsesWebsocketAuthContext,
 ) {
-  const websocketSessionId = headerValueToTrimmedString(request.headers['session-id'])
-    || headerValueToTrimmedString(request.headers['session_id'])
-    || headerValueToTrimmedString(request.headers['conversation-id'])
-    || headerValueToTrimmedString(request.headers['conversation_id'])
-    || randomUUID();
-  const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
   let selectedChannel: SelectedChannel | null = null;
   let messageQueue = Promise.resolve();
-
-  socket.once('close', () => {
-    const sessionKeys = runtimeSessionKeys.size > 0
-      ? Array.from(runtimeSessionKeys)
-      : [websocketSessionId];
-    void Promise.all(sessionKeys.map(async (sessionKey) => {
-      try {
-        await codexWebsocketRuntime.closeSession(sessionKey);
-      } catch {
-        // Ignore close-time cleanup failures after downstream disconnects.
-      }
-    }));
-  });
 
   socket.on('message', (raw) => {
     messageQueue = messageQueue
@@ -616,8 +485,7 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
-          const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
-            || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, authContext);
+          const supportsIncrementalInput = false;
           const shouldHandleLocalPrewarm = shouldHandleResponsesWebsocketPrewarmLocally(
             parsed,
             lastRequest,
@@ -659,7 +527,7 @@ async function handleResponsesWebsocketConnection(
               requestedModel: requestModel,
               actualModel: asTrimmedString(selectedChannel?.actualModel),
               sitePlatform: asTrimmedString(selectedChannel?.site?.platform),
-              accountType: getOauthInfoFromAccount(selectedChannel?.account)?.planType,
+              accountType: undefined,
             },
             rules: getServiceTierPolicyRules(),
           });
@@ -681,108 +549,6 @@ async function handleResponsesWebsocketConnection(
             delete normalized.nextRequestSnapshot.service_tier;
           }
           lastRequest = normalized.nextRequestSnapshot;
-
-          const codexWebsocketChannel = selectedChannelSupportsCodexWebsocketTransport(selectedChannel, requestModel)
-            ? selectedChannel
-            : null;
-
-          if (codexWebsocketChannel) {
-            const downstreamHeaders: Record<string, unknown> = {
-              ...(request.headers as Record<string, unknown>),
-              [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
-              ...(supportsIncrementalInput ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
-            };
-            const providerHeaders = buildOauthProviderHeaders({
-              account: codexWebsocketChannel.account,
-              downstreamHeaders,
-            });
-
-            const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
-              sessionId: websocketSessionId,
-              siteId: codexWebsocketChannel.site.id,
-              accountId: codexWebsocketChannel.account.id,
-              channelId: codexWebsocketChannel.channel.id,
-            }) || websocketSessionId;
-            runtimeSessionKeys.add(websocketRuntimeSessionKey);
-
-            try {
-              const runtimeResult = await runWithSiteApiEndpointPool(
-                codexWebsocketChannel.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
-                async (target) => {
-                  const prepared = buildUpstreamEndpointRequest({
-                    endpoint: 'responses',
-                    modelName: asTrimmedString(codexWebsocketChannel.actualModel) || requestModel,
-                    stream: true,
-                    tokenValue: codexWebsocketChannel.tokenValue,
-                    sitePlatform: codexWebsocketChannel.site.platform,
-                    siteUrl: target.baseUrl,
-                    openaiBody: normalized.request,
-                    downstreamFormat: 'responses',
-                    responsesOriginalBody: normalized.request,
-                    downstreamHeaders,
-                    providerHeaders,
-                    codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
-                  });
-                  const requestUrl = `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;
-
-                  try {
-                    return await codexWebsocketRuntime.sendRequest({
-                      sessionId: websocketRuntimeSessionKey,
-                      requestUrl,
-                      headers: prepared.headers,
-                      body: prepared.body,
-                    });
-                  } catch (error) {
-                    const runtimeError = error instanceof CodexWebsocketRuntimeError
-                      ? error
-                      : new CodexWebsocketRuntimeError('upstream websocket request failed');
-                    throw new SiteApiEndpointRequestError(runtimeError.message, {
-                      status: runtimeError.status,
-                      cause: runtimeError,
-                    });
-                  }
-                },
-              );
-              lastResponseOutput = collectResponsesOutput(runtimeResult.events);
-              for (const payload of runtimeResult.events) {
-                socket.send(JSON.stringify(payload));
-              }
-            } catch (error) {
-              const runtimeError = unwrapCodexWebsocketRuntimeError(error);
-              if (runtimeError.status && runtimeError.events.length === 0) {
-                const forwarded = await forwardResponsesRequestViaHttp({
-                  app,
-                  socket,
-                  request,
-                  payload: normalized.request,
-                  preserveIncrementalMode: supportsIncrementalInput,
-                  authToken: authContext.token,
-                });
-                if (forwarded) {
-                  lastResponseOutput = forwarded;
-                }
-                return;
-              }
-              lastResponseOutput = collectResponsesOutput(runtimeError.events);
-              for (const payload of runtimeError.events) {
-                socket.send(JSON.stringify(payload));
-              }
-              const emittedTerminalResponsesEvent = runtimeError.events.some((payload) => {
-                if (!isRecord(payload)) return false;
-                const type = asTrimmedString(payload.type);
-                return type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete';
-              });
-              if (!emittedTerminalResponsesEvent) {
-                writeResponsesWebsocketError(
-                  socket,
-                  runtimeError.status || 408,
-                  runtimeError.message,
-                  runtimeError.payload,
-                );
-              }
-            }
-            return;
-          }
 
           const forwarded = await forwardResponsesRequestViaHttp({
             app,
@@ -836,7 +602,6 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
   });
 
   app.addHook('onClose', async () => {
-    await codexWebsocketRuntime.closeAllSessions();
     await new Promise<void>((resolve) => {
       websocketServer.close(() => resolve());
     });

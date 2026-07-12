@@ -58,7 +58,6 @@ interface RuntimeSettingsBody {
   modelAvailabilityProbeEnabled?: boolean;
   accountGroupRateRefreshEnabled?: boolean;
   accountGroupRateRefreshIntervalMinutes?: number;
-  codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
@@ -447,11 +446,6 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       });
       return;
     }
-    case 'codex_upstream_websocket_enabled': {
-      if (typeof value !== 'boolean') return;
-      config.codexUpstreamWebsocketEnabled = value;
-      return;
-    }
     case 'responses_compact_fallback_to_responses_enabled': {
       if (typeof value !== 'boolean') return;
       config.responsesCompactFallbackToResponsesEnabled = value;
@@ -748,7 +742,6 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     modelAvailabilityProbeEnabled: config.modelAvailabilityProbeEnabled,
     accountGroupRateRefreshEnabled: config.accountGroupRateRefreshEnabled,
     accountGroupRateRefreshIntervalMinutes: config.accountGroupRateRefreshIntervalMinutes,
-    codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
     responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
@@ -1204,24 +1197,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       } else {
         stopModelAvailabilityProbeScheduler();
       }
-    }
-
-    if (body.codexUpstreamWebsocketEnabled !== undefined) {
-      let nextValue = false;
-      try {
-        nextValue = parseBooleanFlag(body.codexUpstreamWebsocketEnabled, 'Codex 上游 WebSocket 开关');
-      } catch (err: any) {
-        return reply.code(400).send({
-          success: false,
-          message: err?.message || 'Codex 上游 WebSocket 开关格式无效',
-        });
-      }
-
-      if (nextValue !== config.codexUpstreamWebsocketEnabled) {
-        changedLabels.push('Codex 上游 WebSocket 默认策略');
-      }
-      config.codexUpstreamWebsocketEnabled = nextValue;
-      upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
     }
 
     if (body.responsesCompactFallbackToResponsesEnabled !== undefined) {

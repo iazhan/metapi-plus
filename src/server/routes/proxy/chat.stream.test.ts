@@ -76,11 +76,6 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
-vi.mock('../../services/oauth/quota.js', () => ({
-  recordOauthQuotaHeadersSnapshot: vi.fn(async () => undefined),
-  recordOauthQuotaResetHint: vi.fn(async () => undefined),
-}));
-
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -157,10 +152,6 @@ describe('chat proxy stream behavior', () => {
     });
     selectNextChannelMock.mockReturnValue(null);
     fetchModelPricingCatalogMock.mockResolvedValue(null);
-    (config as any).codexHeaderDefaults = {
-      userAgent: '',
-      betaFeatures: '',
-    };
     (config as any).payloadRules = {
       default: [],
       defaultRaw: [],

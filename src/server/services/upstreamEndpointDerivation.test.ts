@@ -48,21 +48,6 @@ describe('upstreamEndpointDerivation', () => {
     expect(order).toEqual(['responses']);
   });
 
-  it('derives codex oauth openai requests as responses-first without surface-local reordering', async () => {
-    const order = await resolveUpstreamEndpointCandidates(
-      baseContext,
-      'gpt-5.3',
-      'openai',
-      undefined,
-      undefined,
-      {
-        oauthProvider: 'codex',
-      },
-    );
-
-    expect(order).toEqual(['responses', 'chat', 'messages']);
-  });
-
   it('keeps explicit openai platforms on responses-first ordering even for claude-family models', async () => {
     const order = await resolveUpstreamEndpointCandidates(
       {
@@ -129,26 +114,6 @@ describe('upstreamEndpointDerivation', () => {
     expect(order).toEqual(['chat', 'responses', 'messages']);
   });
 
-  it('keeps antigravity non-gemini compatibility requests on messages-first ordering', async () => {
-    const order = await resolveUpstreamEndpointCandidates(
-      {
-        ...baseContext,
-        site: {
-          ...baseContext.site,
-          platform: 'antigravity',
-        },
-      },
-      'claude-opus-4-6',
-      'openai',
-      undefined,
-      {
-        hasNonImageFileInput: true,
-      },
-    );
-
-    expect(order).toEqual(['messages']);
-  });
-
   it('keeps claude-family file-url requests messages-first for claude upstreams', async () => {
     const order = await resolveUpstreamEndpointCandidates(
       {
@@ -193,25 +158,4 @@ describe('upstreamEndpointDerivation', () => {
     expect(order).toEqual(['messages']);
   });
 
-  it('returns no candidates for claude count_tokens when the upstream does not support messages', async () => {
-    const order = await resolveUpstreamEndpointCandidates(
-      {
-        ...baseContext,
-        site: {
-          ...baseContext.site,
-          platform: 'codex',
-          url: 'https://chatgpt.com/backend-api/codex',
-        },
-      },
-      'gpt-5.4',
-      'claude',
-      undefined,
-      undefined,
-      {
-        requestKind: 'claude-count-tokens',
-      },
-    );
-
-    expect(order).toEqual([]);
-  });
 });

@@ -107,8 +107,7 @@ function formatUsd(value?: number | null): string {
 }
 
 function resolveSiteCreatedSessionLabel(platform?: string | null): string {
-  const normalized = String(platform || '').trim().toLowerCase();
-  if (normalized === 'codex') return '添加 OAuth 连接';
+  void platform;
   return '添加账号（用户名密码登录）';
 }
 
@@ -232,7 +231,6 @@ const platformColors: Record<string, string> = {
   'done-hub': 'badge-muted',
   sub2api: 'badge-muted',
   openai: 'badge-success',
-  codex: 'badge-success',
   claude: 'badge-warning',
   gemini: 'badge-info',
   cliproxyapi: 'badge-info',
@@ -247,7 +245,6 @@ const SITE_PLATFORM_OPTIONS = [
   { value: 'done-hub', label: 'done-hub', description: '聚合面板，适合统一转发与管理' },
   { value: 'sub2api', label: 'sub2api', description: '订阅式中转面板，可同步套餐与余额信息' },
   { value: 'openai', label: 'openai', description: '通用 OpenAI 兼容接口，手填 Base URL 即可' },
-  { value: 'codex', label: 'codex', description: 'Codex OAuth / Session 优先入口' },
   { value: 'claude', label: 'claude', description: '通用 Claude / Anthropic 兼容接口' },
   { value: 'gemini', label: 'gemini', description: '通用 Gemini / Google AI 兼容接口' },
   { value: 'cliproxyapi', label: 'cliproxyapi', description: 'CPA接入口' },
@@ -907,18 +904,12 @@ export default function Sites() {
     initializationPresetId?: string | null;
     choice: 'session' | 'apikey';
   }) => {
-    const platform = input.platform?.toLowerCase().trim();
     const params = buildSiteConnectionSearchParams({
       siteId: input.siteId,
       initializationPresetId: input.initializationPresetId,
     });
 
     if (input.choice === 'session') {
-      if (platform === 'codex') {
-        params.set('provider', 'codex');
-        navigate(`/oauth?${params.toString()}`);
-        return;
-      }
       navigate(`/accounts?${params.toString()}`);
       return;
     }

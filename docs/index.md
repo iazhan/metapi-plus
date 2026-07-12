@@ -26,9 +26,6 @@ features:
   - title: 上游接入
     details: 按平台类型、官方预设和 API 请求地址池的现状，快速判断站点该怎么接。
     link: /upstream-integration
-  - title: OAuth 管理
-    details: 直接接入 Codex、Claude、Gemini CLI、Antigravity 等 provider 授权账号。
-    link: /oauth
   - title: 问题排查
     details: 汇总高频报错、根因定位和标准修复路径，降低重复沟通成本。
     link: /faq
