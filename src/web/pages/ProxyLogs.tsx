@@ -93,7 +93,6 @@ const PROXY_LOGS_DEBUG_TRACE_PANEL_STORAGE_KEY =
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: "Codex",
   claude_code: "Claude Code",
-  gemini_cli: "Gemini CLI",
   generic: "通用",
 };
 const EMPTY_SUMMARY: ProxyLogsSummary = {

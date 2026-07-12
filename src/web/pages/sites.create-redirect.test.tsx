@@ -75,7 +75,6 @@ async function createSiteAndClickModalChoice(
             <Routes>
               <Route path="/sites" element={<Sites />} />
               <Route path="/accounts" element={<LocationProbe />} />
-              <Route path="/oauth" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -121,7 +120,7 @@ async function createSiteAndClickModalChoice(
     await flushMicrotasks();
 
     const targetButton = choice === 'session'
-      ? findClickableButtonByText(root, createdSite.platform === 'codex' ? '添加 OAuth 连接' : '添加账号（用户名密码登录）')
+      ? findClickableButtonByText(root, '添加账号（用户名密码登录）')
       : choice === 'apikey'
         ? findClickableButtonByText(root, '添加 API Key')
         : findClickableButtonByText(root, '稍后配置');
@@ -184,11 +183,11 @@ describe('Sites create redirect', () => {
     expect(rendered).not.toContain('/accounts?');
   });
 
-  it('shows modal after creating a codex site and navigates to OAuth when user chooses session', async () => {
+  it('keeps legacy codex site creation on the generic account flow without OAuth navigation', async () => {
     const rendered = await createSiteAndClickModalChoice({ id: 24, name: 'Demo Site', platform: 'codex' }, 'session');
 
-    expect(rendered).toContain('/oauth?');
-    expect(rendered).toContain('provider=codex');
+    expect(rendered).toContain('/accounts?');
+    expect(rendered).not.toContain('/oauth?');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('siteId=24');
   });
@@ -318,7 +317,6 @@ describe('Sites create redirect', () => {
         expect.arrayContaining([
           expect.objectContaining({ value: 'new-api', description: expect.stringContaining('聚合面板') }),
           expect.objectContaining({ value: 'openai', description: expect.stringContaining('OpenAI 兼容接口') }),
-          expect.objectContaining({ value: 'codex', description: expect.stringContaining('OAuth') }),
           expect.objectContaining({ value: 'claude', description: expect.stringContaining('Claude') }),
         ]),
       );

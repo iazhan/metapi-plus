@@ -5,11 +5,8 @@ import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
-  extractResponsesTerminalResponseId,
   isResponsesPreviousResponseNotFoundError,
-  shouldInferResponsesPreviousResponseId,
   stripResponsesPreviousResponseId,
-  withResponsesPreviousResponseId,
 } from '../../transformers/openai/responses/continuation.js';
 import {
   buildUpstreamEndpointRequest,
@@ -32,29 +29,14 @@ import {
   resolveResponsesBodyInputFiles,
 } from '../../services/proxyInputFileResolver.js';
 import {
-  buildOauthProviderHeaders,
-} from '../../services/oauth/service.js';
-import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
-import {
   collectResponsesFinalPayloadFromSse,
   collectResponsesFinalPayloadFromSseText,
   createSingleChunkStreamReader,
   looksLikeResponsesSseText,
 } from '../runtime/responsesSseFinal.js';
-import {
-  createGeminiCliStreamReader,
-  unwrapGeminiCliPayload,
-} from '../../transformers/gemini/generate-content/cliBridge.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
-import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
-import {
-  buildCodexSessionResponseStoreKey,
-  clearCodexSessionResponseId,
-  getCodexSessionResponseId,
-  setCodexSessionResponseId,
-} from '../runtime/codexSessionResponseStore.js';
 import {
   summarizeConversationFileInputsInOpenAiBody,
   summarizeConversationFileInputsInResponsesBody,
@@ -82,7 +64,6 @@ import {
   getSurfaceStickyPreferredChannelId,
   recordSurfaceSuccess,
   selectSurfaceChannelForAttempt,
-  trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
@@ -118,31 +99,10 @@ function getErrorCompatibilityNotes(error: unknown): BuiltEndpointRequest['compa
     : null;
 }
 
-function getCodexSessionHeaderValue(headers: Record<string, string>): string {
-  const normalizedEntries = Object.entries(headers).map(([rawKey, rawValue]) => [
-    rawKey.trim().toLowerCase(),
-    String(rawValue || '').trim(),
-  ] as const);
-  for (const preferredKey of ['session_id', 'session-id', 'conversation_id', 'conversation-id']) {
-    const match = normalizedEntries.find(([normalizedKey, normalizedValue]) => (
-      normalizedKey === preferredKey && normalizedValue
-    ));
-    if (match) {
-      return match[1];
-    }
-  }
-  return '';
-}
 function isResponsesWebsocketTransportRequest(headers: Record<string, unknown>): boolean {
   return Object.entries(headers)
     .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
       && String(rawValue).trim() === '1');
-}
-
-function rememberCodexSessionResponseId(sessionId: string, payload: unknown): void {
-  const responseId = extractResponsesTerminalResponseId(payload);
-  if (!responseId) return;
-  setCodexSessionResponseId(sessionId, responseId);
 }
 
 function normalizeIncludeList(value: unknown): string[] {
@@ -245,19 +205,6 @@ function finalizeRetryAsExecutionFailure(message: string) {
       },
     },
   };
-}
-
-function shouldRefreshOauthResponsesRequest(input: {
-  oauthProvider?: string;
-  status: number;
-  response: { headers: { get(name: string): string | null } };
-  rawErrText: string;
-}): boolean {
-  if (input.status === 401) return true;
-  if (input.status !== 403 || input.oauthProvider !== 'codex') return false;
-  const authenticate = input.response.headers.get('www-authenticate') || '';
-  const combined = `${authenticate}\n${input.rawErrText || ''}`;
-  return /\b(invalid_token|expired_token|expired|invalid|unauthorized|account mismatch|authentication)\b/i.test(combined);
 }
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
@@ -410,22 +357,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
       });
 
       const modelName = selected.actualModel || requestedModel;
-      const oauth = getOauthInfoFromAccount(selected.account);
-      const isCodexSite = String(selected.site.platform || '').trim().toLowerCase() === 'codex';
-      const codexSessionId = isCodexSite
-        ? getCodexSessionHeaderValue(request.headers as Record<string, string>)
-        : '';
-      const codexSessionStoreKey = (
-        isCodexSite
-        && codexSessionId
-      )
-        ? buildCodexSessionResponseStoreKey({
-          sessionId: codexSessionId,
-          siteId: selected.site.id,
-          accountId: selected.account.id,
-          channelId: selected.channel.id,
-        })
-        : '';
       const owner = getProxyResourceOwner(request);
       let normalizedResponsesBody: Record<string, unknown> = {
         ...requestEnvelope.parsed.normalizedBody,
@@ -438,7 +369,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           requestedModel,
           actualModel: modelName,
           sitePlatform: selected.site.platform,
-          accountType: oauth?.planType,
+          accountType: undefined,
         },
         rules: (config as any).openAiServiceTierRules,
       });
@@ -472,12 +403,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
       const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
         || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
-      const buildProviderHeaders = () => (
-        buildOauthProviderHeaders({
-          account: selected.account,
-          downstreamHeaders: request.headers as Record<string, unknown>,
-        })
-      );
       const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
         const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
           ? await resolveUpstreamEndpointCandidates(
@@ -540,8 +465,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
             downstreamFormat: 'responses',
             stickySessionKey,
             stickyPreferredChannelId,
-            oauthProvider: oauth?.provider || null,
-            isCodexSite,
             requiresNativeResponsesFileUrl,
             isCompactRequest,
           },
@@ -552,36 +475,18 @@ export async function handleOpenAiResponsesSurfaceRequest(
         });
         const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
           const upstreamStream = isStream || (forceResponsesUpstreamStream && endpoint === 'responses');
-          const responsesOriginalBody = (
-            endpoint === 'responses'
-            && isCodexSite
-            && codexSessionStoreKey
-            && shouldInferResponsesPreviousResponseId(
-              normalizedResponsesBody,
-              getCodexSessionResponseId(codexSessionStoreKey),
-            )
-          )
-            ? withResponsesPreviousResponseId(
-              normalizedResponsesBody,
-              getCodexSessionResponseId(codexSessionStoreKey)!,
-            )
-            : normalizedResponsesBody;
           const endpointRequest = buildUpstreamEndpointRequest({
             endpoint,
             modelName,
             stream: upstreamStream,
             tokenValue: selected.tokenValue,
-            oauthProvider: oauth?.provider,
-            oauthProjectId: oauth?.projectId,
             sitePlatform: selected.site.platform,
             siteUrl: siteApiBaseUrl,
             openaiBody: openAiBody,
             downstreamFormat: 'responses',
-            responsesOriginalBody,
+            responsesOriginalBody: normalizedResponsesBody,
             responsesStripImageGenerationEnabled: selected.site.responsesStripImageGenerationEnabled === true,
             downstreamHeaders: request.headers as Record<string, unknown>,
-            providerHeaders: buildProviderHeaders(),
-            codexExplicitSessionId: codexSessionId || null,
           });
           const upstreamPath = (
             isCompactRequest && endpoint === 'responses'
@@ -611,24 +516,11 @@ export async function handleOpenAiResponsesSurfaceRequest(
             compatibilityNotes: endpointRequest.compatibilityNotes,
           };
         };
-        const baseDispatchRequest = createSurfaceDispatchRequest({
+        const dispatchRequest = createSurfaceDispatchRequest({
           site: selected.site,
           siteUrl: siteApiBaseUrl,
           accountExtraConfig: selected.account.extraConfig,
         });
-        const dispatchRequest = (
-          endpointRequest: BuiltEndpointRequest,
-          targetUrl?: string,
-        ) => {
-          if (!isCodexSite || !endpointRequest.path.startsWith('/responses')) {
-            return baseDispatchRequest(endpointRequest, targetUrl);
-          }
-          const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
-          return runCodexHttpSessionTask(
-            codexSessionStoreKey || sessionId,
-            () => baseDispatchRequest(endpointRequest, targetUrl),
-          );
-        };
         const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
           isStream: isStream || forceResponsesUpstreamStream,
           requiresNativeResponsesFileUrl,
@@ -636,32 +528,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
           dispatchRequest,
         });
         const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
-          if (oauth && shouldRefreshOauthResponsesRequest({
-            oauthProvider: oauth.provider,
-            status: ctx.response.status,
-            response: ctx.response,
-            rawErrText: ctx.rawErrText || '',
-          })) {
-            const recovered = await trySurfaceOauthRefreshRecovery({
-              ctx,
-              selected,
-              siteUrl: siteApiBaseUrl,
-              buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-              dispatchRequest,
-            });
-            if (recovered?.upstream?.ok) {
-              return recovered;
-            }
-          }
           if (
             ctx.request.endpoint === 'responses'
             && isResponsesPreviousResponseNotFoundError({
               rawErrText: ctx.rawErrText,
             })
           ) {
-            if (codexSessionStoreKey) {
-              clearCodexSessionResponseId(codexSessionStoreKey);
-            }
             const previousResponseRecovery = stripResponsesPreviousResponseId(ctx.request.body);
             if (previousResponseRecovery.removed) {
               const recoveredRequest = {
@@ -711,7 +583,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               if (recoveredUpstreamStream) {
                 recoveredBody.stream = true;
               }
-              if (normalizedSitePlatform === 'codex' || normalizedSitePlatform === 'sub2api') {
+              if (normalizedSitePlatform === 'sub2api') {
                 recoveredBody.store = false;
               }
             }
@@ -901,7 +773,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
               modelName,
               parsedUsage,
               upstreamUsagePresent,
-              upstreamHeaders: upstream.headers,
               requestStartedAtMs: startTime,
               isStream: true,
               firstByteLatencyMs,
@@ -960,9 +831,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
               if (payload && typeof payload === 'object') {
                 upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
-                if (codexSessionStoreKey) {
-                  rememberCodexSessionResponseId(codexSessionStoreKey, payload);
-                }
               }
             },
             writeLines,
@@ -1024,13 +892,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
             } catch {
               upstreamData = rawText;
             }
-            if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
-              upstreamData = unwrapGeminiCliPayload(upstreamData);
-            }
-            if (codexSessionStoreKey) {
-              rememberCodexSessionResponseId(codexSessionStoreKey, upstreamData);
-            }
-
             parsedUsage = parseProxyUsage(upstreamData);
             upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(upstreamData);
             const latency = Date.now() - startTime;
@@ -1137,9 +998,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   `event: ${terminalEventType}\ndata: ${JSON.stringify({ type: terminalEventType, response: collectedPayload })}\n\n`,
                   'data: [DONE]\n\n',
                 ]);
-                if (codexSessionStoreKey) {
-                  rememberCodexSessionResponseId(codexSessionStoreKey, collectedPayload);
-                }
                 reply.raw.end();
                 const latency = Date.now() - startTime;
                 await finalizeStreamSuccess(
@@ -1199,9 +1057,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           }
 
           const upstreamReader = replayReader ?? getRuntimeResponseReader(upstream);
-          const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
-            ? createGeminiCliStreamReader(upstreamReader)
-            : upstreamReader;
+          const baseReader = upstreamReader;
           let rawText = '';
           const decoder = new TextDecoder();
           const reader = baseReader
@@ -1297,12 +1153,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
             }
           }
         }
-        if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
-          upstreamData = unwrapGeminiCliPayload(upstreamData);
-        }
-        if (codexSessionStoreKey) {
-          rememberCodexSessionResponseId(codexSessionStoreKey, upstreamData);
-        }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);
         const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
@@ -1359,7 +1209,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
             modelName,
             parsedUsage,
             upstreamUsagePresent,
-            upstreamHeaders: upstream.headers,
             requestStartedAtMs: startTime,
             isStream: false,
             firstByteLatencyMs,

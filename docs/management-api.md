@@ -80,8 +80,6 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 4. `POST /api/accounts/verify-token` 验证凭证
 5. `POST /api/accounts` 保存账号
 
-如果你要自动化的是 Codex / Claude / Gemini CLI / Antigravity 这类 provider 授权，则改看本文后面的 **OAuth 接口**，不要强行走普通账号导入。
-
 最小流程示例：
 
 ```bash
@@ -556,127 +554,6 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/accounts/1/rebind-session" \
 }
 ```
 
-## OAuth 接口
-
-如果你要自动化的是 Codex / Claude / Gemini CLI / Antigravity 这类 provider 授权，请使用下面这组接口。
-
-### 1. 获取可用 provider
-
-`GET /api/oauth/providers`
-
-示例：
-
-```bash
-curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/providers" \
-  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}"
-```
-
-示例响应：
-
-```json
-{
-  "providers": [
-    {
-      "provider": "codex",
-      "label": "Codex",
-      "platform": "codex",
-      "enabled": true,
-      "loginType": "oauth",
-      "requiresProjectId": false,
-      "supportsDirectAccountRouting": true,
-      "supportsCloudValidation": true,
-      "supportsNativeProxy": true
-    }
-  ]
-}
-```
-
-### 2. 启动 OAuth 授权
-
-`POST /api/oauth/providers/:provider/start`
-
-请求体字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `projectId` | `string` | 否 | 某些 provider 可选传入的项目 ID，例如 Gemini CLI |
-| `proxyUrl` | `string \| null` | 否 | 本次 OAuth 流程使用的显式代理；传 `null` 可清空继承代理 |
-
-示例：
-
-```bash
-curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/providers/codex/start" \
-  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-成功响应：
-
-```json
-{
-  "provider": "codex",
-  "state": "oauth-state-123",
-  "authorizationUrl": "https://auth.example.com/authorize?...",
-  "instructions": {
-    "redirectUri": "http://localhost:1455/auth/callback",
-    "callbackPort": 1455,
-    "callbackPath": "/auth/callback",
-    "manualCallbackDelayMs": 15000
-  }
-}
-```
-
-### 3. 查询 OAuth 会话状态
-
-`GET /api/oauth/sessions/:state`
-
-示例：
-
-```bash
-curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/sessions/oauth-state-123" \
-  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}"
-```
-
-典型状态包括：
-
-- `pending`
-- `success`
-- `error`
-
-### 4. 手动回填 callback URL
-
-`POST /api/oauth/sessions/:state/manual-callback`
-
-当浏览器已经完成授权，但回调没有自动打到 Metapi 时，可以手动提交最终 callback URL。
-
-```bash
-curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/sessions/oauth-state-123/manual-callback" \
-  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "callbackUrl": "http://localhost:1455/auth/callback?code=demo&state=oauth-state-123"
-  }'
-```
-
-### 5. 列出已有 OAuth 连接
-
-`GET /api/oauth/connections`
-
-示例：
-
-```bash
-curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/connections?limit=50&offset=0" \
-  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}"
-```
-
-### 6. 重绑或删除 OAuth 连接
-
-| 接口 | 作用 |
-|------|------|
-| `POST /api/oauth/connections/:accountId/rebind` | 为已有 OAuth 账号重新发起授权 |
-| `DELETE /api/oauth/connections/:accountId` | 删除 OAuth 连接 |
-
 ## 常见失败返回
 
 ### 站点创建冲突
@@ -741,6 +618,5 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/oauth/connections?limit=50&offset=0" \
 ## 下一步
 
 - [上游接入](./upstream-integration.md) — 查看不同站点类型应该怎么填 URL、凭证和 User ID
-- [OAuth 管理](/oauth) — 查看浏览器授权、回调和重绑逻辑
 - [配置说明](./configuration.md) — 查看 `AUTH_TOKEN`、`ADMIN_IP_ALLOWLIST`、系统代理等配置项
 - [客户端接入](./client-integration.md) — 如果你要接的是 `/v1/*` 代理接口而不是后台管理接口，请看这里

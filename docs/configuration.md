@@ -14,7 +14,7 @@ Metapi 当前有三类主要配置入口：
 
 1. **管理后台「设置」** — 适合日常系统设置与运行时调整
 2. **管理后台「通知设置」与「下游密钥」** — 适合通知渠道和项目级下游 Key 管理
-3. **环境变量** — 适合首次启动、部署级参数、OAuth client 覆盖、Deploy Helper token 等当前没有 UI 的项
+3. **环境变量** — 适合首次启动、部署级参数、Deploy Helper token 等当前没有 UI 的项
 
 下表可用于快速判断：
 
@@ -24,7 +24,6 @@ Metapi 当前有三类主要配置入口：
 | 通知渠道 | 管理后台「通知设置」 | Webhook / Bark / Server酱 / Telegram / SMTP 都有 UI |
 | 下游项目级 Key | 管理后台「下游密钥」 | 不要再回到环境变量里硬塞 |
 | 首次启动令牌、端口、数据目录 | `.env` / 容器环境变量 | 这类属于部署级初始化 |
-| OAuth 客户端 ID / Secret | `.env` / 容器环境变量 | 当前没有 UI |
 | Deploy Helper token / helper 进程参数 | `.env` / helper manifest | 当前没有 UI，且属于集群侧部署参数 |
 | 少数高级部署级参数 | `.env` / 容器环境变量 | 例如日志保留、部分探测细粒度参数 |
 
@@ -134,25 +133,7 @@ Metapi 当前有三类主要配置入口：
 | `TZ` | 时区 | `Asia/Shanghai` |
 | `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
 
-### 2. OAuth 与 Provider 登录
-
-这一节只在你需要覆盖默认 OAuth client 配置时才看。
-
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `CODEX_CLIENT_ID` | 覆盖内置 Codex OAuth Client ID | 内置默认值 |
-| `CLAUDE_CLIENT_ID` | 覆盖内置 Claude OAuth Client ID | 内置默认值 |
-| `CLAUDE_CLIENT_SECRET` | 预留的 Claude OAuth Client Secret（默认留空） | 空 |
-| `GEMINI_CLI_CLIENT_ID` | 覆盖内置 Gemini CLI OAuth Client ID | 内置默认值 |
-| `GEMINI_CLI_CLIENT_SECRET` | 覆盖内置 Gemini CLI OAuth Client Secret | 内置默认值 |
-
-说明：
-
-- `Antigravity` 当前不需要额外环境变量即可启用。
-- 如果你的部署环境访问 provider 受限，优先先在 UI 里配置**系统代理**。
-- 如果 OAuth 页面运行在远程服务器上，还要考虑 SSH 隧道或手动回填 callback，详见 [OAuth 管理](./oauth.md)。
-
-### 3. K3s 更新中心与 Deploy Helper
+### 2. K3s 更新中心与 Deploy Helper
 
 这里要分清楚两层：
 
@@ -191,7 +172,7 @@ Metapi 当前有三类主要配置入口：
 
 完整接入步骤见 [K3s 更新中心（高级）](./k3s-update-center.md)。
 
-### 4. 当前没有 UI 的高级部署级参数
+### 3. 当前没有 UI 的高级部署级参数
 
 下面这些参数目前更偏部署级，仍然建议通过环境变量维护：
 
@@ -209,7 +190,7 @@ Metapi 当前有三类主要配置入口：
 - **批量测活开关本身**已经在 UI 里有了
 - 这里只剩下间隔、超时、并发这些更高级的细项还没有 UI
 
-### 5. 账号分组倍率自动刷新
+### 4. 账号分组倍率自动刷新
 
 账号分组倍率自动刷新用于后台持续更新 New API / Sub2API 账号的分组倍率快照，默认值如下：
 
@@ -229,7 +210,7 @@ Metapi 当前有三类主要配置入口：
 
 更具体的账号行为、快照保留规则和平台说明见 [上游接入 → 账号分组倍率同步](./upstream-integration.md#账号分组倍率同步)。
 
-### 6. 价格与真实成本
+### 5. 价格与真实成本
 
 1.6.0 起，模型价格不再使用账号级“单位成本”，而由独立价格域统一解析。常用入口如下：
 
@@ -271,7 +252,6 @@ Metapi 当前有三类主要配置入口：
 - 数据目录
 - 时区
 - 账号凭证加密密钥
-- OAuth client 覆盖
 - Deploy Helper token
 - helper 进程自身监听参数
 - 少数高级部署级性能 / 清理参数
@@ -388,5 +368,4 @@ Metapi 当前的配置关系可以概括为：
 - [K3s 更新中心（高级）](./k3s-update-center.md) — K3s / Helm 用户的后台升级入口
 - [客户端接入](./client-integration.md) — 对接下游应用
 - [上游接入](./upstream-integration.md) — 添加和管理上游平台
-- [OAuth 管理](./oauth.md) — 授权 Codex / Claude / Gemini CLI / Antigravity
 - [运维手册](./operations.md) — 备份、日志与健康检查

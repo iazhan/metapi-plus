@@ -84,11 +84,6 @@ vi.mock('../../services/proxyDebugTraceRuntime.js', () => ({
   parseSurfaceProxyDebugTextPayload: (raw: string) => raw,
 }));
 
-vi.mock('../../services/oauth/quota.js', () => ({
-  recordOauthQuotaHeadersSnapshot: async () => undefined,
-  recordOauthQuotaResetHint: async () => undefined,
-}));
-
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -279,37 +274,4 @@ describe('claude count_tokens proxy route', () => {
     expect(options.headers['anthropic-version']).toBe('2023-06-01');
   });
 
-  it('does not forward when claude count_tokens upstream compatibility is unavailable', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 23 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
-      account: { id: 34, username: 'codex-user@example.com' },
-      tokenName: 'default',
-      tokenValue: 'sk-codex',
-      actualModel: 'gpt-5.4',
-    });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/messages/count_tokens',
-      payload: {
-        model: 'gpt-5.4',
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'count through codex' }],
-          },
-        ],
-      },
-    });
-
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      error: {
-        message: 'No available channels for this model',
-        type: 'server_error',
-      },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });

@@ -31,10 +31,6 @@ type AccountExtraConfig = {
   platformUserId?: unknown;
   credentialMode?: unknown;
   useSystemProxy?: unknown;
-  oauth?: {
-    provider?: unknown;
-    [key: string]: unknown;
-  };
   autoRelogin?: AutoReloginConfig;
   sub2apiAuth?: Sub2ApiAuthConfig;
   sub2apiSubscription?: Sub2ApiSubscriptionConfig;
@@ -42,18 +38,8 @@ type AccountExtraConfig = {
 };
 
 type ExtraConfigInput = string | Record<string, unknown> | null | undefined;
-type OauthProviderCarrier = {
-  extraConfig?: ExtraConfigInput;
-  oauthProvider?: unknown;
-};
-type OauthProviderInput = ExtraConfigInput | OauthProviderCarrier;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isOauthProviderCarrier(value: unknown): value is OauthProviderCarrier {
-  return isRecord(value) && ('extraConfig' in value || 'oauthProvider' in value);
 }
 
 function parseExtraConfig(extraConfig?: ExtraConfigInput): AccountExtraConfig {
@@ -163,28 +149,10 @@ export function getCredentialModeFromExtraConfig(extraConfig?: ExtraConfigInput)
   return normalizeCredentialMode(parsed.credentialMode);
 }
 
-export function getOauthProviderFromExtraConfig(extraConfig?: ExtraConfigInput): string | undefined {
-  const parsed = parseExtraConfig(extraConfig);
-  return normalizeNonEmptyString(parsed.oauth?.provider);
-}
-
-function getOauthProvider(input?: OauthProviderInput): string | undefined {
-  if (!isOauthProviderCarrier(input)) {
-    return getOauthProviderFromExtraConfig(input);
-  }
-  return normalizeNonEmptyString(input.oauthProvider)
-    ?? getOauthProviderFromExtraConfig(input.extraConfig);
-}
-
-export function hasOauthProvider(input?: OauthProviderInput): boolean {
-  return !!getOauthProvider(input);
-}
-
 type DirectAccountRoutingInput = {
   accessToken?: string | null;
   apiToken?: string | null;
   extraConfig?: ExtraConfigInput;
-  oauthProvider?: string | null;
 };
 
 function hasCredentialValue(value: string | null | undefined): boolean {
@@ -193,9 +161,6 @@ function hasCredentialValue(value: string | null | undefined): boolean {
 
 export function supportsDirectAccountRoutingConnection(account: DirectAccountRoutingInput): boolean {
   const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (hasOauthProvider(account)) {
-    return hasCredentialValue(account.accessToken) || hasCredentialValue(account.apiToken);
-  }
   if (credentialMode === 'apikey') {
     return hasCredentialValue(account.apiToken);
   }
@@ -208,7 +173,6 @@ export function supportsDirectAccountRoutingConnection(account: DirectAccountRou
 
 export function requiresManagedAccountTokens(account: DirectAccountRoutingInput): boolean {
   const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (hasOauthProvider(account)) return false;
   if (credentialMode === 'apikey') return false;
   if (credentialMode === 'session') return true;
   if (hasCredentialValue(account.apiToken) && !hasCredentialValue(account.accessToken)) return false;

@@ -13,11 +13,7 @@ import type { DownstreamClientContext } from '../downstreamClientContext.js';
 import { insertProxyLog, type ProxyLogCompatibilityNotes } from '../../services/proxyLogStore.js';
 import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
-import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
-import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
-import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
-import { readRuntimeResponseText } from '../executors/types.js';
 import { selectProxyChannelForAttempt } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
@@ -44,21 +40,6 @@ type SurfaceFailureResponse = {
 type SurfaceFailureOutcome =
   | { action: 'retry' }
   | SurfaceFailureResponse;
-
-type SurfaceOauthRefreshSelectedChannel = {
-  account: {
-    id: number;
-    accessToken?: string | null;
-    extraConfig?: string | null;
-  };
-  tokenValue: string;
-};
-
-type SurfaceOauthRefreshContext<TRequest extends BuiltEndpointRequest> = {
-  request: TRequest;
-  response: Awaited<ReturnType<typeof dispatchRuntimeRequest>>;
-  rawErrText: string;
-};
 
 type SurfaceSuccessSelectedChannel = SurfaceSelectedChannel & {
   token?: { tokenGroup?: string | null } | null;
@@ -137,7 +118,7 @@ export function bindSurfaceStickyChannel(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
-    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
+    account?: { extraConfig?: string | null } | null;
   };
 }): void {
   proxyChannelCoordinator.bindStickyChannel(
@@ -163,7 +144,7 @@ export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
-    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
+    account?: { extraConfig?: string | null } | null;
   };
 }) {
   return await proxyChannelCoordinator.acquireChannelLease({
@@ -172,7 +153,6 @@ export async function acquireSurfaceChannelLease(input: {
     // the pre-sticky-session parallel behavior instead of contending globally.
     channelId: input.stickySessionKey ? input.selected.channel.id : 0,
     accountExtraConfig: input.selected.account?.extraConfig,
-    accountOauthProvider: input.selected.account?.oauthProvider,
   });
 }
 
@@ -278,63 +258,12 @@ export function createSurfaceDispatchRequest(input: {
   );
 }
 
-export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpointRequest>(input: {
-  ctx: SurfaceOauthRefreshContext<TRequest>;
-  selected: SurfaceOauthRefreshSelectedChannel;
-  siteUrl: string;
-  buildRequest: (endpoint: TRequest['endpoint']) => TRequest;
-  dispatchRequest: (
-    request: TRequest,
-    targetUrl: string,
-  ) => Promise<Awaited<ReturnType<typeof dispatchRuntimeRequest>>>;
-  captureFailureBody?: boolean;
-}): Promise<{
-  upstream: Awaited<ReturnType<typeof dispatchRuntimeRequest>>;
-  upstreamPath: string;
-  request?: TRequest;
-  targetUrl?: string;
-} | null> {
-  try {
-    const refreshed = await refreshOauthAccessTokenSingleflight(input.selected.account.id);
-    input.selected.tokenValue = refreshed.accessToken;
-    input.selected.account = {
-      ...input.selected.account,
-      accessToken: refreshed.accessToken,
-      extraConfig: refreshed.extraConfig ?? input.selected.account.extraConfig,
-    };
-
-    const refreshedRequest = input.buildRequest(input.ctx.request.endpoint);
-    const refreshedTargetUrl = buildUpstreamUrl(input.siteUrl, refreshedRequest.path);
-    const refreshedResponse = await input.dispatchRequest(refreshedRequest, refreshedTargetUrl);
-    if (refreshedResponse.ok) {
-      return {
-        upstream: refreshedResponse,
-        upstreamPath: refreshedRequest.path,
-        request: refreshedRequest,
-        targetUrl: refreshedTargetUrl,
-      };
-    }
-
-    input.ctx.request = refreshedRequest;
-    input.ctx.response = refreshedResponse;
-    if (input.captureFailureBody !== false) {
-      const failureBody = await readRuntimeResponseText(refreshedResponse).catch(() => '');
-      input.ctx.rawErrText = failureBody.trim() || 'unknown error';
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
 export async function recordSurfaceSuccess(input: {
   selected: SurfaceSuccessSelectedChannel;
   requestedModel: string;
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
   upstreamUsagePresent?: boolean;
-  upstreamHeaders?: { get(name: string): string | null } | null;
   requestStartedAtMs: number;
   isStream?: boolean | null;
   firstByteLatencyMs?: number | null;
@@ -461,15 +390,6 @@ export async function recordSurfaceSuccess(input: {
     upstreamPath: input.upstreamPath,
   });
 
-  if (input.upstreamHeaders) {
-    void recordOauthQuotaHeadersSnapshot({
-      accountId: input.selected.account.id,
-      headers: input.upstreamHeaders,
-    }).catch((error) => {
-      console.warn('[proxy/shared] failed to record oauth quota headers', error);
-    });
-  }
-
   return {
     resolvedUsage,
     estimatedCost,
@@ -573,12 +493,6 @@ export function createSurfaceFailureToolkit(input: {
         retryCount: args.retryCount,
         compatibilityNotes: args.compatibilityNotes ?? null,
       });
-      runBestEffort('record oauth quota reset hint', () => recordOauthQuotaResetHint({
-        accountId: args.selected.account.id,
-        statusCode: args.status,
-        errorText: rawErrText,
-      }));
-
       if (isTokenExpiredError({ status: args.status, message: args.errText })) {
         runBestEffort('report token expired', () => reportTokenExpired({
           accountId: args.selected.account.id,

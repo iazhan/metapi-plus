@@ -382,7 +382,7 @@ describe('Settings payload rules', () => {
         'sub2api',
         'new-api',
         'one-api',
-        'gemini-cli',
+        'gemini',
       ]));
     } finally {
       root?.unmount();

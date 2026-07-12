@@ -119,7 +119,7 @@ describe('geminiGenerateContentTransformer.inbound', () => {
     const body = geminiGenerateContentTransformer.buildProtocolRequest({
       operation: 'generate',
       surface: 'gemini-generate-content',
-      cliProfile: 'gemini_cli',
+      cliProfile: 'generic',
       requestedModel: 'gemini-2.5-pro',
       stream: false,
       messages: [{ role: 'user', parts: [{ type: 'text', text: 'hello' }] }],

@@ -20,10 +20,9 @@ export type BuiltEndpointRequest = {
     };
   } | null;
   runtime?: {
-    executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
+    executor: 'default' | 'gemini-native' | 'claude';
     modelName?: string;
     stream?: boolean;
-    oauthProjectId?: string | null;
     action?: 'generateContent' | 'streamGenerateContent' | 'countTokens';
   };
 };

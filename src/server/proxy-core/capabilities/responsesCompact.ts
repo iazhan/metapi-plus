@@ -4,7 +4,7 @@ function asTrimmedString(value: unknown): string {
 
 function shouldStripCompactResponsesStore(sitePlatform?: string): boolean {
   const normalized = asTrimmedString(sitePlatform).toLowerCase();
-  return normalized === 'codex' || normalized === 'sub2api';
+  return normalized === 'sub2api';
 }
 
 function shouldForceCompactResponsesJsonAccept(sitePlatform?: string): boolean {
@@ -17,7 +17,7 @@ export function shouldForceResponsesUpstreamStream(input: {
 }): boolean {
   if (input.isCompactRequest) return false;
   const sitePlatform = asTrimmedString(input.sitePlatform).toLowerCase();
-  return sitePlatform === 'codex' || sitePlatform === 'sub2api';
+  return sitePlatform === 'sub2api';
 }
 
 export function sanitizeCompactResponsesRequestBody(

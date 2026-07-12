@@ -123,23 +123,6 @@ export function resolveConversationFileEndpointCapability(input: {
   const platform = asTrimmedString(input.sitePlatform).toLowerCase();
   const endpoint = input.endpoint;
 
-  if (platform === 'codex') {
-    if (endpoint === 'responses') {
-      return {
-        image: 'native',
-        audio: 'native',
-        document: 'native',
-        preservesRemoteDocumentUrl: true,
-      };
-    }
-    return {
-      image: 'unsupported',
-      audio: 'unsupported',
-      document: 'unsupported',
-      preservesRemoteDocumentUrl: false,
-    };
-  }
-
   if (platform === 'claude') {
     if (endpoint === 'messages') {
       return {
@@ -147,23 +130,6 @@ export function resolveConversationFileEndpointCapability(input: {
         audio: 'unsupported',
         document: 'native',
         preservesRemoteDocumentUrl: true,
-      };
-    }
-    return {
-      image: 'unsupported',
-      audio: 'unsupported',
-      document: 'unsupported',
-      preservesRemoteDocumentUrl: false,
-    };
-  }
-
-  if (platform === 'gemini-cli' || platform === 'antigravity') {
-    if (endpoint === 'chat') {
-      return {
-        image: 'native',
-        audio: 'native',
-        document: 'inline_only',
-        preservesRemoteDocumentUrl: false,
       };
     }
     return {

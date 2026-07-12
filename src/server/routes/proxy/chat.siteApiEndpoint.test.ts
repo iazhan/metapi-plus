@@ -127,10 +127,6 @@ describe('chat proxy site api endpoint rotation', () => {
     await db.delete(schema.sites).run();
 
     fetchModelPricingCatalogMock.mockResolvedValue(null);
-    (config as any).codexHeaderDefaults = {
-      userAgent: '',
-      betaFeatures: '',
-    };
     (config as any).payloadRules = {
       default: [],
       defaultRaw: [],

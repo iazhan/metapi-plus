@@ -226,26 +226,6 @@ describe('detectDownstreamClientContext', () => {
     });
   });
 
-  it('recognizes Gemini CLI internal routes as a first-class downstream client kind', () => {
-    expect(detectDownstreamClientContext({
-      downstreamPath: '/v1internal:generateContent',
-      body: {
-        model: 'gpt-4.1',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: 'hello' }],
-          },
-        ],
-      },
-    })).toEqual({
-      clientKind: 'gemini_cli',
-      clientAppId: 'gemini_cli',
-      clientAppName: 'Gemini CLI',
-      clientConfidence: 'exact',
-    });
-  });
-
   it('recognizes app fingerprints alongside a generic protocol family', () => {
     expect(detectDownstreamClientContext({
       downstreamPath: '/v1/chat/completions',

@@ -69,11 +69,10 @@
 - 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
 - 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA
 - 官方预设：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope
-- OAuth 连接：Codex、Claude、Gemini CLI、Antigravity
 
 AnyRouter 这类 New API 搭建站点请选择 `new-api`，旧配置中的 `anyrouter` 会自动兼容映射到 `new-api`。
 
-详细接法见 [上游接入](./docs/upstream-integration.md) 与 [OAuth 管理](./docs/oauth.md)。
+详细接法见 [上游接入](./docs/upstream-integration.md)。
 
 | 痛点                                  | Metapi 怎么解决                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------- |
@@ -83,6 +82,16 @@ AnyRouter 这类 New API 搭建站点请选择 `new-api`，旧配置中的 `anyr
 | 📊 余额分散在各处，不知道还剩多少     | **集中看板** 一目了然，余额不足自动告警                          |
 | ✅ 每天得去各站签到领额度             | **自动签到** 定时执行，奖励自动追踪                              |
 | 🤷 不知道哪个站有什么模型             | **自动模型发现**，上游新增模型零配置出现在你的模型列表里         |
+
+---
+
+## 2.0.0 破坏性升级
+
+2.0.0 完全移除了 OAuth 登录账号反代。升级时会永久删除 OAuth 登录账号、refresh token、配额、OAuth 路由池，以及 ChatGPT Codex、Gemini CLI、Antigravity 的专用宿主站点；Claude/Anthropic-compatible、OpenAI-compatible 和 Gemini API Key 站点保留，非官方 `platform = codex` API Key 站点会迁移为 `openai`。
+
+- SQLite 文件库会在首次执行迁移前，在数据库同目录创建 `*.pre-oauth-removal-YYYYMMDD-HHmmss.bak`。
+- MySQL/Postgres 不会由应用自动创建整库备份，升级前必须由运维完成可恢复备份。
+- 回退必须同时恢复旧版本程序和迁移前数据库；只回退程序无法恢复已删除的凭据和结构。
 
 ---
 

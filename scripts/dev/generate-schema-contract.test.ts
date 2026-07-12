@@ -75,7 +75,16 @@ describe('schema contract generator baseline', () => {
     expect(mocks.writeDialectArtifactFiles).toHaveBeenCalledWith(
       workingContract,
       committedContract,
-      { allowedColumnRemovals: ['accounts.unit_cost'] },
+      {
+        allowedColumnRemovals: [
+          'accounts.unit_cost',
+          'accounts.oauth_provider',
+          'accounts.oauth_account_key',
+          'accounts.oauth_project_id',
+          'route_channels.oauth_route_unit_id',
+        ],
+        allowedTableRemovals: ['oauth_route_unit_members', 'oauth_route_units'],
+      },
     );
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       'git',
@@ -101,7 +110,16 @@ describe('schema contract generator baseline', () => {
     expect(mocks.writeDialectArtifactFiles).toHaveBeenCalledWith(
       workingContract,
       committedContract,
-      { allowedColumnRemovals: ['accounts.unit_cost'] },
+      {
+        allowedColumnRemovals: [
+          'accounts.unit_cost',
+          'accounts.oauth_provider',
+          'accounts.oauth_account_key',
+          'accounts.oauth_project_id',
+          'route_channels.oauth_route_unit_id',
+        ],
+        allowedTableRemovals: ['oauth_route_unit_members', 'oauth_route_units'],
+      },
     );
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       'git',

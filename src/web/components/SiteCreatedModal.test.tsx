@@ -83,12 +83,12 @@ describe('SiteCreatedModal', () => {
     expect(onChoice).toHaveBeenCalledWith('session');
   });
 
-  it('uses the supplied session label for OAuth-style session actions', () => {
+  it('uses the supplied label for generic session actions', () => {
     const root = create(
       <SiteCreatedModal
         siteName="Codex Site"
         initialSegment="session"
-        sessionLabel="添加 OAuth 连接"
+        sessionLabel="添加账号（用户名密码登录）"
         onChoice={() => {}}
         onClose={() => {}}
       />,
@@ -100,6 +100,7 @@ describe('SiteCreatedModal', () => {
       && node.props['aria-label'] !== '关闭弹框'
     ));
 
-    expect(buttons.some((button) => collectText(button) === '添加 OAuth 连接')).toBe(true);
+    expect(buttons.some((button) => collectText(button) === '添加账号（用户名密码登录）')).toBe(true);
+    expect(buttons.some((button) => collectText(button).includes('OAuth'))).toBe(false);
   });
 });

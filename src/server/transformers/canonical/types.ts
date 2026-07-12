@@ -14,8 +14,7 @@ export type CanonicalSurface =
 export type CanonicalCliProfile =
   | 'generic'
   | 'codex'
-  | 'claude_code'
-  | 'gemini_cli';
+  | 'claude_code';
 
 export type CanonicalMessageRole =
   | 'system'

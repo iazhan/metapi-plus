@@ -81,7 +81,7 @@ describe('db proxy query wrapper', () => {
     });
   });
 
-  it('normalizes postgres inserts with returning ids for oauth route units', async () => {
+  it('normalizes postgres inserts with returning ids', async () => {
     const query = vi.fn(async () => ({
       rows: [{ id: 7 }],
       rowCount: 1,
@@ -90,14 +90,14 @@ describe('db proxy query wrapper', () => {
 
     const result = await testUtils.pgProxyQuery(
       executor as any,
-      'insert into "oauth_route_units" ("site_id", "provider", "name") values ($1, $2, $3)',
-      [1, 'codex', 'pool-a'],
+      'insert into "sites" ("name") values ($1)',
+      ['demo site'],
       'execute',
     );
 
     expect(query).toHaveBeenCalledWith({
-      text: 'insert into "oauth_route_units" ("site_id", "provider", "name") values ($1, $2, $3) returning id',
-      values: [1, 'codex', 'pool-a'],
+      text: 'insert into "sites" ("name") values ($1) returning id',
+      values: ['demo site'],
     });
     expect(result).toEqual({
       rows: [{ changes: 1, lastInsertRowid: 7 }],

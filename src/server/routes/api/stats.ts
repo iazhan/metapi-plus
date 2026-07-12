@@ -154,7 +154,6 @@ type ProxyLogClientOption = {
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: "Codex",
   claude_code: "Claude Code",
-  gemini_cli: "Gemini CLI",
   generic: "通用",
 };
 

@@ -18,15 +18,9 @@ export const PLATFORM_ALIASES = Object.assign(Object.create(null), {
   veloera: 'veloera',
   sub2api: 'sub2api',
   openai: 'openai',
-  codex: 'codex',
-  'chatgpt-codex': 'codex',
-  'chatgpt codex': 'codex',
   anthropic: 'claude',
   claude: 'claude',
   gemini: 'gemini',
-  'gemini-cli': 'gemini-cli',
-  antigravity: 'antigravity',
-  'anti-gravity': 'antigravity',
   google: 'gemini',
   cliproxyapi: 'cliproxyapi',
   cpa: 'cliproxyapi',
@@ -73,7 +67,6 @@ export function detectPlatformByUrlHint(url) {
   const path = parsed?.pathname?.trim().toLowerCase() || '';
 
   if (host === 'api.openai.com') return 'openai';
-  if (host === 'chatgpt.com' && path.startsWith('/backend-api/codex')) return 'codex';
   if (host === 'api.anthropic.com' || (host === 'anthropic.com' && path.startsWith('/v1'))) return 'claude';
   if (
     host === 'generativelanguage.googleapis.com'
@@ -82,7 +75,6 @@ export function detectPlatformByUrlHint(url) {
   ) {
     return 'gemini';
   }
-  if (host === 'cloudcode-pa.googleapis.com') return 'gemini-cli';
   if ((host === '127.0.0.1' || host === 'localhost') && port === '8317') return 'cliproxyapi';
   if (host.includes('anyrouter')) return 'new-api';
   if (host.includes('donehub') || host.includes('done-hub')) return 'done-hub';

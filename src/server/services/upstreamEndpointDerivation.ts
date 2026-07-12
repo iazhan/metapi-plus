@@ -13,7 +13,6 @@ import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 
 export type EndpointPreference = DownstreamFormat | 'responses';
 export type EndpointDerivationHints = {
-  oauthProvider?: string | null;
   requestKind?: 'default' | 'responses-compact' | 'claude-count-tokens';
   requiresNativeResponsesFileUrl?: boolean;
 };
@@ -118,26 +117,17 @@ function preferredEndpointOrder(
   hints?: EndpointDerivationHints,
 ): UpstreamEndpoint[] {
   const platform = normalizePlatformName(sitePlatform);
-  const oauthProvider = asTrimmedString(hints?.oauthProvider).toLowerCase();
 
   if (hints?.requestKind === 'responses-compact') {
     return ['responses'];
   }
 
-  if (platform === 'codex') {
-    return ['responses'];
-  }
-
-  if (platform === 'gemini' || platform === 'gemini-cli') {
+  if (platform === 'gemini') {
     return ['chat'];
   }
 
   if (platform === 'openai') {
     return ['responses', 'chat', 'messages'];
-  }
-
-  if (platform === 'antigravity') {
-    return ['messages'];
   }
 
   if (platform === 'claude') {
@@ -159,12 +149,7 @@ function preferredEndpointOrder(
     return ['messages', 'chat', 'responses'];
   }
 
-  const base = ['chat', 'messages', 'responses'] as UpstreamEndpoint[];
-  if (oauthProvider === 'codex' && base.includes('responses')) {
-    return ['responses', ...base.filter((endpoint) => endpoint !== 'responses')];
-  }
-
-  return base;
+  return ['chat', 'messages', 'responses'] as UpstreamEndpoint[];
 }
 
 export async function resolveUpstreamEndpointCandidates(
@@ -234,8 +219,6 @@ export async function resolveUpstreamEndpointCandidates(
     ? (() => {
       if (sitePlatform === 'claude') return ['messages'] as UpstreamEndpoint[];
       if (sitePlatform === 'gemini') return ['responses', 'chat'] as UpstreamEndpoint[];
-      if (sitePlatform === 'gemini-cli') return ['chat'] as UpstreamEndpoint[];
-      if (sitePlatform === 'antigravity') return ['messages'] as UpstreamEndpoint[];
       if (isCodingPlanOpenAiEndpoint) return ['chat', 'responses', 'messages'] as UpstreamEndpoint[];
       if (sitePlatform === 'openai') return ['responses', 'chat', 'messages'] as UpstreamEndpoint[];
       return rankConversationFileEndpoints({
@@ -267,8 +250,6 @@ export async function resolveUpstreamEndpointCandidates(
     && preferMessagesForClaudeModel
     && sitePlatform !== 'openai'
     && sitePlatform !== 'gemini'
-    && sitePlatform !== 'antigravity'
-    && sitePlatform !== 'gemini-cli'
   );
 
   try {

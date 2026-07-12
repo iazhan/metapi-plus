@@ -6,50 +6,28 @@
 
 <a id="account-auth-guide"></a>
 
-## 账号认证方式与兼容性（Session / API Key / OAuth）
+## 账号认证方式与兼容性（Session / API Key）
 
-### Q: Access Token、Cookie、API Key、OAuth 应该选哪个？
+### Q: Access Token、Cookie、API Key 应该选哪个？
 
-**A:** 现在最稳妥的判断方式不是只看“有没有 Token”，而是先看你接的是哪一类上游：
+**A:** 先按上游类型选择：
 
 | 方式 | 特点 | 适用场景 |
 |------|------|----------|
-| **Access Token（系统访问令牌）** | 稳定、适合长期使用、适合多账号 | 标准 New API / One API / OneHub / DoneHub / Veloera 等面板站 |
-| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、部分 New API 变体站点、特殊兜底场景 |
-| **API Key** | 最简单，适合代理调用 | OpenAI / Claude / Gemini 兼容入口、CPA、各类官方预设 |
-| **OAuth** | 不手填普通凭证，走浏览器授权 | Codex、Claude、Gemini CLI、Antigravity |
+| **Access Token（系统访问令牌）** | 稳定、适合长期使用和多账号 | New API / One API / OneHub / DoneHub / Veloera 等面板站 |
+| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、部分面板变体站点、特殊兜底场景 |
+| **API Key** | 配置最简单，直接用于代理调用 | OpenAI / Claude / Gemini 兼容入口、CPA、官方预设 |
 
-结论：
-
-1. 面板型站点优先 **Access Token**
-2. Access Token 拿不到时再考虑 **Cookie**
-3. 兼容接口、CPA、官方预设优先 **API Key**
-4. Provider 原生授权优先 **OAuth**
+面板型站点优先使用 Access Token，拿不到时再考虑 Cookie；兼容接口、CPA 和官方预设使用 API Key。Claude 官方 `api.anthropic.com` 和其他 Anthropic-compatible 站点均按 API Key 方式添加。
 
 ### Q: 在 Metapi 里怎么切换认证方式？
 
-**A:** 入口已经分成两条：
-
-1. **普通站点**：在「账号管理 / API Key 管理」里选择 Session 或 API Key
-2. **OAuth provider**：在左侧「OAuth 管理」里完成授权
-
-如果你不确定该去哪一页，先看 [上游接入](/upstream-integration)。
+**A:** 在「账号管理 / API Key 管理」中按站点类型选择 Session 或 API Key。具体平台选择见 [上游接入](/upstream-integration)。
 
 ### Q: 以 NewAPI 为例，Access Token 在哪里生成？
 
 **A:** 通常路径是：**控制台 → 个人设置 → 安全设置 → 系统访问令牌**。  
 如果你确实需要 Cookie 兜底，可在浏览器 `F12 → Application → Cookie` 获取对应登录态。
-
-### Q: 什么情况下应该直接走 OAuth？
-
-**A:** 当你接的不是一个普通面板站，而是 provider 自己的账号授权时：
-
-- Codex
-- Claude
-- Gemini CLI
-- Antigravity
-
-这时不要再把它当成“账号管理里的一条普通 Session”去处理，直接看 [OAuth 管理](/oauth)。
 
 ### Q: AnyRouter 这类 New API 变体站点应该怎么接？
 
@@ -61,7 +39,7 @@
 
 ### Q: CPA / CLIProxyAPI 应该怎么接？
 
-**A:** 这类站点现在走 `cliproxyapi` 平台类型，推荐直接加 API Key，不建议把它当成可签到、可登录的面板站。详细步骤见 [上游接入](/upstream-integration)。
+**A:** 这类站点走 `cliproxyapi` 平台类型，推荐直接添加 API Key，不要把它当成可签到、可登录的面板站。详细步骤见 [上游接入](/upstream-integration)。
 
 ### Q: Sub2API 站点怎么处理？
 

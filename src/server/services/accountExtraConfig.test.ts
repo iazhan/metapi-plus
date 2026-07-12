@@ -151,47 +151,6 @@ describe('accountExtraConfig', () => {
     })).toBe(false);
   });
 
-  it('treats oauth and session connections as non-managed-token direct routes only when intended', () => {
-    expect(supportsDirectAccountRoutingConnection({
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
-    })).toBe(true);
-    expect(requiresManagedAccountTokens({
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
-    })).toBe(false);
-    expect(supportsDirectAccountRoutingConnection({
-      accessToken: 'session-token',
-      apiToken: 'sk-default',
-      extraConfig: JSON.stringify({ credentialMode: 'session' }),
-    })).toBe(false);
-    expect(requiresManagedAccountTokens({
-      accessToken: 'session-token',
-      apiToken: 'sk-default',
-      extraConfig: JSON.stringify({ credentialMode: 'session' }),
-    })).toBe(true);
-  });
-
-  it('recognizes structured oauth provider columns even when extraConfig omits oauth.provider', () => {
-    const structuredOauthAccount = {
-      oauthProvider: 'codex',
-      accessToken: 'oauth-access-token',
-      apiToken: null,
-      extraConfig: JSON.stringify({
-        credentialMode: 'session',
-        oauth: {
-          email: 'oauth-user@example.com',
-        },
-      }),
-    };
-
-    expect(hasOauthProvider(structuredOauthAccount)).toBe(true);
-    expect(supportsDirectAccountRoutingConnection(structuredOauthAccount)).toBe(true);
-    expect(requiresManagedAccountTokens(structuredOauthAccount)).toBe(false);
-  });
-
   it('parses stored sub2api subscription summary from extra config', () => {
     const extraConfig = mergeAccountExtraConfig(null, {
       sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary({

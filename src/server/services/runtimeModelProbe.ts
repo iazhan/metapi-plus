@@ -1,5 +1,3 @@
-import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
-import { buildOauthProviderHeaders } from './oauth/service.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from './siteProxy.js';
 import { dispatchRuntimeRequest } from './runtimeDispatch.js';
 import {
@@ -110,10 +108,9 @@ export async function probeRuntimeModel(input: {
     };
   }
 
-  const oauth = getOauthInfoFromAccount(input.account);
   const tokenValue = String(
     input.tokenValue
-    || (oauth ? input.account.accessToken : input.account.apiToken)
+    || input.account.apiToken
     || '',
   ).trim();
   if (!tokenValue) {
@@ -151,10 +148,6 @@ export async function probeRuntimeModel(input: {
       };
     }
 
-    const providerHeaders = buildOauthProviderHeaders({
-      account: input.account,
-      downstreamHeaders: {},
-    });
     const openaiBody = buildProbeBody(input.modelName);
     const channelProxyUrl = resolveChannelProxyUrl(input.site, input.account.extraConfig);
     const abortController = new AbortController();
@@ -173,14 +166,11 @@ export async function probeRuntimeModel(input: {
         modelName: input.modelName,
         stream: false,
         tokenValue,
-        oauthProvider: oauth?.provider,
-        oauthProjectId: oauth?.projectId,
         sitePlatform: input.site.platform,
         siteUrl: input.site.url,
         openaiBody,
         downstreamFormat: 'openai',
         downstreamHeaders: {},
-        providerHeaders,
       });
       return {
         endpoint,

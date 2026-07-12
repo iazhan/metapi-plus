@@ -204,6 +204,13 @@
       "when": 1783795379984,
       "tag": "0029_pricing_domain",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1783834006328,
+      "tag": "0030_remove_oauth_native_connections",
+      "breakpoints": true
     }
   ]
 }

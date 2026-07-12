@@ -4,8 +4,9 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { config } from '../config.js';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OAUTH_RETIREMENT_MIGRATION_TAG } from './oauthRetirement.js';
 
 type MigrationJournalEntry = {
   tag: string;
@@ -435,6 +436,9 @@ function backfillMissingRecordedMigrations(sqlite: Database.Database, migrations
 
   let recoveredCount = 0;
   for (const migration of readRecoveryMigrations(migrationsFolder)) {
+    if (migration.tag === OAUTH_RETIREMENT_MIGRATION_TAG && !hasMigrationRecord(sqlite, migration)) {
+      break;
+    }
     if (hasMigrationRecord(sqlite, migration)) {
       if (markMigrationRecordIfMissing(sqlite, migration)) {
         recoveredCount += 1;
@@ -453,6 +457,30 @@ function backfillMissingRecordedMigrations(sqlite: Database.Database, migrations
   }
 
   return recoveredCount;
+}
+
+function buildOauthRetirementBackupPath(dbPath: string, now = new Date()): string {
+  const timestamp = now.toISOString()
+    .replace(/[-:]/g, '')
+    .replace('T', '-')
+    .slice(0, 15);
+  return join(dirname(dbPath), `${basename(dbPath)}.pre-oauth-removal-${timestamp}.bak`);
+}
+
+async function backupBeforeOauthRetirement(
+  sqlite: Database.Database,
+  dbPath: string,
+  migrationsFolder: string,
+): Promise<string | null> {
+  if (dbPath === ':memory:' || !tableExists(sqlite, 'accounts')) return null;
+  const retirementMigration = readRecoveryMigrations(migrationsFolder)
+    .find((migration) => migration.tag === OAUTH_RETIREMENT_MIGRATION_TAG);
+  if (!retirementMigration || hasMigrationRecord(sqlite, retirementMigration)) return null;
+
+  const backupPath = buildOauthRetirementBackupPath(dbPath);
+  await sqlite.backup(backupPath);
+  console.log(`[db] SQLite pre-OAuth-removal backup created: ${backupPath}`);
+  return backupPath;
 }
 
 type DuplicateColumnRecoveryResult = {
@@ -665,6 +693,7 @@ export const __migrateTestUtils = {
   deduplicateLegacySitesForUniqueIndex,
   runSqliteMigrationRecoveryLoop,
   sqliteMigrationRecoveryRetryBudget: SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET,
+  buildOauthRetirementBackupPath,
 };
 
 function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
@@ -694,7 +723,7 @@ function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsF
   return true;
 }
 
-export function runSqliteMigrations(): void {
+export async function runSqliteMigrations(): Promise<void> {
   const dbPath = resolveSqliteDbPath();
   const migrationsFolder = resolveMigrationsFolder();
   if (dbPath !== ':memory:') {
@@ -703,6 +732,12 @@ export function runSqliteMigrations(): void {
 
   const sqlite = new Database(dbPath);
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
+  try {
+    await backupBeforeOauthRetirement(sqlite, dbPath, migrationsFolder);
+  } catch (error) {
+    sqlite.close();
+    throw error;
+  }
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
   runSqliteMigrationRecoveryLoop({
@@ -721,4 +756,4 @@ export function runSqliteMigrations(): void {
   console.log('Migration complete.');
 }
 
-runSqliteMigrations();
+await runSqliteMigrations();

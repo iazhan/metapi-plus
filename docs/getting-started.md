@@ -21,6 +21,9 @@
 > - 当前不再把 `Release` 压缩包 + Node.js 运行时作为独立部署路径。
 > - 想直接运行成品，请用 Docker 或桌面版；想改代码，请走本地开发流程。
 
+> [!WARNING]
+> 从旧版本升级到 2.0.0 会永久删除 OAuth 登录账号、凭据、路由池和专用宿主站点。SQLite 会在迁移前创建 `*.pre-oauth-removal-YYYYMMDD-HHmmss.bak`；MySQL/Postgres 必须先由运维完成整库备份。回退时必须同时恢复旧程序和迁移前数据库。
+
 ## 方式一：Docker Compose 部署（推荐）
 
 ### 1. 创建项目目录
@@ -160,7 +163,7 @@ pnpm run dev
 
 ![站点管理](./screenshots/site-management.png)
 
-### 步骤 2：添加连接（账号 / API Key / OAuth）
+### 步骤 2：添加连接（账号 / API Key）
 
 这一步不要再死记“所有站点都先加账号”。现在推荐按场景分流：
 
@@ -203,17 +206,6 @@ pnpm run dev
 - `cliproxyapi`
 - 所有官方预设（Coding Plan、DeepSeek、Moonshot、MiniMax、ModelScope 等）
 
-#### 2C. Provider 原生授权：走 OAuth 管理
-
-如果你要接的是：
-
-- Codex
-- Claude provider 账号
-- Gemini CLI
-- Antigravity
-
-那就不要在这里手填普通账号，而是直接去左侧菜单 **OAuth 管理** 完成授权，详见 [OAuth 管理](/oauth)。
-
 ### 步骤 3：同步账号令牌（可选，仅面板型站点）
 
 进入 **连接管理中的账号令牌管理**：
@@ -224,7 +216,7 @@ pnpm run dev
 
   ![Token管理](./screenshots/token-management.png)
 
-如果你走的是 API Key-only 或 OAuth 流程，这一步通常不是必需的。
+如果你走的是 API Key-only 流程，这一步通常不是必需的。
 
 ### 步骤 4：路由管理
 

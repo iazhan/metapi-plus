@@ -1,8 +1,5 @@
 import { config } from '../config.js';
-import {
-  getCredentialModeFromExtraConfig,
-  hasOauthProvider,
-} from './accountExtraConfig.js';
+import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 
 type StickyEntry = {
   channelId: number;
@@ -52,10 +49,7 @@ type SessionScopedChannelInput =
   | string
   | null
   | undefined
-  | {
-    extraConfig?: string | null;
-    oauthProvider?: string | null;
-  };
+  | { extraConfig?: string | null };
 
 function shouldUnrefTimer(timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>) {
   if (typeof (timer as { unref?: () => void }).unref === 'function') {
@@ -77,8 +71,7 @@ function getSessionScopedExtraConfig(input?: SessionScopedChannelInput): string 
 }
 
 function isSessionScopedChannel(input?: SessionScopedChannelInput): boolean {
-  return getCredentialModeFromExtraConfig(getSessionScopedExtraConfig(input)) === 'session'
-    || hasOauthProvider(input);
+  return getCredentialModeFromExtraConfig(getSessionScopedExtraConfig(input)) === 'session';
 }
 
 function getStickySessionTtlMs(): number {
@@ -207,16 +200,13 @@ class ProxyChannelCoordinator {
   getChannelLoadSnapshot(input: {
     channelId: number;
     accountExtraConfig?: string | null;
-    accountOauthProvider?: string | null;
   }): ProxyChannelLoadSnapshot {
     const channelId = Math.trunc(input.channelId || 0);
     const sessionScoped = isSessionScopedChannel({
       extraConfig: input.accountExtraConfig,
-      oauthProvider: input.accountOauthProvider,
     });
     const concurrencyLimit = getChannelConcurrencyLimit({
       extraConfig: input.accountExtraConfig,
-      oauthProvider: input.accountOauthProvider,
     });
     const state = channelId > 0 ? channelRuntimeStates.get(channelId) : null;
     if (state) {
@@ -239,7 +229,6 @@ class ProxyChannelCoordinator {
   getChannelLoadSnapshots(input: Array<{
     channelId: number;
     accountExtraConfig?: string | null;
-    accountOauthProvider?: string | null;
   }>): Map<number, ProxyChannelLoadSnapshot> {
     const snapshots = new Map<number, ProxyChannelLoadSnapshot>();
     for (const item of input) {
@@ -252,7 +241,6 @@ class ProxyChannelCoordinator {
   async acquireChannelLease(input: {
     channelId: number;
     accountExtraConfig?: string | null;
-    accountOauthProvider?: string | null;
   }): Promise<AcquireProxyChannelLeaseResult> {
     const channelId = Math.trunc(input.channelId || 0);
     if (channelId <= 0) {
@@ -264,7 +252,6 @@ class ProxyChannelCoordinator {
 
     const concurrencyLimit = getChannelConcurrencyLimit({
       extraConfig: input.accountExtraConfig,
-      oauthProvider: input.accountOauthProvider,
     });
     if (concurrencyLimit <= 0) {
       return {

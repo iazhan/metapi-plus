@@ -9,7 +9,6 @@ const SESSION_FIRST_PLATFORMS = new Set([
   'one-hub',
   'done-hub',
   'sub2api',
-  'codex',
 ]);
 
 const API_KEY_FIRST_PLATFORMS = new Set([

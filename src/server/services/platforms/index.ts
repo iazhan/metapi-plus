@@ -6,11 +6,8 @@ import { OneHubAdapter } from './oneHub.js';
 import { DoneHubAdapter } from './doneHub.js';
 import { Sub2ApiAdapter } from './sub2api.js';
 import { OpenAiAdapter } from './openai.js';
-import { CodexAdapter } from './codex.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
-import { GeminiCliAdapter } from './geminiCli.js';
-import { AntigravityAdapter } from './antigravity.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
 import { detectPlatformByTitle } from './titleHint.js';
 import { detectPlatformByUrlHint, normalizePlatformAlias } from '../../../shared/platformIdentity.js';
@@ -18,11 +15,8 @@ import { detectPlatformByUrlHint, normalizePlatformAlias } from '../../../shared
 const adapters: PlatformAdapter[] = [
   // Specific forks before generic adapters for better auto-detection.
   new OpenAiAdapter(),
-  new CodexAdapter(),
   new ClaudeAdapter(),
   new GeminiAdapter(),
-  new GeminiCliAdapter(),
-  new AntigravityAdapter(),
   new CliProxyApiAdapter(),
   new DoneHubAdapter(),
   new OneHubAdapter(),

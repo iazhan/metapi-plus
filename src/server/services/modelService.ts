@@ -11,7 +11,6 @@ import {
 } from './accountTokenService.js';
 import {
   getCredentialModeFromExtraConfig,
-  mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   requiresManagedAccountTokens,
   resolvePlatformUserId,
@@ -23,17 +22,7 @@ import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { withAccountProxyOverride } from './siteProxy.js';
-import { isCodexPlatform } from './oauth/codexAccount.js';
-import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
-import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
-import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
-import {
-  discoverAntigravityModelsFromCloud,
-  discoverClaudeModelsFromCloud,
-  discoverCodexModelsFromCloud,
-  validateGeminiCliOauthConnection,
-} from './platformDiscoveryRegistry.js';
 import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
 import {
@@ -44,15 +33,6 @@ import {
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
-const GEMINI_CLI_STATIC_MODELS = [
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-3-pro-preview',
-  'gemini-3.1-pro-preview',
-  'gemini-3-flash-preview',
-  'gemini-3.1-flash-lite-preview',
-];
 let inFlightRefreshModelsAndRebuildRoutes: Promise<{
   refresh: ModelRefreshResult[];
   rebuild: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>>;
@@ -124,34 +104,6 @@ export type ModelRefreshResult =
   | ModelRefreshSkippedResult
   | ModelRefreshFailureResult
   | ModelRefreshSuccessResult;
-
-type ModelDiscoveryAccountRow = typeof schema.accounts.$inferSelect;
-const REFRESHED_OAUTH_ACCOUNT = Symbol('refreshedOauthAccount');
-
-function throwWithRefreshedOauthAccount(error: unknown, account: ModelDiscoveryAccountRow): never {
-  if (error && typeof error === 'object') {
-    Object.defineProperty(error, REFRESHED_OAUTH_ACCOUNT, {
-      value: account,
-      configurable: true,
-    });
-    throw error;
-  }
-
-  const wrapped = new Error(String(error || 'oauth model discovery failed'));
-  Object.defineProperty(wrapped, REFRESHED_OAUTH_ACCOUNT, {
-    value: account,
-    configurable: true,
-  });
-  throw wrapped;
-}
-
-function getRefreshedOauthAccountFromError(error: unknown): ModelDiscoveryAccountRow | null {
-  if (!error || typeof error !== 'object') return null;
-  return (
-    (error as Record<symbol, ModelDiscoveryAccountRow | undefined>)[REFRESHED_OAUTH_ACCOUNT]
-    || null
-  );
-}
 
 function looksLikeHtmlJsonParseError(message: string): boolean {
   const lowered = String(message || '').trim().toLowerCase();
@@ -250,31 +202,6 @@ function normalizeModels(models: string[]): string[] {
   return normalizedModels;
 }
 
-async function updateOauthModelDiscoveryState(input: {
-  account: typeof schema.accounts.$inferSelect;
-  checkedAt: string;
-  status: 'healthy' | 'abnormal';
-  lastModelSyncError?: string;
-  lastDiscoveredModels?: string[];
-}) {
-  const oauth = getOauthInfoFromAccount(input.account);
-  if (!oauth) return input.account.extraConfig || null;
-  const extraConfig = mergeAccountExtraConfig(input.account.extraConfig, {
-    oauth: buildStoredOauthStateFromAccount(input.account, {
-      provider: oauth.provider,
-      modelDiscoveryStatus: input.status,
-      lastModelSyncAt: input.checkedAt,
-      lastModelSyncError: input.lastModelSyncError,
-      lastDiscoveredModels: input.lastDiscoveredModels ?? [],
-    }),
-  });
-  await db.update(schema.accounts).set({
-    extraConfig,
-    updatedAt: input.checkedAt,
-  }).where(eq(schema.accounts.id, input.account.id)).run();
-  return extraConfig;
-}
-
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
@@ -370,49 +297,6 @@ function buildSuccessfulRefreshResult(input: {
     discoveredApiToken: input.discoveredApiToken,
     postProbeResult: input.postProbeResult,
   };
-}
-
-function shouldRetryModelDiscoveryWithOauthRefresh(error: unknown): boolean {
-  const message = ((error as { message?: string })?.message || '').toLowerCase();
-  return message.includes('http 401')
-    || message.includes('unauthorized')
-    || message.includes('unauthenticated');
-}
-
-async function retryOauthModelDiscoveryWithRefresh<T>(input: {
-  account: ModelDiscoveryAccountRow;
-  attempt: (account: ModelDiscoveryAccountRow) => Promise<T>;
-}): Promise<{ result: T; account: ModelDiscoveryAccountRow }> {
-  let discoveryAccount = input.account;
-
-  try {
-    return {
-      result: await input.attempt(discoveryAccount),
-      account: discoveryAccount,
-    };
-  } catch (error) {
-    if (!shouldRetryModelDiscoveryWithOauthRefresh(error)) {
-      throw error;
-    }
-
-    await refreshOauthAccessTokenSingleflight(discoveryAccount.id);
-    const refreshedAccount = await db.select().from(schema.accounts)
-      .where(eq(schema.accounts.id, discoveryAccount.id))
-      .get();
-    if (!refreshedAccount) {
-      throw error;
-    }
-
-    discoveryAccount = refreshedAccount;
-    try {
-      return {
-        result: await input.attempt(discoveryAccount),
-        account: discoveryAccount,
-      };
-    } catch (retryError) {
-      throwWithRefreshedOauthAccount(retryError, discoveryAccount);
-    }
-  }
 }
 
 export type ProbeSiteModelsResult = {
@@ -649,7 +533,6 @@ export async function refreshModelsForAccount(
 
   const account = row.accounts;
   const site = row.sites;
-  const oauth = getOauthInfoFromAccount(account);
   const adapter = getAdapter(site.platform);
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
 
@@ -780,364 +663,9 @@ export async function refreshModelsForAccount(
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
   }
 
-  if (oauth?.provider === 'codex') {
-    const checkedAt = new Date().toISOString();
-    const startedAt = Date.now();
-    let discoveryAccount = account;
-    try {
-      const { result: codexModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
-        account,
-        attempt: async (candidateAccount) => withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => discoverCodexModelsFromCloud({ site, account: candidateAccount })),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `codex model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        ),
-      });
-      discoveryAccount = refreshedAccount;
-      if (codexModels.length === 0) {
-        throw new Error('未获取到可用模型');
-      }
 
-      const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
-      if (newCodexModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
-          newCodexModels.map((modelName) => ({
-            accountId,
-            modelName,
-            available: true,
-            latencyMs: Date.now() - startedAt,
-            checkedAt,
-          })),
-        ).run();
-      }
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'healthy',
-        lastDiscoveredModels: codexModels,
-      });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Codex 云端模型探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const codexPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: codexModels,
-      });
-      return buildSuccessfulRefreshResult({
-        accountId,
-        modelCount: codexModels.length,
-        modelsPreview: codexModels.slice(0, 10),
-        tokenScanned: 0,
-        discoveredByCredential: true,
-        discoveredApiToken: false,
-        postProbeResult: codexPostProbeResult,
-      });
-    } catch (err) {
-      discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
-      const rawMessage = (err as { message?: string })?.message || 'codex model discovery failed';
-      const errorCode = classifyModelDiscoveryError(rawMessage);
-      const errorMessage = `Codex 模型获取失败（${rawMessage}）`;
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'abnormal',
-        lastModelSyncError: errorMessage,
-        lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
-      });
-      await restorePreviousAvailability(errorCode);
-      return buildFailedRefreshResult({
-        accountId,
-        errorCode,
-        errorMessage,
-        tokenScanned: 0,
-        discoveredByCredential: false,
-        discoveredApiToken: false,
-      });
-    }
-  }
 
-  if (oauth?.provider === 'claude') {
-    const checkedAt = new Date().toISOString();
-    const startedAt = Date.now();
-    let discoveryAccount = account;
-    try {
-      const { result: claudeModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
-        account,
-        attempt: async (candidateAccount) => withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => discoverClaudeModelsFromCloud({ site, account: candidateAccount })),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `claude oauth model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        ),
-      });
-      discoveryAccount = refreshedAccount;
-      if (claudeModels.length === 0) {
-        throw new Error('未获取到可用模型');
-      }
-      const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
-      if (newClaudeModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
-          newClaudeModels.map((modelName) => ({
-            accountId,
-            modelName,
-            available: true,
-            latencyMs: Date.now() - startedAt,
-            checkedAt,
-          })),
-        ).run();
-      }
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'healthy',
-        lastDiscoveredModels: claudeModels,
-      });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Claude OAuth 模型探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const claudePostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: claudeModels,
-      });
-      return buildSuccessfulRefreshResult({
-        accountId,
-        modelCount: claudeModels.length,
-        modelsPreview: claudeModels.slice(0, 10),
-        tokenScanned: 0,
-        discoveredByCredential: true,
-        discoveredApiToken: false,
-        postProbeResult: claudePostProbeResult,
-      });
-    } catch (err) {
-      discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
-      const rawMessage = (err as { message?: string })?.message || 'claude oauth model discovery failed';
-      const errorCode = classifyModelDiscoveryError(rawMessage);
-      const errorMessage = `Claude OAuth 模型获取失败（${rawMessage}）`;
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'abnormal',
-        lastModelSyncError: errorMessage,
-        lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
-      });
-      await restorePreviousAvailability(errorCode);
-      return buildFailedRefreshResult({
-        accountId,
-        errorCode,
-        errorMessage,
-        tokenScanned: 0,
-        discoveredByCredential: false,
-        discoveredApiToken: false,
-      });
-    }
-  }
 
-  if (oauth?.provider === 'gemini-cli') {
-    const checkedAt = new Date().toISOString();
-    const startedAt = Date.now();
-    let discoveryAccount = account;
-    try {
-      try {
-        await withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => validateGeminiCliOauthConnection({ site, account: discoveryAccount })),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        );
-      } catch (error) {
-        if (!shouldRetryModelDiscoveryWithOauthRefresh(error)) {
-          throw error;
-        }
-        const refreshed = await refreshOauthAccessTokenSingleflight(discoveryAccount.id);
-        if (!refreshed?.extraConfig) {
-          throw error;
-        }
-        discoveryAccount = {
-          ...discoveryAccount,
-          accessToken: refreshed.accessToken,
-          extraConfig: refreshed.extraConfig,
-        };
-        await withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => validateGeminiCliOauthConnection({ site, account: discoveryAccount })),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        );
-      }
-      const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m.toLowerCase()));
-      if (newGeminiModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
-          newGeminiModels.map((modelName) => ({
-            accountId,
-            modelName,
-            available: true,
-            latencyMs: Date.now() - startedAt,
-            checkedAt,
-          })),
-        ).run();
-      }
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'healthy',
-        lastDiscoveredModels: GEMINI_CLI_STATIC_MODELS,
-      });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Gemini CLI OAuth 健康探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const geminiPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: GEMINI_CLI_STATIC_MODELS,
-      });
-      return buildSuccessfulRefreshResult({
-        accountId,
-        modelCount: GEMINI_CLI_STATIC_MODELS.length,
-        modelsPreview: GEMINI_CLI_STATIC_MODELS.slice(0, 10),
-        tokenScanned: 0,
-        discoveredByCredential: true,
-        discoveredApiToken: false,
-        postProbeResult: geminiPostProbeResult,
-      });
-    } catch (err) {
-      const rawMessage = (err as { message?: string })?.message || 'gemini cli oauth validation failed';
-      const errorCode = classifyModelDiscoveryError(rawMessage);
-      const errorMessage = `Gemini CLI 模型获取失败（${rawMessage}）`;
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'abnormal',
-        lastModelSyncError: errorMessage,
-        lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
-      });
-      await restorePreviousAvailability(errorCode);
-      return buildFailedRefreshResult({
-        accountId,
-        errorCode,
-        errorMessage,
-        tokenScanned: 0,
-        discoveredByCredential: false,
-        discoveredApiToken: false,
-      });
-    }
-  }
-
-  if (oauth?.provider === 'antigravity') {
-    const checkedAt = new Date().toISOString();
-    const startedAt = Date.now();
-    let discoveryAccount = account;
-    try {
-      const { result: antigravityModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
-        account,
-        attempt: async (candidateAccount) => withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => discoverAntigravityModelsFromCloud({ site, account: candidateAccount })),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `antigravity model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        ),
-      });
-      discoveryAccount = refreshedAccount;
-      if (antigravityModels.length === 0) {
-        throw new Error('未获取到可用模型');
-      }
-
-      const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
-      if (newAntigravityModels.length > 0) {
-        await db.insert(schema.modelAvailability).values(
-          newAntigravityModels.map((modelName) => ({
-            accountId,
-            modelName,
-            available: true,
-            latencyMs: Date.now() - startedAt,
-            checkedAt,
-          })),
-        ).run();
-      }
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'healthy',
-        lastDiscoveredModels: antigravityModels,
-      });
-      await setAccountRuntimeHealth(accountId, {
-        state: 'healthy',
-        reason: 'Antigravity OAuth 健康探测成功',
-        source: 'model-discovery',
-        checkedAt,
-      });
-      const antigravityPostProbeResult = await runPostRefreshProbeIfEnabled({
-        account: discoveryAccount,
-        site,
-        discoveredModels: antigravityModels,
-      });
-      return buildSuccessfulRefreshResult({
-        accountId,
-        modelCount: antigravityModels.length,
-        modelsPreview: antigravityModels.slice(0, 10),
-        tokenScanned: 0,
-        discoveredByCredential: true,
-        discoveredApiToken: false,
-        postProbeResult: antigravityPostProbeResult,
-      });
-    } catch (err) {
-      discoveryAccount = getRefreshedOauthAccountFromError(err) || discoveryAccount;
-      const rawMessage = (err as { message?: string })?.message || 'antigravity model discovery failed';
-      const errorCode = classifyModelDiscoveryError(rawMessage);
-      const errorMessage = `Antigravity 模型获取失败（${rawMessage}）`;
-      await updateOauthModelDiscoveryState({
-        account: discoveryAccount,
-        checkedAt,
-        status: 'abnormal',
-        lastModelSyncError: errorMessage,
-        lastDiscoveredModels: [],
-      });
-      await setAccountRuntimeHealth(account.id, {
-        state: 'unhealthy',
-        reason: errorMessage,
-        source: 'model-discovery',
-        checkedAt,
-      });
-      await restorePreviousAvailability(errorCode);
-      return buildFailedRefreshResult({
-        accountId,
-        errorCode,
-        errorMessage,
-        tokenScanned: 0,
-        discoveredByCredential: false,
-        discoveredApiToken: false,
-      });
-    }
-  }
 
   if (!adapter) {
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
@@ -1481,47 +1009,22 @@ export async function rebuildTokenRoutesFromAvailability() {
     return globalAllowedModels.has(modelName.toLowerCase().trim());
   }
 
-  const enabledOauthRouteUnits = await listEnabledOauthRouteUnitsWithMembers();
-  const routeUnitByAccountId = new Map<number, {
-    routeUnitId: number;
-    representativeAccountId: number;
-  }>();
-  for (const routeUnit of enabledOauthRouteUnits) {
-    const representativeAccountId = routeUnit.members[0]?.account.id;
-    if (!representativeAccountId) continue;
-    for (const member of routeUnit.members) {
-      routeUnitByAccountId.set(member.account.id, {
-        routeUnitId: routeUnit.unit.id,
-        representativeAccountId,
-      });
-    }
-  }
-
   const modelCandidates = new Map<string, Map<string, {
     accountId: number;
     tokenId: number | null;
-    oauthRouteUnitId: number | null;
   }>>();
   const buildCandidateKey = (input: {
     accountId: number;
     tokenId: number | null;
-    oauthRouteUnitId: number | null;
-  }) => (
-    input.oauthRouteUnitId
-      ? `route-unit:${input.oauthRouteUnitId}`
-      : `${input.accountId}:${input.tokenId ?? 'account'}`
-  );
+  }) => `${input.accountId}:${input.tokenId ?? 'account'}`;
   const buildChannelKey = (channel: typeof schema.routeChannels.$inferSelect) => (
-    channel.oauthRouteUnitId
-      ? `route-unit:${channel.oauthRouteUnitId}`
-      : `${channel.accountId}:${channel.tokenId ?? 'account'}`
+    `${channel.accountId}:${channel.tokenId ?? 'account'}`
   );
   const addModelCandidate = (
     modelNameRaw: string | null | undefined,
     accountId: number,
     tokenId: number | null,
     siteId: number,
-    oauthRouteUnitId: number | null = null,
   ) => {
     const modelName = (modelNameRaw || '').trim();
     if (!modelName) return;
@@ -1529,7 +1032,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
     if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidate = { accountId, tokenId, oauthRouteUnitId };
+    const candidate = { accountId, tokenId };
     modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
   };
 
@@ -1539,17 +1042,6 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
-    const routeUnit = routeUnitByAccountId.get(row.accounts.id);
-    if (routeUnit) {
-      addModelCandidate(
-        row.model_availability.modelName,
-        routeUnit.representativeAccountId,
-        null,
-        row.accounts.siteId,
-        routeUnit.routeUnitId,
-      );
-      continue;
-    }
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 
@@ -1588,7 +1080,6 @@ export async function rebuildTokenRoutesFromAvailability() {
         routeId: route.id,
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
-        oauthRouteUnitId: candidate.oauthRouteUnitId,
         priority: 0,
         weight: 10,
         enabled: true,

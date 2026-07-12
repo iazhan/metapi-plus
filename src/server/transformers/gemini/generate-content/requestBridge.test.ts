@@ -43,7 +43,7 @@ describe('gemini generate-content request bridge', () => {
     const body = buildCanonicalRequestToGeminiGenerateContentBody({
       operation: 'generate',
       surface: 'gemini-generate-content',
-      cliProfile: 'gemini_cli',
+      cliProfile: 'generic',
       requestedModel: 'gemini-2.5-pro',
       stream: false,
       messages: [{ role: 'user', parts: [{ type: 'text', text: 'hello' }] }],

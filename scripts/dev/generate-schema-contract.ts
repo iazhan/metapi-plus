@@ -10,7 +10,10 @@ import {
   compareStableSemVer,
   parseStableSemVer,
 } from '../../src/server/services/updateCenterVersionService.js';
-import { INTENTIONAL_SCHEMA_COLUMN_REMOVALS } from '../../src/server/db/schemaEvolution.js';
+import {
+  INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+  INTENTIONAL_SCHEMA_TABLE_REMOVALS,
+} from '../../src/server/db/schemaEvolution.js';
 
 const GENERATED_CONTRACT_GIT_PATH = 'src/server/db/generated/schemaContract.json';
 const SCHEMA_UPGRADE_BASE_REF_ENV = 'SCHEMA_UPGRADE_BASE_REF';
@@ -101,6 +104,7 @@ const previousContract = readPreviousSchemaContract();
 const contract = writeSchemaContractFile();
 writeDialectArtifactFiles(contract, previousContract, {
   allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
+  allowedTableRemovals: INTENTIONAL_SCHEMA_TABLE_REMOVALS,
 });
 const tableCount = Object.keys(contract.tables).length;
 

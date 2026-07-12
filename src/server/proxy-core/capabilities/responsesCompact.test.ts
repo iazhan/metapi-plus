@@ -7,19 +7,6 @@ import {
 } from './responsesCompact.js';
 
 describe('sanitizeCompactResponsesRequestBody', () => {
-  it('removes stream fields and store from codex compact requests', () => {
-    expect(sanitizeCompactResponsesRequestBody({
-      stream: true,
-      stream_options: { include_obfuscation: true },
-      store: false,
-      input: 'hello',
-    }, {
-      sitePlatform: 'codex',
-    })).toEqual({
-      input: 'hello',
-    });
-  });
-
   it('removes store from sub2api compact requests', () => {
     expect(sanitizeCompactResponsesRequestBody({
       stream: true,
@@ -49,11 +36,7 @@ describe('sanitizeCompactResponsesRequestBody', () => {
 });
 
 describe('shouldForceResponsesUpstreamStream', () => {
-  it('forces non-compact responses streaming for codex and sub2api', () => {
-    expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'codex',
-      isCompactRequest: false,
-    })).toBe(true);
+  it('forces non-compact responses streaming for sub2api', () => {
     expect(shouldForceResponsesUpstreamStream({
       sitePlatform: 'sub2api',
       isCompactRequest: false,
@@ -62,7 +45,7 @@ describe('shouldForceResponsesUpstreamStream', () => {
 
   it('does not force compact or unrelated platforms', () => {
     expect(shouldForceResponsesUpstreamStream({
-      sitePlatform: 'codex',
+      sitePlatform: 'sub2api',
       isCompactRequest: true,
     })).toBe(false);
     expect(shouldForceResponsesUpstreamStream({
@@ -73,12 +56,7 @@ describe('shouldForceResponsesUpstreamStream', () => {
 });
 
 describe('ensureCompactResponsesJsonAcceptHeader', () => {
-  it('adds application/json accept for codex and sub2api compact requests when missing', () => {
-    expect(ensureCompactResponsesJsonAcceptHeader({}, {
-      sitePlatform: 'codex',
-    })).toEqual({
-      accept: 'application/json',
-    });
+  it('adds application/json accept for sub2api compact requests when missing', () => {
     expect(ensureCompactResponsesJsonAcceptHeader({}, {
       sitePlatform: 'sub2api',
     })).toEqual({
@@ -90,7 +68,7 @@ describe('ensureCompactResponsesJsonAcceptHeader', () => {
     expect(ensureCompactResponsesJsonAcceptHeader({
       Accept: 'text/event-stream',
     }, {
-      sitePlatform: 'codex',
+      sitePlatform: 'sub2api',
     })).toEqual({
       accept: 'application/json',
     });

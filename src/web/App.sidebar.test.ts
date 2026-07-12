@@ -22,12 +22,12 @@ describe('App sidebar config', () => {
     expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
   });
 
-  it('adds standalone OAuth 管理 navigation entry', () => {
+  it('does not expose standalone OAuth 管理 navigation entry', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
 
-    expect(source).toContain("{ to: '/oauth', label: 'OAuth 管理'");
-    expect(source).toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
-    expect(source).toContain('<Route path="/oauth" element={<OAuthManagement />} />');
+    expect(source).not.toContain("{ to: '/oauth', label: 'OAuth 管理'");
+    expect(source).not.toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
+    expect(source).not.toContain('<Route path="/oauth" element={<OAuthManagement />} />');
   });
 
   it('does not expose the removed monitor embed page', () => {

@@ -23,10 +23,9 @@ export type ProxyRuntimeRequest = {
   headers: Record<string, string>;
   body: Record<string, unknown>;
   runtime?: {
-    executor: 'default' | 'codex' | 'gemini-native' | 'gemini-cli' | 'antigravity' | 'claude';
+    executor: 'default' | 'gemini-native' | 'claude';
     modelName?: string;
     stream?: boolean;
-    oauthProjectId?: string | null;
     action?: 'generateContent' | 'streamGenerateContent' | 'countTokens';
   };
 };

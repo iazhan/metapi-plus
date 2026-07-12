@@ -7,8 +7,7 @@ export type TransformerProtocol =
   | 'openai/chat'
   | 'anthropic/messages'
   | 'openai/responses'
-  | 'gemini/generate-content'
-  | 'gemini-cli/generate-content';
+  | 'gemini/generate-content';
 
 export type ProtocolRequestEnvelope<
   TProtocol extends TransformerProtocol = TransformerProtocol,

@@ -76,37 +76,6 @@ describe('tokenBindingPresentation', () => {
     expect(result.followOptionDescription).toContain('API Key');
   });
 
-  it('describes oauth direct binding without default-token wording', () => {
-    const result = describeTokenBinding([], 0, null, {
-      connectionMode: 'oauth',
-      accountName: 'mail@urlk.cn',
-    });
-
-    expect(result.bindingModeLabel).toBe('OAuth授权');
-    expect(result.badgeTone).toBe('warning');
-    expect(result.isFollowingAccountDefault).toBe(false);
-    expect(result.effectiveTokenName).toBe('mail@urlk.cn');
-    expect(result.helperText).toContain('OAuth 授权');
-    expect(result.helperText).not.toContain('默认令牌');
-    expect(result.followOptionLabel).toBe('固定使用：mail@urlk.cn(OAuth 授权)');
-    expect(result.followOptionDescription).toContain('OAuth 授权');
-  });
-
-  it('uses oauth fallback copy when a fixed token route is switched back to oauth direct binding', () => {
-    const result = describeTokenBinding([
-      { id: 1, name: 'default', isDefault: true },
-      { id: 2, name: 'backup', isDefault: false },
-    ], 2, null, {
-      connectionMode: 'oauth',
-      accountName: 'mail@urlk.cn',
-    });
-
-    expect(result.bindingModeLabel).toBe('固定令牌');
-    expect(result.followOptionLabel).toBe('OAuth授权');
-    expect(result.followOptionDescription).toContain('mail@urlk.cn');
-    expect(result.followOptionDescription).not.toContain('当前生效：default');
-  });
-
   it('resolves token binding connection mode from stored account fields', () => {
     expect(resolveTokenBindingConnectionMode({
       accessToken: '',
@@ -121,7 +90,7 @@ describe('tokenBindingPresentation', () => {
     expect(resolveTokenBindingConnectionMode({
       accessToken: 'oauth-access-token',
       extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
-    })).toBe('oauth');
+    })).toBe('session');
   });
 
   it('formats fixed token options with clearer labels and descriptions', () => {
