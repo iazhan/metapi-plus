@@ -30,6 +30,7 @@ import {
   type AccountWithSiteRow,
 } from '../../services/accountPlatformSyncService.js';
 import { listAccountGroupRates } from '../../services/accountGroupRateService.js';
+import { listEffectiveGroupRates } from '../../pricing/effectivePriceResolver.js';
 import {
   parseAccountTokenBatchPayload,
   parseAccountTokenCreatePayload,
@@ -790,12 +791,15 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: '账号不存在' });
     }
 
-    if (isApiKeyConnection(row.accounts)) {
-      return reply.code(400).send({ success: false, message: 'API Key 连接不支持拉取账号令牌分组' });
-    }
-
     const account = row.accounts;
     const site = row.sites;
+    if (isApiKeyConnection(account)) {
+      return {
+        success: true,
+        groups: ['default'],
+        rates: await listEffectiveGroupRates(accountId, ['default']),
+      };
+    }
     const adapter = getAdapter(site.platform);
     if (!adapter) {
       return reply.code(400).send({ success: false, message: `不支持的平台: ${site.platform}` });
@@ -815,16 +819,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         ...(groups || []).map((item) => String(item || '').trim()).filter(Boolean),
         ...rates.map((rate) => rate.groupKey),
       ]));
+      const normalizedGroups = normalized.length > 0 ? normalized : ['default'];
       return {
         success: true,
-        groups: normalized.length > 0 ? normalized : ['default'],
-        rates: rates.map((rate) => ({
-          groupKey: rate.groupKey,
-          groupName: rate.groupName,
-          description: rate.description,
-          ratio: rate.ratio,
-          lastSyncedAt: rate.lastSyncedAt,
-        })),
+        groups: normalizedGroups,
+        rates: await listEffectiveGroupRates(accountId, normalizedGroups),
       };
     } catch (error: any) {
       return reply.code(502).send({

@@ -404,6 +404,68 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('shows immutable site USD and actual CNY costs for pricing-domain snapshots', async () => {
+    apiMock.getProxyLogDetail.mockResolvedValueOnce({
+      id: 101,
+      createdAt: '2026-07-12 16:00:00',
+      modelRequested: 'gpt-4.1-mini',
+      modelActual: 'gpt-4.1-mini-2025-04-14',
+      status: 'success',
+      latencyMs: 120,
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      retryCount: 0,
+      estimatedCost: 0.0024,
+      username: 'tester',
+      siteName: 'main-site',
+      billingDetails: {
+        currency: 'CNY',
+        priceSources: { inputPerMillionUsd: 'models_dev', outputPerMillionUsd: 'models_dev' },
+        providerId: 'openai',
+        catalogModelId: 'gpt-4.1-mini',
+        upstreamModelId: 'gpt-4.1-mini-2025-04-14',
+        inputPerMillionUsd: 0.4,
+        outputPerMillionUsd: 1.6,
+        cacheReadPerMillionUsd: null,
+        cacheWritePerMillionUsd: null,
+        reasoningPerMillionUsd: null,
+        inputAudioPerMillionUsd: null,
+        outputAudioPerMillionUsd: null,
+        perCallUsd: null,
+        groupRatio: 1.2,
+        groupRatioApplied: true,
+        paidCny: 1,
+        creditedUsd: 10,
+        siteCostUsd: 0.0024,
+        actualCostCny: 0.00024,
+        pricedAt: '2026-07-12T08:00:00.000Z',
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => { row.props.onClick(); });
+      await flushMicrotasks();
+
+      const rendered = collectText(root.root);
+      expect(rendered).toContain('站点计价成本 USD $0.002400');
+      expect(rendered).toContain('真实成本 CNY ¥0.000240');
+      expect(rendered).not.toContain('模型倍率');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('shows proxy debug traces inline and edits settings through the modal', async () => {
     let root!: WebTestRenderer;
 

@@ -14,7 +14,7 @@ const accountCreatePayloadSchema = z.object({
   refreshToken: z.string().optional(),
   tokenExpiresAt: z.union([z.number(), z.string()]).optional(),
   skipModelFetch: z.boolean().optional(),
-}).passthrough();
+});
 
 const accountUpdatePayloadSchema = z.object({
   username: z.string().optional(),
@@ -22,14 +22,13 @@ const accountUpdatePayloadSchema = z.object({
   apiToken: z.union([z.string(), z.null()]).optional(),
   status: z.string().optional(),
   checkinEnabled: z.boolean().optional(),
-  unitCost: z.union([z.number(), z.null()]).optional(),
   extraConfig: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
   refreshToken: z.union([z.string(), z.null()]).optional(),
   tokenExpiresAt: z.union([z.number(), z.string(), z.null()]).optional(),
   isPinned: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
-}).passthrough();
+});
 
 const accountBatchPayloadSchema = z.object({
   ids: z.array(z.number().int().positive()).optional(),
@@ -101,9 +100,6 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'checkinEnabled') {
     return 'Invalid checkinEnabled. Expected boolean.';
-  }
-  if (firstPath === 'unitCost') {
-    return 'Invalid unitCost. Expected number or null.';
   }
   if (firstPath === 'credentialMode') {
     return 'Invalid credentialMode. Expected auto/session/apikey.';

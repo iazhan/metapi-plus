@@ -181,17 +181,18 @@ export async function completionsProxyRoute(app: FastifyInstance) {
               totalTokens: parsedUsage.totalTokens,
             },
           });
-          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
+          const { estimatedCost, actualCostCny, billingDetails } = await resolveProxyLogBilling({
             site: selected.site,
             account: selected.account,
+            tokenGroup: selected.token?.tokenGroup ?? null,
             modelName: selected.actualModel || requestedModel,
             parsedUsage,
             resolvedUsage,
           });
           await recordTokenRouterEventBestEffort('record channel success', () => (
-            tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+            tokenRouter.recordSuccess(selected.channel.id, latency, actualCostCny, upstreamModel)
           ));
-          recordDownstreamCostUsage(request, estimatedCost);
+          recordDownstreamCostUsage(request, actualCostCny);
           logProxy(
             selected,
             requestedModel,
@@ -283,18 +284,19 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             totalTokens: parsedUsage.totalTokens,
           },
         });
-        const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
+        const { estimatedCost, actualCostCny, billingDetails } = await resolveProxyLogBilling({
           site: selected.site,
           account: selected.account,
+          tokenGroup: selected.token?.tokenGroup ?? null,
           modelName: selected.actualModel || requestedModel,
           parsedUsage,
           resolvedUsage,
         });
 
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(selected.channel.id, latency, actualCostCny, upstreamModel)
         ));
-        recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCostUsage(request, actualCostCny);
         logProxy(
           selected,
           requestedModel,

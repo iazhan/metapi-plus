@@ -933,6 +933,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
     resolveProxyLogBillingMock.mockResolvedValue({
       estimatedCost: 0.42,
+      actualCostCny: 0.042,
       billingDetails: { source: 'pricing-test' },
     });
     const logSuccess = vi.fn().mockResolvedValue(undefined);
@@ -982,6 +983,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(resolveProxyLogBillingMock).toHaveBeenCalledWith({
       site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
       account: { id: 33, username: 'oauth-user' },
+      tokenGroup: null,
       modelName: 'upstream-model',
       parsedUsage: {
         promptTokens: 10,
@@ -998,8 +1000,8 @@ describe('selectSurfaceChannelForAttempt', () => {
         usageSource: 'self-log',
       },
     });
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model');
-    expect(recordDownstreamCost).toHaveBeenCalledWith(0.42);
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.042, 'upstream-model');
+    expect(recordDownstreamCost).toHaveBeenCalledWith(0.042);
     expect(logSuccess).toHaveBeenCalledWith({
       selected: {
         channel: { id: 11, routeId: 22 },

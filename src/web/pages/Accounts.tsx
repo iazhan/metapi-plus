@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api, type AccountLoginResponseDto } from "../api.js";
+import { api, type AccountGroupRateDto, type AccountLoginResponseDto } from "../api.js";
 import CenteredModal from "../components/CenteredModal.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import ResponsiveFormGrid from "../components/ResponsiveFormGrid.js";
@@ -11,6 +11,7 @@ import { MobileCard, MobileField } from "../components/MobileCard.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import DeleteConfirmModal from "../components/DeleteConfirmModal.js";
 import SiteBadgeLink from "../components/SiteBadgeLink.js";
+import GroupRateRuleEditor from "../components/GroupRateRuleEditor.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
 import {
   buildAddAccountPrereqHint,
@@ -181,11 +182,12 @@ export default function Accounts() {
     count?: number;
   }>(null);
   const [editingAccount, setEditingAccount] = useState<any | null>(null);
+  const [editingAccountGroupRates, setEditingAccountGroupRates] = useState<AccountGroupRateDto[]>([]);
+  const [editingAccountGroupRatesLoading, setEditingAccountGroupRatesLoading] = useState(false);
   const [editForm, setEditForm] = useState({
     username: "",
     status: "active",
     checkinEnabled: true,
-    unitCost: "",
     accessToken: "",
     apiToken: "",
     isPinned: false,
@@ -978,10 +980,6 @@ export default function Accounts() {
       username: account?.username || "",
       status: account?.status || "active",
       checkinEnabled: account?.checkinEnabled !== false,
-      unitCost:
-        account?.unitCost === null || account?.unitCost === undefined
-          ? ""
-          : String(account.unitCost),
       accessToken: account?.accessToken || "",
       apiToken: account?.apiToken || "",
       isPinned: !!account?.isPinned,
@@ -990,6 +988,28 @@ export default function Accounts() {
       proxyUrl,
     });
   };
+
+  const loadEditingAccountGroupRates = async (accountId: number) => {
+    setEditingAccountGroupRatesLoading(true);
+    try {
+      const result = await api.getAccountTokenGroups(accountId);
+      setEditingAccountGroupRates(Array.isArray(result?.rates) ? result.rates : []);
+    } catch (error) {
+      setEditingAccountGroupRates([]);
+      toast.error((error as Error).message || "加载分组倍率失败");
+    } finally {
+      setEditingAccountGroupRatesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!editingAccount?.id) {
+      setEditingAccountGroupRates([]);
+      setEditingAccountGroupRatesLoading(false);
+      return;
+    }
+    void loadEditingAccountGroupRates(editingAccount.id);
+  }, [editingAccount?.id]);
 
   const closeEditPanel = () => {
     setEditingAccount(null);
@@ -1004,9 +1024,6 @@ export default function Accounts() {
         username: editForm.username.trim() || undefined,
         status: editForm.status,
         checkinEnabled: editForm.checkinEnabled,
-        unitCost: editForm.unitCost.trim()
-          ? Number(editForm.unitCost.trim())
-          : null,
         accessToken: editForm.accessToken.trim(),
         apiToken: editForm.apiToken.trim() || null,
         isPinned: editForm.isPinned,
@@ -2647,6 +2664,7 @@ export default function Accounts() {
             }
           >
             {editingAccount ? (
+              <>
               <ResponsiveFormGrid>
                 <input
                   placeholder="账号名称"
@@ -2670,17 +2688,6 @@ export default function Accounts() {
                     { value: "expired", label: "expired" },
                   ]}
                   placeholder="状态"
-                />
-                <input
-                  placeholder="单位成本（可选）"
-                  value={editForm.unitCost}
-                  onChange={(e) =>
-                    setEditForm((prev) => ({
-                      ...prev,
-                      unitCost: e.target.value,
-                    }))
-                  }
-                  style={inputStyle}
                 />
                 <label
                   style={{
@@ -2773,6 +2780,30 @@ export default function Accounts() {
                   </>
                 )}
               </ResponsiveFormGrid>
+              <div style={{ marginTop: 4, padding: 14, border: "1px solid var(--color-border-light)", borderRadius: "var(--radius-md)", background: "var(--color-bg-card)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: 10 }}>分组倍率</div>
+                {editingAccountGroupRatesLoading ? (
+                  <div className="skeleton" style={{ height: 96 }} />
+                ) : editingAccountGroupRates.length > 0 ? (
+                  <div style={{ display: "grid", gap: 16 }}>
+                    {editingAccountGroupRates.map((rate) => (
+                      <div key={rate.groupKey} style={{ display: "grid", gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, overflowWrap: "anywhere" }}>{rate.groupName || rate.groupKey}</div>
+                        <GroupRateRuleEditor
+                          accountId={editingAccount.id}
+                          groupKey={rate.groupKey}
+                          synchronizedRatio={rate.synchronizedRatio ?? null}
+                          overrideRatio={rate.overrideRatio ?? null}
+                          onChanged={() => loadEditingAccountGroupRates(editingAccount.id)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>暂无可配置分组</div>
+                )}
+              </div>
+              </>
             ) : null}
           </CenteredModal>
 

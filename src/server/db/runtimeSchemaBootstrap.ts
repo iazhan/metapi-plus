@@ -12,6 +12,7 @@ import {
   generateUpgradeSql,
   type MysqlIndexPrefixRequirementMap,
 } from './schemaArtifactGenerator.js';
+import { INTENTIONAL_SCHEMA_COLUMN_REMOVALS } from './schemaEvolution.js';
 import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
 import { introspectLiveSchema } from './schemaIntrospection.js';
 import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
@@ -210,7 +211,11 @@ function buildCompatibleRuntimeBaseline(
       Object.entries(liveTable.columns)
         .filter(([columnName, liveColumn]) => {
           const currentColumn = currentTable.columns[columnName];
-          return currentColumn && serializeColumn(currentColumn) === serializeColumn(liveColumn);
+          return currentColumn
+            ? serializeColumn(currentColumn) === serializeColumn(liveColumn)
+            : INTENTIONAL_SCHEMA_COLUMN_REMOVALS.includes(
+              `${tableName}.${columnName}` as typeof INTENTIONAL_SCHEMA_COLUMN_REMOVALS[number],
+            );
         }),
     );
 
@@ -439,6 +444,7 @@ function buildExternalUpgradeStatements(
   const compatibleBaseline = buildCompatibleRuntimeBaseline(currentContract, liveContract);
   return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline, {
     mysqlIndexPrefixRequirements,
+    allowedColumnRemovals: INTENTIONAL_SCHEMA_COLUMN_REMOVALS,
   }));
 }
 

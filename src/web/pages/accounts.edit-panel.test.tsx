@@ -17,6 +17,9 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
     refreshAccountHealth: vi.fn(),
     checkModels: vi.fn(),
     getAccountModels: vi.fn(),
+    getAccountTokenGroups: vi.fn(),
+    saveAccountGroupRateRule: vi.fn(),
+    deleteAccountGroupRateRule: vi.fn(),
   },
   toastMock: {
     success: vi.fn(),
@@ -90,6 +93,19 @@ describe('Accounts edit panel', () => {
       totalCount: 2,
       disabledCount: 0,
     });
+    apiMock.getAccountTokenGroups.mockResolvedValue({
+      success: true,
+      groups: ['default'],
+      rates: [{
+        groupKey: 'default',
+        groupName: 'default',
+        ratio: 1,
+        synchronizedRatio: null,
+        overrideRatio: 0,
+        effectiveRatio: 0,
+        lastSyncedAt: null,
+      }],
+    });
   });
 
   afterEach(() => {
@@ -126,6 +142,10 @@ describe('Accounts edit panel', () => {
         && node.props.placeholder === '账号名称'
       ));
       expect(usernameInput.props.value).toBe('alpha');
+      expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
+      expect(collectText(root.root)).toContain('分组倍率');
+      expect(collectText(root.root)).toContain('手动倍率 0');
+      expect(collectText(root.root)).toContain('有效倍率 0（免费）');
     } finally {
       root?.unmount();
     }

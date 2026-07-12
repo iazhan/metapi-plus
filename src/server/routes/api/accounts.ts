@@ -1414,7 +1414,6 @@ export async function accountsRoutes(app: FastifyInstance) {
         "apiToken",
         "status",
         "checkinEnabled",
-        "unitCost",
         "extraConfig",
       ]) {
         if (body[key] !== undefined) updates[key] = body[key];

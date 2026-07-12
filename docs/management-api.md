@@ -289,7 +289,36 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 
 这样响应里也会保留该预设信息，便于脚本按预设类型做后续分流。
 
+## 价格与成本接口
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `GET` | `/api/pricing/settings` | 读取刷新开关、Cron、系统时区和最近刷新状态 |
+| `PUT` | `/api/pricing/settings` | 保存 `{ "enabled": true, "cronExpr": "0 0 * * *" }` |
+| `POST` | `/api/pricing/refresh` | 立即执行一轮官方目录和站点价格刷新 |
+| `GET` | `/api/sites/:siteId/pricing` | 读取站点换算、报价、规则、官方目录和有效价格 |
+| `PUT` | `/api/sites/:siteId/pricing/profile` | 保存 `{ "paidCny": 1, "creditedUsd": 10 }` |
+| `PUT` | `/api/sites/:siteId/pricing/models/:upstreamModelId/rule` | 保存手动映射、自定义模式和部分字段覆盖 |
+| `DELETE` | `/api/sites/:siteId/pricing/models/:upstreamModelId/rule` | 删除规则并恢复继承 |
+| `PUT` | `/api/accounts/:accountId/group-rates/:groupKey/rule` | 保存 `{ "ratioOverride": 1.2 }`；`0` 表示免费 |
+| `DELETE` | `/api/accounts/:accountId/group-rates/:groupKey/rule` | 删除手动倍率并恢复同步倍率或默认 `1` |
+
+模型规则的 `mappingMode` 只能是 `manual` 或 `custom`。`manual` 必须同时提供 `mappedProviderId` 和 `mappedModelId`；价格覆盖字段为 `null` 或省略时继承，`0` 表示免费。充值换算两个数字必须是有限正数，分组倍率必须是有限非负数。
+
+`upstreamModelId` 和 `groupKey` 可能包含 `/`、空格或其他保留字符，脚本必须逐段使用 URL 编码，不能直接拼接原始值。例如：
+
+```bash
+MODEL_ID='gpt-4.1-mini/2025-04-14'
+ENCODED_MODEL_ID="$(node -p 'encodeURIComponent(process.argv[1])' "$MODEL_ID")"
+curl -sS -X DELETE \
+  "${METAPI_ADMIN_BASE_URL}/api/sites/1/pricing/models/${ENCODED_MODEL_ID}/rule" \
+  -H "Authorization: Bearer ${METAPI_AUTH_TOKEN}"
+```
+
 ## 账号接口
+
+> [!IMPORTANT]
+> 1.6.0 已删除账号字段 `unitCost`。账号创建、更新和响应都不再包含该字段；旧备份中多余的 `unitCost` 会在导入时忽略。
 
 ### 1. 获取账号列表
 

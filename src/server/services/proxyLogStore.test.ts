@@ -64,6 +64,7 @@ vi.mock('../db/index.js', () => ({
 import {
   insertProxyLog,
   parseProxyLogBillingDetails,
+  parseProxyLogCostSnapshot,
   parseProxyLogCompatibilityNotes,
   withProxyLogSelectFields,
 } from './proxyLogStore.js';
@@ -147,6 +148,21 @@ describe('proxyLogStore', () => {
       source: 'pricing',
       usd: 1.25,
     });
+  });
+
+  it('reads only finite non-negative immutable pricing-domain costs', () => {
+    expect(parseProxyLogCostSnapshot(JSON.stringify({
+      siteCostUsd: 0,
+      actualCostCny: 1.25,
+    }))).toEqual({ siteCostUsd: 0, actualCostCny: 1.25 });
+    expect(parseProxyLogCostSnapshot(JSON.stringify({
+      breakdown: { totalCost: 99 },
+    }))).toBeNull();
+    expect(parseProxyLogCostSnapshot(JSON.stringify({
+      siteCostUsd: 1,
+      actualCostCny: -1,
+    }))).toBeNull();
+    expect(parseProxyLogCostSnapshot('{not-json')).toBeNull();
   });
 
   it('accepts parsed compatibility notes objects for helper-level callers', () => {

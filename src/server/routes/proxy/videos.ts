@@ -3,7 +3,7 @@ import { fetch } from 'undici';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
-import { estimateProxyCost } from '../../services/modelPricingService.js';
+import { resolvePerCallProxyBilling } from '../../services/proxyBilling.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
@@ -150,18 +150,16 @@ export async function videosProxyRoute(app: FastifyInstance) {
         });
 
         const latency = Date.now() - startTime;
-        const estimatedCost = await estimateProxyCost({
+        const { actualCostCny } = await resolvePerCallProxyBilling({
           site: selected.site,
           account: selected.account,
+          tokenGroup: selected.token?.tokenGroup ?? null,
           modelName: upstreamModel,
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
         });
         await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+          tokenRouter.recordSuccess(selected.channel.id, latency, actualCostCny, upstreamModel)
         ));
-        recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamCostUsage(request, actualCostCny);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;

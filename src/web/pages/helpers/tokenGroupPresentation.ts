@@ -3,7 +3,7 @@ export type TokenGroupRateMeta = {
   groupName: string;
   ratio: number;
   description?: string | null;
-  lastSyncedAt?: string;
+  lastSyncedAt?: string | null;
 };
 
 type TokenGroupLike = {

@@ -228,4 +228,24 @@ describe('api proxy test timeout handling', () => {
     expect(api.proxyTest).toBe(api.testProxy);
     expect(api.proxyTestStream).toBe(api.testProxyStream);
   });
+
+  it('encodes pricing model ids and group keys exactly once', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ success: true }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.saveSiteModelPriceRule(7, 'openai/gpt-4.1 mini/2025', {
+      mappingMode: 'custom',
+    });
+    await api.saveAccountGroupRateRule(9, 'pro/team', 0);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/sites/7/pricing/models/openai%2Fgpt-4.1%20mini%2F2025/rule',
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      '/api/accounts/9/group-rates/pro%2Fteam/rule',
+    );
+  });
 });

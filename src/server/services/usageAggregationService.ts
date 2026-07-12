@@ -2,7 +2,6 @@ import { and, asc, eq, gt, gte, isNull, lte, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { db, runtimeDbDialect, schema } from '../db/index.js';
-import { fallbackTokenCost } from './modelPricingService.js';
 import {
   getLocalRangeStartDayKey,
   getResolvedTimeZone,
@@ -180,7 +179,10 @@ function resolveSiteSpend(params: {
   if (explicit > 0) return explicit;
   const tokens = normalizeNonNegativeInt(params.totalTokens);
   if (tokens <= 0) return 0;
-  return fallbackTokenCost(tokens, params.platform || 'new-api');
+  const divisor = String(params.platform || '').trim().toLowerCase() === 'veloera'
+    ? 1_000_000
+    : 500_000;
+  return Math.round((tokens / divisor) * 1_000_000) / 1_000_000;
 }
 
 function resolveModelSpend(params: {

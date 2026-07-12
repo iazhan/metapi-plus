@@ -13,6 +13,8 @@ import {
   type ProxyDebugTraceDetail,
   type ProxyDebugTraceListItem,
   type ProxyLogBillingDetails,
+  type LegacyProxyLogBillingDetails,
+  type PricingDomainBillingDetails,
   type ProxyLogClientOption,
   type ProxyLogCompatibilityNotes,
   type ProxyLogDetail,
@@ -335,10 +337,10 @@ function isFiniteNumber(value: unknown): value is number {
 
 function getCompleteBillingDetails(
   log: ProxyLogRenderItem,
-): NonNullable<ProxyLogBillingDetails> | null {
+): LegacyProxyLogBillingDetails | null {
   const detail = log.billingDetails;
   if (!detail) return null;
-  if (!detail.usage || !detail.pricing || !detail.breakdown) return null;
+  if (!("usage" in detail) || !("pricing" in detail) || !("breakdown" in detail)) return null;
 
   const requiredNumbers = [
     detail.usage.promptTokens,
@@ -364,6 +366,17 @@ function getCompleteBillingDetails(
   ];
 
   return requiredNumbers.every(isFiniteNumber) ? detail : null;
+}
+
+function getPricingDomainBillingDetails(log: ProxyLogRenderItem): PricingDomainBillingDetails | null {
+  const detail = log.billingDetails;
+  if (!detail || !("siteCostUsd" in detail) || !("actualCostCny" in detail)) return null;
+  return isFiniteNumber(detail.siteCostUsd)
+    && detail.siteCostUsd >= 0
+    && isFiniteNumber(detail.actualCostCny)
+    && detail.actualCostCny >= 0
+    ? detail
+    : null;
 }
 
 function formatBillingDetailSummary(log: ProxyLogRenderItem) {
@@ -2938,6 +2951,8 @@ export default function ProxyLogs() {
                   formatCompatibilityDetailText(detailLog);
                 const completeBillingDetails =
                   getCompleteBillingDetails(detailLog);
+                const pricingDomainBillingDetails =
+                  getPricingDomainBillingDetails(detailLog);
 
                 return (
                   <React.Fragment key={log.id}>
@@ -3418,7 +3433,15 @@ export default function ProxyLogs() {
                                   >
                                     计费过程
                                   </span>
-                                  {billingProcessLines.length > 0 ? (
+                                  {pricingDomainBillingDetails ? (
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                      <span>站点计价成本 USD <strong>${pricingDomainBillingDetails.siteCostUsd.toFixed(6)}</strong></span>
+                                      <span>真实成本 CNY <strong>¥{pricingDomainBillingDetails.actualCostCny.toFixed(6)}</strong></span>
+                                      <span style={{ color: "var(--color-text-muted)" }}>
+                                        计价时间 {formatDateTimeLocal(pricingDomainBillingDetails.pricedAt)}；历史快照不随当前价格重算
+                                      </span>
+                                    </div>
+                                  ) : billingProcessLines.length > 0 ? (
                                     <div
                                       style={{
                                         display: "flex",

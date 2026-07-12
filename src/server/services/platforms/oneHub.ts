@@ -1,7 +1,21 @@
 import { OneApiAdapter } from './oneApi.js';
+import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
+import { normalizeOneHubPricingPayload } from '../../pricing/platformQuoteNormalizers.js';
 
 export class OneHubAdapter extends OneApiAdapter {
   readonly platformName: string = 'one-hub';
+
+  override async getPricing(
+    baseUrl: string,
+    credential: PricingCredential,
+    signal?: AbortSignal,
+  ): Promise<PlatformPriceQuote[]> {
+    const payload = await this.fetchJson<unknown>(`${baseUrl}/api/available_model`, {
+      headers: { Authorization: `Bearer ${credential.value}` },
+      signal,
+    });
+    return normalizeOneHubPricingPayload(payload);
+  }
 
   async detect(url: string): Promise<boolean> {
     const normalized = url.toLowerCase();

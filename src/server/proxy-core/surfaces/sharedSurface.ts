@@ -61,6 +61,7 @@ type SurfaceOauthRefreshContext<TRequest extends BuiltEndpointRequest> = {
 };
 
 type SurfaceSuccessSelectedChannel = SurfaceSelectedChannel & {
+  token?: { tokenGroup?: string | null } | null;
   account: Record<string, unknown> & {
     id: number;
     username?: string | null;
@@ -384,6 +385,7 @@ export async function recordSurfaceSuccess(input: {
     usageSource: hasUpstreamUsage ? 'upstream' : 'unknown',
   };
   let estimatedCost = 0;
+  let actualCostCny = 0;
   let billingDetails: unknown = null;
 
   try {
@@ -406,11 +408,13 @@ export async function recordSurfaceSuccess(input: {
     const billing = await resolveProxyLogBilling({
       site: input.selected.site,
       account: input.selected.account,
+      tokenGroup: input.selected.token?.tokenGroup ?? null,
       modelName: input.modelName,
       parsedUsage: input.parsedUsage,
       resolvedUsage,
     });
     estimatedCost = billing.estimatedCost;
+    actualCostCny = billing.actualCostCny;
     billingDetails = billing.billingDetails;
   } catch (error) {
     if (!input.bestEffortMetrics) {
@@ -422,10 +426,10 @@ export async function recordSurfaceSuccess(input: {
   tokenRouter.recordSuccess(
     input.selected.channel.id,
     input.latencyMs,
-    estimatedCost,
+    actualCostCny,
     input.modelName,
   );
-  input.recordDownstreamCost?.(estimatedCost);
+  input.recordDownstreamCost?.(actualCostCny);
   const logTokens = resolvedUsage.usageSource === 'unknown'
     ? {
       promptTokens: null,

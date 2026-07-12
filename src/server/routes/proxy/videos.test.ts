@@ -9,7 +9,7 @@ const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
-const estimateProxyCostMock = vi.fn(async () => 0);
+const resolvePerCallProxyBillingMock = vi.fn(async () => ({ estimatedCost: 0, actualCostCny: 0, billingDetails: null }));
 const shouldRetryProxyRequestMock = vi.fn();
 const saveProxyVideoTaskMock = vi.fn();
 const getProxyVideoTaskByPublicIdMock = vi.fn();
@@ -48,8 +48,8 @@ vi.mock('../../services/alertRules.js', () => ({
   isTokenExpiredError: () => false,
 }));
 
-vi.mock('../../services/modelPricingService.js', () => ({
-  estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+vi.mock('../../services/proxyBilling.js', () => ({
+  resolvePerCallProxyBilling: (arg: any) => resolvePerCallProxyBillingMock(arg),
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
@@ -127,7 +127,7 @@ describe('/v1/videos routes', () => {
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
-    estimateProxyCostMock.mockClear();
+    resolvePerCallProxyBillingMock.mockClear();
     shouldRetryProxyRequestMock.mockReset();
     saveProxyVideoTaskMock.mockReset();
     getProxyVideoTaskByPublicIdMock.mockReset();
@@ -155,6 +155,7 @@ describe('/v1/videos routes', () => {
   });
 
   it('creates an upstream video task and stores a local public id mapping', async () => {
+    resolvePerCallProxyBillingMock.mockResolvedValueOnce({ estimatedCost: 0.04, actualCostCny: 0.02, billingDetails: null });
     saveProxyVideoTaskMock.mockResolvedValue({
       publicId: 'vid_local_123',
       upstreamVideoId: 'vid_upstream_123',
@@ -190,6 +191,7 @@ describe('/v1/videos routes', () => {
         status: 'queued',
       }),
     }));
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0.02, 'sora-2');
     expect(response.json()).toMatchObject({
       id: 'vid_local_123',
       object: 'video',

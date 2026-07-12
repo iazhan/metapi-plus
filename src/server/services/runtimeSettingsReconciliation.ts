@@ -14,6 +14,8 @@ import {
   stopProxyLogRetentionService,
 } from './proxyLogRetentionService.js';
 import { invalidateSiteProxyCache } from './siteProxy.js';
+import { invalidateEffectivePriceCache } from '../pricing/effectivePriceResolver.js';
+import { updatePriceRefreshScheduler } from '../pricing/priceRefreshScheduler.js';
 
 type RuntimeSettingsReconciliationDependencies = {
   hydrate?: typeof hydrateRuntimeSettingsFromPersistedSnapshot;
@@ -25,6 +27,8 @@ type RuntimeSettingsReconciliationDependencies = {
   startLegacyLogRetention?: typeof startProxyLogRetentionService;
   stopLegacyLogRetention?: typeof stopProxyLogRetentionService;
   invalidateProxyCache?: typeof invalidateSiteProxyCache;
+  updatePriceRefresh?: typeof updatePriceRefreshScheduler;
+  invalidatePricingCache?: typeof invalidateEffectivePriceCache;
 };
 
 /** Rehydrates one persisted snapshot and reconciles every setting-owned runtime service. */
@@ -57,5 +61,10 @@ export async function reconcileRuntimeSettingsFromPersistedSnapshot(
     (deps.stopModelProbe ?? stopModelAvailabilityProbeScheduler)();
   }
   (deps.invalidateProxyCache ?? invalidateSiteProxyCache)();
+  await (deps.updatePriceRefresh ?? updatePriceRefreshScheduler)({
+    enabled: config.priceRefreshEnabled,
+    cronExpr: config.priceRefreshCron,
+  });
+  (deps.invalidatePricingCache ?? invalidateEffectivePriceCache)();
   return settingsMap;
 }

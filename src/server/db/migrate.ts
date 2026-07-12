@@ -360,12 +360,27 @@ function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
     === normalizeSqlForMatch('CREATE UNIQUE INDEX `sites_platform_url_unique` ON `sites` (`platform`,`url`);');
 }
 
+function isAlreadyAppliedDropColumnStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  const match = statement.trim().match(
+    /^alter\s+table\s+[`"\[]?([^`"\]\s]+)[`"\]]?\s+drop\s+column\s+[`"\[]?([^`"\]\s;]+)[`"\]]?\s*;?$/i,
+  );
+  if (!match) return false;
+  return !columnExists(sqlite, match[1], match[2]);
+}
+
 function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
   for (const statement of statements) {
     try {
       sqlite.exec(statement);
     } catch (error) {
       if (isRecoverableSchemaConflictError(error)) {
+        continue;
+      }
+
+      if (isAlreadyAppliedDropColumnStatement(sqlite, statement)) {
         continue;
       }
 

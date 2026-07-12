@@ -9,7 +9,7 @@ const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
-const estimateProxyCostMock = vi.fn(async () => 0);
+const resolvePerCallProxyBillingMock = vi.fn(async () => ({ estimatedCost: 0, actualCostCny: 0, billingDetails: null }));
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
@@ -46,8 +46,8 @@ vi.mock('../../services/alertRules.js', () => ({
   isTokenExpiredError: () => false,
 }));
 
-vi.mock('../../services/modelPricingService.js', () => ({
-  estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+vi.mock('../../services/proxyBilling.js', () => ({
+  resolvePerCallProxyBilling: (arg: any) => resolvePerCallProxyBillingMock(arg),
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
@@ -124,7 +124,7 @@ describe('/v1/images/edits route', () => {
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
-    estimateProxyCostMock.mockClear();
+    resolvePerCallProxyBillingMock.mockClear();
     dbInsertMock.mockClear();
 
     selectChannelMock.mockReturnValue({
@@ -145,6 +145,11 @@ describe('/v1/images/edits route', () => {
   });
 
   it('accepts multipart image edit requests and forwards them to /v1/images/edits', async () => {
+    resolvePerCallProxyBillingMock.mockResolvedValueOnce({
+      estimatedCost: 0.04,
+      actualCostCny: 0.02,
+      billingDetails: { siteCostUsd: 0.04, actualCostCny: 0.02 },
+    });
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       created: 1,
       data: [{ b64_json: 'iVBORw0KGgo=' }],
@@ -167,6 +172,8 @@ describe('/v1/images/edits route', () => {
     expect(response.statusCode).toBe(200);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(targetUrl).toBe('https://upstream.example.com/v1/images/edits');
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0.02, 'upstream-gpt-image');
+    expect(dbInsertMock).toHaveBeenCalled();
   });
 
   it('retries the next channel when image generation JSON is malformed', async () => {
@@ -220,7 +227,7 @@ describe('/v1/images/edits route', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
-    estimateProxyCostMock.mockRejectedValueOnce(new Error('cost failed'));
+    resolvePerCallProxyBillingMock.mockRejectedValueOnce(new Error('cost failed'));
 
     const boundary = 'metapi-boundary-accounting';
     const response = await app.inject({

@@ -100,6 +100,7 @@ describe('account tokens sync routes with site status', () => {
     seedId = 0;
 
     await db.delete(schema.accountTokens).run();
+    await db.delete(schema.accountGroupRateRules).run();
     await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
@@ -569,10 +570,16 @@ describe('account tokens sync routes with site status', () => {
       method: 'GET',
       url: `/api/account-tokens/groups/${account.id}`,
     });
-    expect(groupsResponse.statusCode).toBe(400);
+    expect(groupsResponse.statusCode).toBe(200);
     expect(groupsResponse.json()).toMatchObject({
-      success: false,
-      message: 'API Key 连接不支持拉取账号令牌分组',
+      success: true,
+      groups: ['default'],
+      rates: [{
+        groupKey: 'default',
+        synchronizedRatio: null,
+        overrideRatio: null,
+        effectiveRatio: 1,
+      }],
     });
   });
 
@@ -917,6 +924,11 @@ describe('account tokens sync routes with site status', () => {
       ratio: 0.8,
       lastSyncedAt: '2026-07-10T00:00:00.000Z',
     }).run();
+    await db.insert(schema.accountGroupRateRules).values({
+      accountId: account.id,
+      groupKey: 'vip',
+      ratioOverride: 0,
+    }).run();
 
     const response = await app.inject({
       method: 'GET',
@@ -927,7 +939,14 @@ describe('account tokens sync routes with site status', () => {
     expect(response.json()).toMatchObject({
       success: true,
       groups: ['default', 'vip'],
-      rates: [expect.objectContaining({ groupKey: 'vip', groupName: 'VIP', ratio: 0.8 })],
+      rates: expect.arrayContaining([expect.objectContaining({
+        groupKey: 'vip',
+        groupName: 'VIP',
+        ratio: 0.8,
+        synchronizedRatio: 0.8,
+        overrideRatio: 0,
+        effectiveRatio: 0,
+      })]),
     });
     expect(getUserGroupsMock).toHaveBeenCalledTimes(1);
   });

@@ -16,6 +16,7 @@ import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
+import GroupRateRuleEditor from '../components/GroupRateRuleEditor.js';
 import { clearFocusParams, readFocusTokenId } from './helpers/navigationFocus.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { buildTokenGroupOptions, formatTokenGroupLabel } from './helpers/tokenGroupPresentation.js';
@@ -174,6 +175,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   const [editGroupOptions, setEditGroupOptions] = useState<string[]>(['default']);
   const [editGroupRates, setEditGroupRates] = useState<AccountGroupRateDto[]>([]);
   const [editGroupLoading, setEditGroupLoading] = useState(false);
+  const [editGroupRatesRevision, setEditGroupRatesRevision] = useState(0);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editingTokenIdRef = useRef<number | null>(null);
@@ -304,7 +306,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     return () => {
       cancelled = true;
     };
-  }, [editingToken?.id, editingToken?.accountId]);
+  }, [editingToken?.id, editingToken?.accountId, editGroupRatesRevision]);
 
   const accountClusteredTokens = useMemo(() => {
     const accountLabel = (token: any) => String(token?.account?.username || `account-${token?.accountId || 0}`).toLowerCase();
@@ -1031,6 +1033,24 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                   />
                 </div>
               </ResponsiveFormGrid>
+            </div>
+            <div style={sectionCardStyle}>
+              <div style={sectionLabelStyle}>分组倍率</div>
+              {editGroupLoading ? (
+                <div className="skeleton" style={{ height: 96 }} />
+              ) : (() => {
+                const groupKey = editForm.group || 'default';
+                const rate = editGroupRates.find((item) => item.groupKey === groupKey);
+                return (
+                  <GroupRateRuleEditor
+                    accountId={editingToken.accountId}
+                    groupKey={groupKey}
+                    synchronizedRatio={rate?.synchronizedRatio ?? rate?.ratio ?? null}
+                    overrideRatio={rate?.overrideRatio ?? null}
+                    onChanged={() => setEditGroupRatesRevision((value) => value + 1)}
+                  />
+                );
+              })()}
             </div>
             <div style={sectionCardStyle}>
               <div style={sectionLabelStyle}>状态设置</div>

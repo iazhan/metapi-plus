@@ -75,6 +75,7 @@ describe('schema contract generator baseline', () => {
     expect(mocks.writeDialectArtifactFiles).toHaveBeenCalledWith(
       workingContract,
       committedContract,
+      { allowedColumnRemovals: ['accounts.unit_cost'] },
     );
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       'git',
@@ -100,6 +101,7 @@ describe('schema contract generator baseline', () => {
     expect(mocks.writeDialectArtifactFiles).toHaveBeenCalledWith(
       workingContract,
       committedContract,
+      { allowedColumnRemovals: ['accounts.unit_cost'] },
     );
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       'git',

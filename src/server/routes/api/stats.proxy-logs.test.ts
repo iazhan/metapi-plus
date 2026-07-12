@@ -208,9 +208,39 @@ describe("stats proxy logs routes", () => {
       totalCount: 3,
       successCount: 1,
       failedCount: 2,
-      totalCost: 0.6,
+      totalCost: 0,
       totalTokensAll: 49,
     });
+  });
+
+  it("sums immutable CNY snapshots and ignores legacy USD-only logs", async () => {
+    const site = await db.insert(schema.sites).values({
+      name: "cost-site", url: "https://cost.example.com", platform: "new-api",
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id, username: "cost-user", accessToken: "token", status: "active",
+    }).returning().get();
+    await db.insert(schema.proxyLogs).values([
+      {
+        accountId: account.id,
+        modelRequested: "new-priced-model",
+        status: "success",
+        totalTokens: 10,
+        estimatedCost: 3,
+        billingDetails: JSON.stringify({ siteCostUsd: 3, actualCostCny: 0.3 }),
+      },
+      {
+        accountId: account.id,
+        modelRequested: "legacy-model",
+        status: "success",
+        totalTokens: 20,
+        estimatedCost: 7,
+      },
+    ]).run();
+
+    const response = await app.inject({ method: "GET", url: "/api/stats/proxy-logs?view=meta" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().summary).toMatchObject({ totalCost: 0.3, totalTokensAll: 30 });
   });
 
   it("returns a single proxy log detail with parsed billing details", async () => {
@@ -531,7 +561,7 @@ describe("stats proxy logs routes", () => {
       totalCount: 2,
       successCount: 1,
       failedCount: 1,
-      totalCost: 0.33,
+      totalCost: 0,
       totalTokensAll: 30,
     });
   });
@@ -830,7 +860,7 @@ describe("stats proxy logs routes", () => {
       totalCount: 2,
       successCount: 1,
       failedCount: 1,
-      totalCost: 0.32,
+      totalCost: 0,
       totalTokensAll: 32,
     });
     expect(metaBody.sites).toEqual(

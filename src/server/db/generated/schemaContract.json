@@ -1,5 +1,45 @@
 {
   "tables": {
+    "account_group_rate_rules": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "group_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "ratio_override": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "account_group_rates": {
       "columns": {
         "id": {
@@ -176,12 +216,6 @@
           "logicalType": "real",
           "notNull": false,
           "defaultValue": "0",
-          "primaryKey": false
-        },
-        "unit_cost": {
-          "logicalType": "real",
-          "notNull": false,
-          "defaultValue": null,
           "primaryKey": false
         },
         "value_score": {
@@ -914,6 +948,152 @@
           "logicalType": "boolean",
           "notNull": false,
           "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "official_model_prices": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "provider_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "display_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_read_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_write_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reasoning_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_audio_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_audio_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "tiers_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "fetched_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "pricing_refresh_states": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "scope_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_success_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_kind": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "failure_active": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
           "primaryKey": false
         },
         "created_at": {
@@ -2062,6 +2242,228 @@
         }
       }
     },
+    "site_model_price_rules": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "upstream_model_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "mapped_provider_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "mapped_model_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "mapping_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_read_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_write_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reasoning_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_audio_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_audio_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "per_call_override_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "site_model_prices": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "upstream_model_id": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_read_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "cache_write_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "reasoning_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "input_audio_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "output_audio_per_million_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "per_call_usd": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "pricing_semantics": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "raw_metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "fetched_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "site_pricing_profiles": {
+      "columns": {
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "paid_cny": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "credited_usd": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "sites": {
       "columns": {
         "id": {
@@ -2304,6 +2706,23 @@
     }
   },
   "indexes": [
+    {
+      "name": "account_group_rate_rules_account_group_unique",
+      "table": "account_group_rate_rules",
+      "columns": [
+        "account_id",
+        "group_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "account_group_rate_rules_account_id_idx",
+      "table": "account_group_rate_rules",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
     {
       "name": "account_group_rates_account_group_unique",
       "table": "account_group_rates",
@@ -2624,6 +3043,32 @@
         "provider"
       ],
       "unique": false
+    },
+    {
+      "name": "official_model_prices_model_id_idx",
+      "table": "official_model_prices",
+      "columns": [
+        "model_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "official_model_prices_provider_model_unique",
+      "table": "official_model_prices",
+      "columns": [
+        "provider_id",
+        "model_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "pricing_refresh_states_scope_unique",
+      "table": "pricing_refresh_states",
+      "columns": [
+        "scope_type",
+        "scope_id"
+      ],
+      "unique": true
     },
     {
       "name": "proxy_debug_attempts_trace_attempt_unique",
@@ -2971,6 +3416,40 @@
       "unique": false
     },
     {
+      "name": "site_model_price_rules_site_id_idx",
+      "table": "site_model_price_rules",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_model_price_rules_site_model_unique",
+      "table": "site_model_price_rules",
+      "columns": [
+        "site_id",
+        "upstream_model_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "site_model_prices_site_id_idx",
+      "table": "site_model_prices",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_model_prices_site_model_unique",
+      "table": "site_model_prices",
+      "columns": [
+        "site_id",
+        "upstream_model_id"
+      ],
+      "unique": true
+    },
+    {
       "name": "sites_platform_url_unique",
       "table": "sites",
       "columns": [
@@ -3040,6 +3519,14 @@
   ],
   "uniques": [
     {
+      "name": "account_group_rate_rules_account_group_unique",
+      "table": "account_group_rate_rules",
+      "columns": [
+        "account_id",
+        "group_key"
+      ]
+    },
+    {
       "name": "account_group_rates_account_group_unique",
       "table": "account_group_rates",
       "columns": [
@@ -3092,6 +3579,22 @@
       "columns": [
         "unit_id",
         "account_id"
+      ]
+    },
+    {
+      "name": "official_model_prices_provider_model_unique",
+      "table": "official_model_prices",
+      "columns": [
+        "provider_id",
+        "model_id"
+      ]
+    },
+    {
+      "name": "pricing_refresh_states_scope_unique",
+      "table": "pricing_refresh_states",
+      "columns": [
+        "scope_type",
+        "scope_id"
       ]
     },
     {
@@ -3165,6 +3668,22 @@
       ]
     },
     {
+      "name": "site_model_price_rules_site_model_unique",
+      "table": "site_model_price_rules",
+      "columns": [
+        "site_id",
+        "upstream_model_id"
+      ]
+    },
+    {
+      "name": "site_model_prices_site_model_unique",
+      "table": "site_model_prices",
+      "columns": [
+        "site_id",
+        "upstream_model_id"
+      ]
+    },
+    {
       "name": "sites_platform_url_unique",
       "table": "sites",
       "columns": [
@@ -3182,6 +3701,17 @@
     }
   ],
   "foreignKeys": [
+    {
+      "table": "account_group_rate_rules",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
     {
       "table": "account_group_rates",
       "columns": [
@@ -3393,6 +3923,39 @@
     },
     {
       "table": "site_hour_usage",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_model_price_rules",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_model_prices",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_pricing_profiles",
       "columns": [
         "site_id"
       ],

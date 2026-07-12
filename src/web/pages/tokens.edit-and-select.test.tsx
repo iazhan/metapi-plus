@@ -18,6 +18,8 @@ const { apiMock } = vi.hoisted(() => ({
     syncAccountTokens: vi.fn(),
     syncAllAccountTokens: vi.fn(),
     updateAccountToken: vi.fn(),
+    saveAccountGroupRateRule: vi.fn(),
+    deleteAccountGroupRateRule: vi.fn(),
   },
 }));
 
@@ -119,6 +121,7 @@ describe('Tokens edit modal and row selection', () => {
         isDefault: false,
         updatedAt: '2026-03-07 10:00:00',
         accountId: 1,
+        tokenGroup: 'vip',
         account: { username: 'session-user' },
         site: { name: 'Session Site', url: 'https://session.example.com' },
       },
@@ -130,6 +133,15 @@ describe('Tokens edit modal and row selection', () => {
     apiMock.getAccountTokenGroups.mockResolvedValue({
       success: true,
       groups: ['default', 'vip'],
+      rates: [{
+        groupKey: 'vip',
+        groupName: 'VIP',
+        ratio: 1.2,
+        synchronizedRatio: 1.2,
+        overrideRatio: 0,
+        effectiveRatio: 0,
+        lastSyncedAt: '2026-07-12T00:00:00.000Z',
+      }],
     });
     apiMock.updateAccountToken.mockResolvedValue({
       success: true,
@@ -176,6 +188,9 @@ describe('Tokens edit modal and row selection', () => {
       expect(rendered).toContain('基本信息');
       expect(rendered).toContain('状态设置');
       expect(rendered).toContain('分组');
+      expect(rendered).toContain('分组倍率');
+      expect(collectText(root.root)).toContain('同步倍率 1.2');
+      expect(collectText(root.root)).toContain('有效倍率 0（免费）');
       const modals = root.root.findAll((node) => {
         const className = typeof node.props?.className === 'string' ? node.props.className : '';
         return className.includes('modal-content') && collectText(node).includes('编辑令牌');
@@ -193,7 +208,7 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(22, expect.objectContaining({ group: 'default' }));
+      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(22, expect.objectContaining({ group: 'vip' }));
     } finally {
       root?.unmount();
     }

@@ -27,6 +27,12 @@ describe('backupService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.pricingRefreshStates).run();
+    await db.delete(schema.siteModelPriceRules).run();
+    await db.delete(schema.siteModelPrices).run();
+    await db.delete(schema.officialModelPrices).run();
+    await db.delete(schema.sitePricingProfiles).run();
+    await db.delete(schema.accountGroupRateRules).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.tokenRoutes).run();
@@ -51,7 +57,7 @@ describe('backupService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('exports backup-owned config in v2.1 backups and still roundtrips core connection fields', async () => {
+  it('exports backup-owned config in v2.2 backups without the removed account unit cost', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({
       name: 'roundtrip-site',
@@ -83,7 +89,6 @@ describe('backupService', () => {
       balance: 12.3,
       balanceUsed: 4.5,
       quota: 99.9,
-      unitCost: 0.2,
       valueScore: 1.1,
       status: 'active',
       isPinned: true,
@@ -214,7 +219,8 @@ describe('backupService', () => {
     }).run();
 
     const exported = await backupService.exportBackup('all') as any;
-    expect(exported.version).toBe('2.1');
+    expect(exported.version).toBe('2.2');
+    expect(exported.accounts.accounts[0]).not.toHaveProperty('unitCost');
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
     ]);
@@ -373,6 +379,96 @@ describe('backupService', () => {
     ]);
     expect(restoredRates[0]?.id).not.toBe(rate.id);
     expect(restoredRates[0]?.accountId).toBe(account.id);
+  });
+
+  it('roundtrips pricing-domain snapshots, rules, profiles, and refresh state', async () => {
+    const now = '2026-07-12T00:00:00.000Z';
+    const site = await db.insert(schema.sites).values({
+      name: 'pricing-backup-site', url: 'https://pricing-backup.example.com', platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id, username: 'pricing-owner', accessToken: 'session-token',
+    }).returning().get();
+    await db.insert(schema.sitePricingProfiles).values({
+      siteId: site.id, paidCny: 2, creditedUsd: 10, createdAt: now, updatedAt: now,
+    }).run();
+    await db.insert(schema.officialModelPrices).values({
+      providerId: 'openai', modelId: 'gpt-4.1', displayName: 'GPT-4.1',
+      inputPerMillionUsd: 0.4, outputPerMillionUsd: 1.6, fetchedAt: now,
+    }).run();
+    await db.insert(schema.siteModelPrices).values({
+      siteId: site.id, upstreamModelId: 'gpt-4.1-site', inputPerMillionUsd: 0.5,
+      pricingSemantics: 'base_price', fetchedAt: now,
+    }).run();
+    await db.insert(schema.siteModelPriceRules).values({
+      siteId: site.id, upstreamModelId: 'gpt-4.1-site', mappingMode: 'manual',
+      mappedProviderId: 'openai', mappedModelId: 'gpt-4.1', outputOverrideUsd: 0,
+      createdAt: now, updatedAt: now,
+    }).run();
+    await db.insert(schema.accountGroupRateRules).values({
+      accountId: account.id, groupKey: 'vip', ratioOverride: 0.8,
+      createdAt: now, updatedAt: now,
+    }).run();
+    await db.insert(schema.pricingRefreshStates).values({
+      scopeType: 'site', scopeId: site.id, lastSuccessAt: now,
+      failureActive: false, createdAt: now, updatedAt: now,
+    }).run();
+
+    const exported = await backupService.exportBackup('accounts') as any;
+    expect(exported.version).toBe('2.2');
+    expect(exported.accounts.sitePricingProfiles).toHaveLength(1);
+    expect(exported.accounts.officialModelPrices).toHaveLength(1);
+    expect(exported.accounts.siteModelPrices).toHaveLength(1);
+    expect(exported.accounts.siteModelPriceRules).toHaveLength(1);
+    expect(exported.accounts.accountGroupRateRules).toHaveLength(1);
+    expect(exported.accounts.pricingRefreshStates).toHaveLength(1);
+
+    await db.update(schema.sitePricingProfiles).set({ paidCny: 99 }).run();
+    await db.delete(schema.officialModelPrices).run();
+    await backupService.importBackup(exported as Record<string, unknown>, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      reconcileCommittedRuntime: async () => undefined,
+    });
+
+    expect(await db.select().from(schema.sitePricingProfiles).all()).toEqual([
+      expect.objectContaining({ siteId: site.id, paidCny: 2, creditedUsd: 10 }),
+    ]);
+    expect(await db.select().from(schema.officialModelPrices).all()).toEqual([
+      expect.objectContaining({ providerId: 'openai', modelId: 'gpt-4.1' }),
+    ]);
+    expect(await db.select().from(schema.siteModelPrices).all()).toHaveLength(1);
+    expect(await db.select().from(schema.siteModelPriceRules).all()).toHaveLength(1);
+    expect(await db.select().from(schema.accountGroupRateRules).all()).toHaveLength(1);
+    expect(await db.select().from(schema.pricingRefreshStates).all()).toHaveLength(1);
+  });
+
+  it('rejects invalid pricing-domain references and values before maintenance starts', async () => {
+    await db.insert(schema.sites).values({
+      id: 77, name: 'local', url: 'https://local.example', platform: 'new-api',
+    }).run();
+    const stop = vi.fn(async () => undefined);
+    const payload = {
+      version: '2.2',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }],
+        accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [],
+        siteModelPrices: [
+          { id: 1, siteId: 1, upstreamModelId: 'gpt-x', inputPerMillionUsd: -1, pricingSemantics: 'base_price', fetchedAt: new Date().toISOString() },
+          { id: 2, siteId: 1, upstreamModelId: 'gpt-x', inputPerMillionUsd: 1, pricingSemantics: 'base_price', fetchedAt: new Date().toISOString() },
+        ],
+        accountGroupRateRules: [{ id: 1, accountId: 99, groupKey: 'default', ratioOverride: 1 }],
+      },
+    } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: stop,
+    })).rejects.toThrow('导入数据格式错误');
+
+    expect(stop).not.toHaveBeenCalled();
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([77]);
   });
 
   it('rejects invalid group rates before a backup restore can replace existing data', async () => {
@@ -826,7 +922,7 @@ describe('backupService', () => {
     }).returning().get();
 
     const exported = await backupService.exportBackup('accounts') as any;
-    expect(exported.version).toBe('2.1');
+    expect(exported.version).toBe('2.2');
 
     await db.insert(schema.events).values({
       type: 'status',
@@ -1194,7 +1290,6 @@ describe('backupService', () => {
             apiToken: 'legacy-api-token',
             balance: 10,
             quota: 20,
-            unitCost: null,
             valueScore: 0,
             status: 'active',
             isPinned: false,
@@ -1637,7 +1732,6 @@ describe('backupService', () => {
             balance: 0,
             balanceUsed: 0,
             quota: 0,
-            unitCost: null,
             valueScore: 0,
             status: 'active',
             isPinned: false,
@@ -1769,7 +1863,6 @@ describe('backupService', () => {
             balance: 0,
             balanceUsed: 0,
             quota: 0,
-            unitCost: null,
             valueScore: 0,
             status: 'active',
             isPinned: false,

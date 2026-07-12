@@ -74,6 +74,19 @@ describe('applyRuntimeSettings', () => {
     expect(config.accountGroupRateRefreshIntervalMinutes).toBe(45);
   });
 
+  it('hydrates independent price refresh settings', () => {
+    config.priceRefreshEnabled = true;
+    config.priceRefreshCron = '0 0 * * *';
+
+    applyRuntimeSettings(new Map([
+      ['price_refresh_enabled', JSON.stringify(false)],
+      ['price_refresh_cron', JSON.stringify('0 6 * * *')],
+    ]));
+
+    expect(config.priceRefreshEnabled).toBe(false);
+    expect(config.priceRefreshCron).toBe('0 6 * * *');
+  });
+
   it('derives explicit log cleanup ownership from the complete settings snapshot', () => {
     config.logCleanupConfigured = false;
     applyRuntimeSettings(new Map([
