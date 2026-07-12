@@ -1,12 +1,26 @@
 import { asc, eq } from 'drizzle-orm';
+import { normalizeAccountGroupRateRefreshIntervalMinutes } from '../shared/accountGroupRateRefresh.js';
 import cron from 'node-cron';
 import type { ScheduledTask } from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import { mergeAccountExtraConfig } from './accountExtraConfig.js';
+import { getCredentialModeFromExtraConfig, mergeAccountExtraConfig } from './accountExtraConfig.js';
+import { normalizeGroupRate } from './accountGroupRateService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
+import {
+  captureRuntimeSettingsSnapshot,
+  hydrateRuntimeSettingsFromPersistedSnapshot,
+  restoreRuntimeSettingsSnapshot,
+} from '../runtimeSettingsHydration.js';
+import {
+  clearAccountRateRefreshFailureState,
+  startAccountRateRefreshScheduler,
+  stopAccountRateRefreshScheduler,
+} from './accountRateRefreshScheduler.js';
+import { runRuntimeMaintenance } from './runtimeMaintenanceOwner.js';
+import { reconcileRuntimeSettingsFromPersistedSnapshot } from './runtimeSettingsReconciliation.js';
 
 const BACKUP_VERSION = '2.1';
 
@@ -42,6 +56,7 @@ type SiteRow = typeof schema.sites.$inferSelect;
 type SiteApiEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+type AccountGroupRateRow = typeof schema.accountGroupRates.$inferSelect;
 type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
@@ -106,6 +121,7 @@ interface AccountsBackupSection {
   sites: SiteRow[];
   siteApiEndpoints?: SiteApiEndpointRow[];
   accounts: BackupAccountRow[];
+  accountGroupRates?: AccountGroupRateRow[];
   accountTokens: AccountTokenRow[];
   tokenRoutes: TokenRouteRow[];
   routeChannels: BackupRouteChannelRow[];
@@ -231,6 +247,15 @@ interface BackupImportResult {
   warnings?: string[];
 }
 
+type BackupImportDependencies = {
+  stopAccountRateRefreshScheduler?: typeof stopAccountRateRefreshScheduler;
+  startAccountRateRefreshScheduler?: typeof startAccountRateRefreshScheduler;
+  hydrateRuntimeSettingsFromPersistedSnapshot?: typeof hydrateRuntimeSettingsFromPersistedSnapshot;
+  clearAccountRateRefreshFailureState?: typeof clearAccountRateRefreshFailureState;
+  restorePriorRuntime?: () => Promise<void>;
+  reconcileCommittedRuntime?: () => Promise<void>;
+};
+
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   // Keep current admin login credential unchanged to avoid accidental lock-out.
   'auth_token',
@@ -244,6 +269,7 @@ const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
 let backupWebdavTask: ScheduledTask | null = null;
+const inFlightBackupWebdavTasks = new Set<Promise<unknown>>();
 
 const DIRECT_API_PLATFORMS = new Set([
   'openai',
@@ -1253,9 +1279,10 @@ async function fetchBackupWebdav(url: string, init: RequestInit): Promise<Respon
   }
 }
 
-function stopBackupWebdavScheduler() {
+export async function stopBackupWebdavScheduler() {
   backupWebdavTask?.stop();
   backupWebdavTask = null;
+  await Promise.allSettled([...inFlightBackupWebdavTasks]);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -1263,6 +1290,14 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function isSettingValueAcceptable(key: string, value: unknown): boolean {
+  if (key === 'account_group_rate_refresh_enabled') {
+    return typeof value === 'boolean';
+  }
+
+  if (key === 'account_group_rate_refresh_interval_minutes') {
+    return normalizeAccountGroupRateRefreshIntervalMinutes(value) != null;
+  }
+
   if (key === 'checkin_cron' || key === 'balance_refresh_cron' || key === 'log_cleanup_cron') {
     return typeof value === 'string' && cron.validate(value);
   }
@@ -1299,6 +1334,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     sites,
     siteApiEndpoints,
     accounts,
+    accountGroupRates,
     accountTokens,
     tokenRoutes,
     routeChannels,
@@ -1316,6 +1352,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       )
       .all(),
     db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all(),
+    db.select().from(schema.accountGroupRates).orderBy(asc(schema.accountGroupRates.id)).all(),
     db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all(),
     db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all(),
     db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all(),
@@ -1334,6 +1371,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     sites,
     siteApiEndpoints,
     accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }) => row),
+    accountGroupRates,
     accountTokens,
     tokenRoutes,
     routeChannels: routeChannels.map(({
@@ -1417,6 +1455,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     ? input.siteApiEndpoints as SiteApiEndpointRow[]
     : undefined;
   const accounts = Array.isArray(input.accounts) ? input.accounts as BackupAccountRow[] : null;
+  const accountGroupRates = Array.isArray(input.accountGroupRates)
+    ? input.accountGroupRates as AccountGroupRateRow[]
+    : undefined;
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountTokenRow[] : null;
   const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as TokenRouteRow[] : null;
   const routeChannels = Array.isArray(input.routeChannels) ? input.routeChannels as BackupRouteChannelRow[] : null;
@@ -1439,6 +1480,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     sites,
     siteApiEndpoints,
     accounts,
+    accountGroupRates,
     accountTokens,
     tokenRoutes,
     routeChannels,
@@ -1521,23 +1563,26 @@ function detectImportMetadata(data: RawBackupData): {
   };
 }
 
-async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
-  const runtimeState = await collectCurrentRuntimeStateSnapshot();
+async function importAccountsSection(
+  section: AccountsBackupSection,
+  tx: typeof db,
+  runtimeState: RuntimeStateSnapshot,
+): Promise<void> {
   const importedIndexes = buildRuntimeIdentityIndexesFromSection(section);
   const shouldReplaceSiteDisabledModels = Array.isArray(section.siteDisabledModels);
   const shouldReplaceManualModels = Array.isArray(section.manualModels);
   const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
 
-  await db.transaction(async (tx) => {
-    if (shouldReplaceDownstreamApiKeys) {
+  if (shouldReplaceDownstreamApiKeys) {
       await tx.delete(schema.downstreamApiKeys).run();
-    }
+  }
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.routeChannels).run();
     await tx.delete(schema.routeGroupSources).run();
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.accountGroupRates).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.sites).run();
@@ -1608,6 +1653,20 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         lastCheckinAt: runtimeAccount?.lastCheckinAt ?? row.lastCheckinAt,
         lastBalanceRefresh: runtimeAccount?.lastBalanceRefresh ?? row.lastBalanceRefresh,
         extraConfig: row.extraConfig,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }).run();
+    }
+
+    for (const [index, row] of (section.accountGroupRates || []).entries()) {
+      const normalizedRate = normalizeGroupRate(row, index);
+      await tx.insert(schema.accountGroupRates).values({
+        accountId: row.accountId,
+        groupKey: normalizedRate.groupKey,
+        groupName: normalizedRate.groupName,
+        description: normalizedRate.description ?? null,
+        ratio: normalizedRate.ratio,
+        lastSyncedAt: row.lastSyncedAt,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
@@ -1846,25 +1905,173 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         createdAt: row.createdAt,
       }).run();
     }
-  });
 }
 
-async function importPreferencesSection(section: PreferencesBackupSection): Promise<Array<{ key: string; value: unknown }>> {
+async function importPreferencesSection(
+  section: PreferencesBackupSection,
+  tx: typeof db,
+): Promise<Array<{ key: string; value: unknown }>> {
   const applied: Array<{ key: string; value: unknown }> = [];
 
-  await db.transaction(async (tx) => {
-    for (const row of section.settings) {
+  for (const row of section.settings) {
       if (!isSettingValueAcceptable(row.key, row.value)) continue;
 
       await upsertSetting(row.key, row.value, tx);
       applied.push({ key: row.key, value: row.value });
-    }
-  });
+  }
 
   return applied;
 }
 
-export async function importBackup(data: RawBackupData): Promise<BackupImportResult> {
+function validateImportSections(
+  accountsSection: AccountsBackupSection | null,
+  preferencesSection: PreferencesBackupSection | null,
+): void {
+  if (accountsSection) {
+    const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
+      if (!isRecord(value)) throw new Error(`导入数据格式错误：${label}必须为对象`);
+      return value;
+    };
+    const requireId = (row: Record<string, unknown>, label: string, key = 'id'): number => {
+      const value = row[key];
+      if (!Number.isInteger(value) || Number(value) <= 0) throw new Error(`导入数据格式错误：${label}.${key}无效`);
+      return Number(value);
+    };
+    const requireText = (row: Record<string, unknown>, label: string, key: string): string => {
+      const value = row[key];
+      if (typeof value !== 'string' || !value.trim()) throw new Error(`导入数据格式错误：${label}.${key}无效`);
+      return value;
+    };
+    const uniqueIds = (rows: unknown[], label: string): Set<number> => {
+      const ids = new Set<number>();
+      rows.forEach((value, index) => {
+        const id = requireId(requireRecord(value, `${label}[${index}]`), `${label}[${index}]`);
+        if (ids.has(id)) throw new Error(`导入数据格式错误：${label}包含重复 id ${id}`);
+        ids.add(id);
+      });
+      return ids;
+    };
+    const requireUniqueCompositeKey = (
+      seen: Set<string>,
+      key: string,
+      label: string,
+    ): void => {
+      if (seen.has(key)) throw new Error(`导入数据格式错误：${label}包含重复项`);
+      seen.add(key);
+    };
+
+    const siteIds = uniqueIds(accountsSection.sites, 'sites');
+    const accountIds = uniqueIds(accountsSection.accounts, 'accounts');
+    const tokenIds = uniqueIds(accountsSection.accountTokens, 'accountTokens');
+    const routeIds = uniqueIds(accountsSection.tokenRoutes, 'tokenRoutes');
+    uniqueIds(accountsSection.routeChannels, 'routeChannels');
+    if (accountsSection.siteApiEndpoints) uniqueIds(accountsSection.siteApiEndpoints, 'siteApiEndpoints');
+    if (accountsSection.routeGroupSources) uniqueIds(accountsSection.routeGroupSources, 'routeGroupSources');
+
+    const siteIdentityKeys = new Set<string>();
+    accountsSection.sites.forEach((value, index) => {
+      const row = requireRecord(value, `sites[${index}]`);
+      requireText(row, `sites[${index}]`, 'name');
+      const url = requireText(row, `sites[${index}]`, 'url');
+      const platform = requireText(row, `sites[${index}]`, 'platform');
+      requireUniqueCompositeKey(
+        siteIdentityKeys,
+        `${platform}::${url}`,
+        'sites',
+      );
+    });
+    const endpointIdentityKeys = new Set<string>();
+    (accountsSection.siteApiEndpoints || []).forEach((value, index) => {
+      const row = requireRecord(value, `siteApiEndpoints[${index}]`);
+      const siteId = requireId(row, `siteApiEndpoints[${index}]`, 'siteId');
+      if (!siteIds.has(siteId)) throw new Error(`导入数据格式错误：站点端点 ${index} 引用了不存在的站点`);
+      const url = requireText(row, `siteApiEndpoints[${index}]`, 'url');
+      requireUniqueCompositeKey(endpointIdentityKeys, `${siteId}::${url}`, 'siteApiEndpoints');
+    });
+
+    for (const [index, row] of accountsSection.accounts.entries()) {
+      const value = requireRecord(row, `accounts[${index}]`);
+      if (typeof value.accessToken !== 'string') throw new Error(`导入数据格式错误：accounts[${index}].accessToken无效`);
+      if (getCredentialModeFromExtraConfig(row.extraConfig) !== 'apikey' && !value.accessToken.trim()) {
+        throw new Error(`导入数据格式错误：accounts[${index}].accessToken无效`);
+      }
+      if (!siteIds.has(row.siteId)) throw new Error(`导入数据格式错误：账号 ${row.id} 引用了不存在的站点`);
+    }
+    const groupRateIdentityKeys = new Set<string>();
+    for (const [index, row] of (accountsSection.accountGroupRates || []).entries()) {
+      if (!accountIds.has(row.accountId)) throw new Error(`导入数据格式错误：倍率 ${index} 引用了不存在的账号`);
+      const normalized = normalizeGroupRate(row, index);
+      requireUniqueCompositeKey(
+        groupRateIdentityKeys,
+        `${row.accountId}::${normalized.groupKey}`,
+        'accountGroupRates',
+      );
+    }
+    for (const [index, row] of accountsSection.accountTokens.entries()) {
+      const value = requireRecord(row, `accountTokens[${index}]`);
+      requireText(value, `accountTokens[${index}]`, 'name'); requireText(value, `accountTokens[${index}]`, 'token');
+      if (!accountIds.has(row.accountId)) throw new Error(`导入数据格式错误：令牌 ${row.id} 引用了不存在的账号`);
+    }
+    accountsSection.tokenRoutes.forEach((row, index) => requireText(requireRecord(row, `tokenRoutes[${index}]`), `tokenRoutes[${index}]`, 'modelPattern'));
+    for (const row of accountsSection.routeChannels) {
+      if (!accountIds.has(row.accountId) || !routeIds.has(row.routeId) || (row.tokenId != null && !tokenIds.has(row.tokenId))) {
+        throw new Error(`导入数据格式错误：通道 ${row.id} 的引用不完整`);
+      }
+    }
+    const routeGroupIdentityKeys = new Set<string>();
+    for (const [index, row] of (accountsSection.routeGroupSources || []).entries()) {
+      if (!routeIds.has(row.groupRouteId) || !routeIds.has(row.sourceRouteId)) throw new Error(`导入数据格式错误：路由组来源 ${index} 的引用不完整`);
+      requireUniqueCompositeKey(
+        routeGroupIdentityKeys,
+        `${row.groupRouteId}::${row.sourceRouteId}`,
+        'routeGroupSources',
+      );
+    }
+    const disabledModelIdentityKeys = new Set<string>();
+    for (const [index, row] of (accountsSection.siteDisabledModels || []).entries()) {
+      if (!siteIds.has(row.siteId) || typeof row.modelName !== 'string' || !row.modelName.trim()) throw new Error(`导入数据格式错误：禁用模型 ${index} 无效`);
+      requireUniqueCompositeKey(
+        disabledModelIdentityKeys,
+        `${row.siteId}::${row.modelName}`,
+        'siteDisabledModels',
+      );
+    }
+    const manualModelIdentityKeys = new Set<string>();
+    for (const [index, row] of (accountsSection.manualModels || []).entries()) {
+      if (!accountIds.has(row.accountId) || typeof row.modelName !== 'string' || !row.modelName.trim()) throw new Error(`导入数据格式错误：手动模型 ${index} 无效`);
+      requireUniqueCompositeKey(
+        manualModelIdentityKeys,
+        `${row.accountId}::${row.modelName}`,
+        'manualModels',
+      );
+    }
+    const parseIdList = (raw: unknown, label: string): number[] => {
+      if (raw == null || raw === '') return [];
+      const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!Array.isArray(value) || value.some((id) => !Number.isInteger(id))) throw new Error(`导入数据格式错误：${label}无效`);
+      return value.map(Number);
+    };
+    const downstreamKeys = new Set<string>();
+    for (const [index, value] of (accountsSection.downstreamApiKeys || []).entries()) {
+      const row = requireRecord(value, `downstreamApiKeys[${index}]`);
+      requireText(row, `downstreamApiKeys[${index}]`, 'name');
+      const key = requireText(row, `downstreamApiKeys[${index}]`, 'key');
+      if (downstreamKeys.has(key)) throw new Error(`导入数据格式错误：下游密钥重复`);
+      downstreamKeys.add(key);
+      for (const id of parseIdList(row.allowedRouteIds, `downstreamApiKeys[${index}].allowedRouteIds`)) if (!routeIds.has(id)) throw new Error(`导入数据格式错误：下游密钥引用了不存在的路由`);
+      for (const id of parseIdList(row.excludedSiteIds, `downstreamApiKeys[${index}].excludedSiteIds`)) if (!siteIds.has(id)) throw new Error(`导入数据格式错误：下游密钥引用了不存在的站点`);
+    }
+  }
+
+  for (const row of preferencesSection?.settings || []) {
+    JSON.stringify(row.value);
+  }
+}
+
+export async function importBackup(
+  data: RawBackupData,
+  deps: BackupImportDependencies = {},
+): Promise<BackupImportResult> {
   if (!isRecord(data)) {
     throw new Error('导入数据格式错误：必须为 JSON 对象');
   }
@@ -1878,43 +2085,79 @@ export async function importBackup(data: RawBackupData): Promise<BackupImportRes
   const importMetadata = detectImportMetadata(data);
 
   const type = typeof data.type === 'string' ? data.type : '';
-  const accountsRequested = type === 'accounts' || !!accountsSection;
-  const preferencesRequested = type === 'preferences' || !!preferencesSection;
+  const accountsRequested = type === 'accounts' || 'accounts' in data || !!accountsSection;
+  const preferencesRequested = type === 'preferences' || 'preferences' in data || !!preferencesSection;
 
   if (!accountsRequested && !preferencesRequested) {
     throw new Error('导入数据中没有可识别的账号或设置数据');
   }
 
-  let accountsImported = false;
-  let preferencesImported = false;
-  let appliedSettings: Array<{ key: string; value: unknown }> = [];
-
   if (accountsRequested) {
     if (!accountsSection) {
       throw new Error('导入数据格式错误：账号数据结构不正确');
     }
-    await importAccountsSection(accountsSection);
-    accountsImported = true;
   }
 
   if (preferencesRequested) {
     if (!preferencesSection) {
       throw new Error('导入数据格式错误：设置数据结构不正确');
     }
-    appliedSettings = await importPreferencesSection(preferencesSection);
-    preferencesImported = true;
   }
+  validateImportSections(accountsSection, preferencesSection);
 
-  return {
-    allImported: (!accountsRequested || accountsImported) && (!preferencesRequested || preferencesImported),
-    sections: {
-      accounts: accountsImported,
-      preferences: preferencesImported,
-    },
-    appliedSettings,
-    summary: importMetadata.summary,
-    warnings: importMetadata.warnings,
-  };
+  const stopScheduler = deps.stopAccountRateRefreshScheduler ?? stopAccountRateRefreshScheduler;
+  const startScheduler = deps.startAccountRateRefreshScheduler ?? startAccountRateRefreshScheduler;
+  const hydrateRuntime = deps.hydrateRuntimeSettingsFromPersistedSnapshot
+    ?? hydrateRuntimeSettingsFromPersistedSnapshot;
+  const clearFailure = deps.clearAccountRateRefreshFailureState
+    ?? clearAccountRateRefreshFailureState;
+  let priorRuntime = captureRuntimeSettingsSnapshot();
+  const reconcilePersistedRuntime = deps.reconcileCommittedRuntime ?? (async () => {
+    await reconcileRuntimeSettingsFromPersistedSnapshot({ hydrate: hydrateRuntime });
+    await reloadBackupWebdavScheduler();
+  });
+
+  return runRuntimeMaintenance('restore', async ({ markCommitted }) => {
+    priorRuntime = captureRuntimeSettingsSnapshot();
+    const runtimeState = accountsSection
+      ? await collectCurrentRuntimeStateSnapshot()
+      : null;
+    let appliedSettings: Array<{ key: string; value: unknown }> = [];
+
+    await db.transaction(async (tx) => {
+      if (accountsSection && runtimeState) {
+        await importAccountsSection(accountsSection, tx as typeof db, runtimeState);
+      }
+      if (preferencesSection) {
+        appliedSettings = await importPreferencesSection(preferencesSection, tx as typeof db);
+      }
+    });
+    markCommitted();
+
+    await reconcilePersistedRuntime();
+    for (const row of accountsSection?.accounts || []) {
+      clearFailure(row.id);
+    }
+
+    return {
+      allImported: true,
+      sections: {
+        accounts: !!accountsSection,
+        preferences: !!preferencesSection,
+      },
+      appliedSettings,
+      summary: importMetadata.summary,
+      warnings: importMetadata.warnings,
+    };
+  }, {
+    stop: () => stopScheduler({ resumePendingUpdates: false }),
+    start: startScheduler,
+    restorePriorRuntime: deps.restorePriorRuntime ?? (async () => {
+      restoreRuntimeSettingsSnapshot(priorRuntime);
+      await reloadBackupWebdavScheduler();
+    }),
+    reconcileCommittedRuntime: reconcilePersistedRuntime,
+  });
 }
 
 export async function getBackupWebdavConfig() {
@@ -2061,7 +2304,7 @@ export async function importBackupFromWebdav() {
 }
 
 export async function reloadBackupWebdavScheduler() {
-  stopBackupWebdavScheduler();
+  await stopBackupWebdavScheduler();
   const config = await loadBackupWebdavConfig();
   if (!config.enabled || !config.autoSyncEnabled) return;
 
@@ -2073,12 +2316,15 @@ export async function reloadBackupWebdavScheduler() {
   }
 
   backupWebdavTask = cron.schedule(config.autoSyncCron, () => {
-    void exportBackupToWebdav(config.exportType).catch((error) => {
-      console.warn(`[backup/webdav] auto sync failed: ${(error as Error)?.message || 'unknown error'}`);
-    });
+    const task = exportBackupToWebdav(config.exportType)
+      .catch((error) => {
+        console.warn(`[backup/webdav] auto sync failed: ${(error as Error)?.message || 'unknown error'}`);
+      })
+      .finally(() => inFlightBackupWebdavTasks.delete(task));
+    inFlightBackupWebdavTasks.add(task);
   });
 }
 
-export function __resetBackupWebdavSchedulerForTests() {
-  stopBackupWebdavScheduler();
+export async function __resetBackupWebdavSchedulerForTests() {
+  await stopBackupWebdavScheduler();
 }

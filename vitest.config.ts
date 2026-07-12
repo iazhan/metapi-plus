@@ -2,6 +2,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    setupFiles: ['./scripts/dev/vitest-worker-setup.ts'],
     exclude: [
       ...configDefaults.exclude,
       '.worktrees/**',

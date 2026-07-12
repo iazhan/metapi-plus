@@ -42,6 +42,8 @@ export const zhToEnSupplemental: Record<string, string> = {
   '按模型过滤': 'Filter by model',
   '按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）': 'Randomly by weight (W=${weight}, cost=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}, same-site channel=${siteChannels}, probability≈${(probability * 100).toFixed(1)}%)',
   'P 值是硬优先级，只会在当前最高可用优先级内结合权重、成本和健康度随机选择': 'P value is a hard priority. Selection stays within the highest available priority tier, then chooses randomly using weight, cost, and health signals.',
+  '自动刷新账号倍率': 'Automatically refresh account group rates',
+  '倍率刷新间隔（分钟）': 'Group rate refresh interval (minutes)',
   '保存': 'save',
   '保存 Cookie': 'Save Cookie',
   '保存 Cookie 失败': 'Failed to save cookie',

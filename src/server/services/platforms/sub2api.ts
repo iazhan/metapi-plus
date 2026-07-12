@@ -6,10 +6,16 @@ import {
   CreateApiTokenOptions,
   SubscriptionPlanSummary,
   SubscriptionSummary,
+  PlatformHttpError,
+  parseSafeNonNegativeInteger,
+  parseSafePositiveInteger,
+  type GroupRateInfo,
+  type LoginResult,
   type SiteAnnouncement,
   UserInfo,
 } from './base.js';
 import { stripTrailingSlashes } from '../urlNormalization.js';
+import { matchesExplicitUsageLimitFailureText } from '../usageLimitFailure.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
   return stripTrailingSlashes(baseUrl || '');
@@ -19,7 +25,7 @@ function normalizeBaseUrl(baseUrl: string): string {
  * Sub2API adapter.
  *
  * Sub2API uses JWT-based auth with endpoints under /api/v1/*.
- * It does NOT support: login or check-in.
+ * It does not support check-in.
  * Balance is derived from a USD amount returned by /api/v1/auth/me.
  */
 export class Sub2ApiAdapter extends BasePlatformAdapter {
@@ -30,21 +36,11 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   private parsePositiveInteger(raw: unknown): number | undefined {
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.trunc(raw);
-    if (typeof raw === 'string') {
-      const parsed = Number.parseInt(raw.trim(), 10);
-      if (!Number.isNaN(parsed) && parsed > 0) return parsed;
-    }
-    return undefined;
+    return parseSafePositiveInteger(raw);
   }
 
   private parseNonNegativeInteger(raw: unknown): number | undefined {
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.trunc(raw);
-    if (typeof raw === 'string') {
-      const parsed = Number.parseInt(raw.trim(), 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
-    }
-    return undefined;
+    return parseSafeNonNegativeInteger(raw);
   }
 
   private parseNonNegativeNumber(raw: unknown): number | undefined {
@@ -247,15 +243,17 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return true;
   }
 
-  private parseTokenItems(payload: any): Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }> {
+  private extractRawTokenItems(payload: any): any[] | null {
     const source = payload?.data ?? payload;
-    const rawItems = (() => {
-      if (Array.isArray(source)) return source;
-      if (Array.isArray(source?.items)) return source.items;
-      if (Array.isArray(source?.list)) return source.list;
-      if (Array.isArray(source?.data)) return source.data;
-      return [];
-    })();
+    if (Array.isArray(source)) return source;
+    if (Array.isArray(source?.items)) return source.items;
+    if (Array.isArray(source?.list)) return source.list;
+    if (Array.isArray(source?.data)) return source.data;
+    return null;
+  }
+
+  private parseTokenItems(payload: any): Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }> {
+    const rawItems = this.extractRawTokenItems(payload) ?? [];
 
     const items: Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }> = [];
     for (const item of rawItems) {
@@ -494,30 +492,66 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return normalizedBase;
   }
 
-  private async listApiKeys(baseUrl: string, accessToken: string): Promise<Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }>> {
+  private async listApiKeys(
+    baseUrl: string,
+    accessToken: string,
+    signal?: AbortSignal,
+  ): Promise<Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }>> {
     const endpoints = [
       '/api/v1/keys?page=1&page_size=100',
       '/api/v1/api-keys?page=1&page_size=100',
     ];
 
     const headers = this.buildAuthHeader(accessToken);
+    const isUnsupportedEndpoint = (error: Error) => (
+      error instanceof PlatformHttpError && [404, 405, 501].includes(error.status)
+    );
+    let terminalError: Error | null = null;
     for (const endpoint of endpoints) {
       try {
         const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
           headers,
+          signal,
         });
         const data = this.parseSub2ApiEnvelope<any>(res, endpoint);
+        const rawItems = this.extractRawTokenItems(data);
+        if (!rawItems) {
+          throw new Error(`Invalid api key list from ${endpoint}`);
+        }
         const items = this.parseTokenItems(data);
-        if (items.length > 0) return items;
-      } catch {}
+        if (rawItems.length > 0 && items.length === 0) {
+          throw new Error(`Invalid api key list from ${endpoint}`);
+        }
+        return items;
+      } catch (error) {
+        signal?.throwIfAborted();
+        const candidate = error instanceof Error ? error : new Error(String(error));
+        if (candidate instanceof PlatformHttpError && candidate.status === 403) {
+          throw candidate;
+        }
+        if (
+          !terminalError
+          || !isUnsupportedEndpoint(candidate)
+          || isUnsupportedEndpoint(terminalError)
+        ) {
+          terminalError = candidate;
+        }
+      }
     }
 
-    return [];
+    if (terminalError) throw terminalError;
+    throw new Error('Failed to fetch api key list');
   }
 
-  private async fetchModelsByToken(baseUrl: string, token: string): Promise<string[]> {
+  private async fetchModelsByToken(
+    baseUrl: string,
+    token: string,
+  ): Promise<{ models: string[]; error: Error | null }> {
     const authToken = this.normalizeTokenKeyForCompare(token);
-    if (!authToken) return [];
+    if (!authToken) return { models: [], error: null };
+
+    let terminalError: Error | null = null;
+    let usageLimitError: Error | null = null;
 
     for (const url of this.resolveModelEndpoints(baseUrl)) {
       try {
@@ -525,11 +559,38 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         const models = this.extractModelIds(res);
-        if (models.length > 0) return models;
-      } catch {}
+        if (models.length > 0) return { models, error: null };
+      } catch (error) {
+        const candidate = error instanceof Error ? error : new Error(String(error));
+        if (candidate instanceof PlatformHttpError && [404, 405, 501].includes(candidate.status)) {
+          continue;
+        }
+        if (matchesExplicitUsageLimitFailureText(candidate.message)) {
+          usageLimitError ??= candidate;
+        } else {
+          terminalError ??= candidate;
+        }
+      }
     }
 
-    return [];
+    return { models: [], error: usageLimitError ?? terminalError };
+  }
+
+  private shouldDiscoverApiTokenForModels(token: string, error: Error | null): boolean {
+    if (error && matchesExplicitUsageLimitFailureText(error.message)) {
+      return false;
+    }
+
+    const normalizedToken = this.normalizeTokenKeyForCompare(token);
+    const jwtParts = normalizedToken.split('.');
+    if (jwtParts.length === 3 && jwtParts.every(Boolean)) {
+      return true;
+    }
+
+    const message = (error?.message || '').toLowerCase();
+    return message.includes('api_key_required')
+      || message.includes('api key is required')
+      || message.includes('api key required');
   }
 
   private resolveExpiresInDays(expiredTime?: number): number | undefined {
@@ -653,10 +714,8 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     });
     const data = this.parseSub2ApiEnvelope<any>(res, endpoint);
 
-    const id = typeof data.id === 'number' ? data.id
-      : typeof data.id === 'string' ? Number.parseInt(data.id, 10)
-      : NaN;
-    if (!Number.isFinite(id) || id <= 0) {
+    const id = this.parsePositiveInteger(data.id);
+    if (id === undefined) {
       throw new Error(`Invalid user ID in response from ${endpoint}`);
     }
 
@@ -680,13 +739,59 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return Math.round(Math.max(0, balanceUsd) * 500000);
   }
 
-  // --- Login: Not supported (JWT only) ---
+  // --- Login ---
   override async login(
-    _baseUrl: string,
-    _username: string,
-    _password: string,
-  ): Promise<{ success: false; message: string }> {
-    return { success: false, message: 'Sub2API uses JWT authentication; login is not supported' };
+    baseUrl: string,
+    username: string,
+    password: string,
+    signal?: AbortSignal,
+  ): Promise<LoginResult> {
+    const endpoint = '/api/v1/auth/login';
+    try {
+      const response = await this.fetchJson<any>(`${normalizeBaseUrl(baseUrl)}${endpoint}`, {
+        method: 'POST',
+        body: JSON.stringify({ email: username, password }),
+        signal,
+      });
+      const data = this.parseSub2ApiEnvelope<any>(response, endpoint);
+      if (data?.requires_2fa === true || data?.require_2fa === true) {
+        return { success: false, message: 'Sub2API account requires 2FA; password login is unavailable' };
+      }
+
+      const accessToken = typeof data?.access_token === 'string' ? data.access_token.trim() : '';
+      if (!accessToken) {
+        return { success: false, message: 'Sub2API login returned an empty access_token' };
+      }
+
+      const refreshToken = typeof data?.refresh_token === 'string' ? data.refresh_token.trim() : '';
+      const expiresInSeconds = this.parsePositiveInteger(data?.expires_in);
+      const expiresAtCandidate = expiresInSeconds === undefined
+        ? undefined
+        : Date.now() + expiresInSeconds * 1000;
+      const expiresAt = expiresAtCandidate !== undefined
+        && Number.isFinite(expiresAtCandidate)
+        && expiresAtCandidate >= 0
+        && Number.isSafeInteger(expiresAtCandidate)
+        ? expiresAtCandidate
+        : undefined;
+      const platformUserId = this.parsePositiveInteger(
+        data?.id ?? data?.user_id ?? data?.userId ?? data?.user?.id,
+      );
+      return {
+        success: true,
+        accessToken,
+        username,
+        ...(refreshToken ? { refreshToken } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+        ...(platformUserId ? { platformUserId } : {}),
+      };
+    } catch (error: any) {
+      signal?.throwIfAborted();
+      return {
+        success: false,
+        message: error?.message || 'Sub2API login request failed',
+      };
+    }
   }
 
   // --- User Info ---
@@ -731,16 +836,24 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const managementBase = this.resolveManagementBaseUrl(normalizedBase);
-    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
-    if (directModels.length > 0) return directModels;
+    const directResult = await this.fetchModelsByToken(normalizedBase, apiToken);
+    if (directResult.models.length > 0) return directResult.models;
+    if (!this.shouldDiscoverApiTokenForModels(apiToken, directResult.error)) {
+      if (directResult.error) throw directResult.error;
+      return [];
+    }
 
     // Session JWT cannot access /v1/models directly; discover a user key first.
     const discoveredApiToken = await this.getApiToken(managementBase, apiToken);
     if (!discoveredApiToken) return [];
     if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
+      if (directResult.error) throw directResult.error;
       return [];
     }
-    return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+    const discoveredResult = await this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+    if (discoveredResult.models.length > 0) return discoveredResult.models;
+    if (discoveredResult.error) throw discoveredResult.error;
+    return [];
   }
 
   override async getSiteAnnouncements(baseUrl: string, accessToken: string): Promise<SiteAnnouncement[]> {
@@ -778,25 +891,31 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async getApiTokens(baseUrl: string, accessToken: string): Promise<ApiTokenInfo[]> {
-    try {
-      const keys = await this.listApiKeys(normalizeBaseUrl(baseUrl), accessToken);
-      return keys.map((item) => {
-        const tokenInfo: ApiTokenInfo = {
-          name: item.name,
-          key: item.key,
-          enabled: item.enabled,
-        };
-        if (item.tokenGroup) tokenInfo.tokenGroup = item.tokenGroup;
-        return tokenInfo;
-      });
-    } catch {
-      return [];
-    }
+  override async getApiTokens(
+    baseUrl: string,
+    accessToken: string,
+    _platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    const keys = await this.listApiKeys(normalizeBaseUrl(baseUrl), accessToken, signal);
+    return keys.map((item) => {
+      const tokenInfo: ApiTokenInfo = {
+        name: item.name,
+        key: item.key,
+        enabled: item.enabled,
+      };
+      if (item.tokenGroup) tokenInfo.tokenGroup = item.tokenGroup;
+      return tokenInfo;
+    });
   }
 
-  override async getApiToken(baseUrl: string, accessToken: string): Promise<string | null> {
-    const tokens = await this.getApiTokens(baseUrl, accessToken);
+  override async getApiToken(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const tokens = await this.getApiTokens(baseUrl, accessToken, platformUserId, signal);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 
@@ -809,6 +928,81 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     if (inferredFromKeys.length > 0) return inferredFromKeys;
 
     return ['default'];
+  }
+
+  async getGroupRates(
+    baseUrl: string,
+    accessToken: string,
+    _platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<GroupRateInfo[]> {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const headers = this.buildAuthHeader(accessToken);
+    const availableEndpoint = '/api/v1/groups/available';
+    const availableResponse = await this.fetchJson<any>(`${normalizedBase}${availableEndpoint}`, {
+      headers,
+      signal,
+    });
+    const available = this.parseSub2ApiEnvelope<any>(availableResponse, availableEndpoint);
+    if (!Array.isArray(available)) {
+      throw new Error(`Invalid group list from ${availableEndpoint}`);
+    }
+    if (available.length === 0) return [];
+
+    let overrides: Record<string, number> = {};
+    const ratesEndpoint = '/api/v1/groups/rates';
+    try {
+      const ratesResponse = await this.fetchJson<any>(`${normalizedBase}${ratesEndpoint}`, {
+        headers,
+        signal,
+      });
+      const parsedRates = this.parseSub2ApiEnvelope<any>(ratesResponse, ratesEndpoint);
+      if (!parsedRates || typeof parsedRates !== 'object' || Array.isArray(parsedRates)) {
+        throw new Error(`Invalid group rate override list from ${ratesEndpoint}`);
+      }
+      for (const [rawGroupKey, rawRatio] of Object.entries(parsedRates as Record<string, unknown>)) {
+        const groupKey = this.parsePositiveInteger(rawGroupKey);
+        const ratio = this.parseNonNegativeNumber(rawRatio);
+        if (!groupKey || ratio === undefined) {
+          throw new Error(`Invalid group rate override for group ${rawGroupKey || '<empty>'}`);
+        }
+        overrides[String(groupKey)] = ratio;
+      }
+    } catch (error) {
+      signal?.throwIfAborted();
+      const unsupported = error instanceof PlatformHttpError
+        && [404, 405, 501].includes(error.status);
+      if (!unsupported) throw error;
+    }
+
+    const rates: GroupRateInfo[] = [];
+    for (let index = 0; index < available.length; index += 1) {
+      const rawGroup = available[index];
+      if (!rawGroup || typeof rawGroup !== 'object' || Array.isArray(rawGroup)) {
+        throw new Error(`Invalid group at index ${index} from ${availableEndpoint}`);
+      }
+      const groupKeyNumber = this.parsePositiveInteger(rawGroup.id ?? rawGroup.group_id);
+      if (!groupKeyNumber) {
+        throw new Error(`Invalid group at index ${index} from ${availableEndpoint}`);
+      }
+      const groupKey = String(groupKeyNumber);
+      const groupName = typeof rawGroup.name === 'string' && rawGroup.name.trim()
+        ? rawGroup.name.trim()
+        : groupKey;
+      const baseRatio = this.parseNonNegativeNumber(rawGroup.rate_multiplier ?? rawGroup.rateMultiplier);
+      if (baseRatio === undefined) {
+        throw new Error(`Invalid group rate for group ${groupKey} from ${availableEndpoint}`);
+      }
+      const ratio = overrides[groupKey] ?? baseRatio;
+      const description = typeof rawGroup.description === 'string' ? rawGroup.description.trim() : '';
+      rates.push({
+        groupKey,
+        groupName,
+        ratio,
+        ...(description ? { description } : {}),
+      });
+    }
+    return rates;
   }
 
   override async createApiToken(

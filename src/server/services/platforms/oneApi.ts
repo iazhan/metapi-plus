@@ -83,24 +83,37 @@ export class OneApiAdapter extends BasePlatformAdapter {
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string): Promise<ApiTokenInfo[]> {
-    try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+  async getApiTokens(
+    baseUrl: string,
+    accessToken: string,
+    _platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal,
+    });
+    if (res?.success === false) {
+      throw new Error(
+        typeof res.message === 'string' && res.message.trim()
+          ? res.message.trim()
+          : 'Failed to fetch token list',
+      );
+    }
 
-      const items = (() => {
-        if (Array.isArray(res?.data)) return res.data;
-        if (Array.isArray(res?.data?.items)) return res.data.items;
-        if (Array.isArray(res?.data?.data)) return res.data.data;
-        if (Array.isArray(res?.items)) return res.items;
-        if (Array.isArray(res?.list)) return res.list;
-        if (Array.isArray(res?.data?.list)) return res.data.list;
-        return [];
-      })();
+    const items = (() => {
+      if (Array.isArray(res?.data)) return res.data;
+      if (Array.isArray(res?.data?.items)) return res.data.items;
+      if (Array.isArray(res?.data?.data)) return res.data.data;
+      if (Array.isArray(res?.items)) return res.items;
+      if (Array.isArray(res?.list)) return res.list;
+      if (Array.isArray(res?.data?.list)) return res.data.list;
+      return null;
+    })();
+    if (!items) throw new Error('Invalid token list response');
 
-      return items
-        .map((item: any, index: number) => {
+    const tokens = items
+      .map((item: any, index: number) => {
           const key = typeof item?.key === 'string' ? item.key.trim() : '';
           if (!key) return null;
           const rawName = typeof item?.name === 'string' ? item.name.trim() : '';
@@ -115,15 +128,21 @@ export class OneApiAdapter extends BasePlatformAdapter {
           };
           if (rawGroup) tokenInfo.tokenGroup = rawGroup;
           return tokenInfo;
-        })
-        .filter((item: ApiTokenInfo | null): item is ApiTokenInfo => !!item);
-    } catch {
-      return [];
+      })
+      .filter((item: ApiTokenInfo | null): item is ApiTokenInfo => !!item);
+    if (items.length > 0 && tokens.length === 0) {
+      throw new Error('Invalid token list response');
     }
+    return tokens;
   }
 
-  async getApiToken(baseUrl: string, accessToken: string): Promise<string | null> {
-    const tokens = await this.getApiTokens(baseUrl, accessToken);
+  async getApiToken(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const tokens = await this.getApiTokens(baseUrl, accessToken, platformUserId, signal);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 

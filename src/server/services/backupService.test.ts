@@ -36,6 +36,7 @@ describe('backupService', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.siteAnnouncements).run();
     await db.delete(schema.siteDisabledModels).run();
+    await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -323,6 +324,91 @@ describe('backupService', () => {
     ]);
   });
 
+  it('roundtrips account group-rate snapshots with their owning account ids', async () => {
+    const now = '2026-07-10T01:02:03.000Z';
+    const site = await db.insert(schema.sites).values({
+      name: 'rate-backup-site',
+      url: 'https://rate-backup.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'rate-owner',
+      accessToken: 'session-token',
+    }).returning().get();
+    const rate = await db.insert(schema.accountGroupRates).values({
+      accountId: account.id,
+      groupKey: 'vip',
+      groupName: 'VIP',
+      description: 'discount group',
+      ratio: 0.8,
+      lastSyncedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    const exported = await backupService.exportBackup('accounts') as any;
+    expect(exported.accounts.accountGroupRates).toEqual([rate]);
+
+    await db.update(schema.accountGroupRates).set({
+      groupName: 'stale',
+      ratio: 9,
+      updatedAt: '2026-07-10T02:00:00.000Z',
+    }).where(eq(schema.accountGroupRates.id, rate.id)).run();
+
+    await backupService.importBackup(exported as Record<string, unknown>);
+
+    const restoredRates = await db.select().from(schema.accountGroupRates).all();
+    expect(restoredRates).toEqual([
+      expect.objectContaining({
+        accountId: rate.accountId,
+        groupKey: rate.groupKey,
+        groupName: rate.groupName,
+        description: rate.description,
+        ratio: rate.ratio,
+        lastSyncedAt: rate.lastSyncedAt,
+        createdAt: rate.createdAt,
+        updatedAt: rate.updatedAt,
+      }),
+    ]);
+    expect(restoredRates[0]?.id).not.toBe(rate.id);
+    expect(restoredRates[0]?.accountId).toBe(account.id);
+  });
+
+  it('rejects invalid group rates before a backup restore can replace existing data', async () => {
+    const now = '2026-07-10T01:02:03.000Z';
+    const site = await db.insert(schema.sites).values({
+      name: 'rate-validation-site',
+      url: 'https://rate-validation.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'rate-validation-owner',
+      accessToken: 'session-token',
+    }).returning().get();
+    await db.insert(schema.accountGroupRates).values({
+      accountId: account.id,
+      groupKey: 'vip',
+      groupName: 'VIP',
+      ratio: 0.8,
+      lastSyncedAt: now,
+    }).run();
+
+    const exported = await backupService.exportBackup('accounts') as any;
+    exported.accounts.accountGroupRates[0].ratio = -1;
+
+    await expect(backupService.importBackup(exported as Record<string, unknown>))
+      .rejects.toThrow(/invalid group rate/i);
+    await expect(db.select().from(schema.accountGroupRates).all()).resolves.toEqual([
+      expect.objectContaining({
+        accountId: account.id,
+        groupKey: 'vip',
+        ratio: 0.8,
+      }),
+    ]);
+  });
+
   it('does not export runtime database config in preferences backups', async () => {
     await db.insert(schema.settings).values([
       { key: 'db_type', value: JSON.stringify('postgres') },
@@ -338,6 +424,41 @@ describe('backupService', () => {
     expect(exportedSettingKeys).not.toContain('db_type');
     expect(exportedSettingKeys).not.toContain('db_url');
     expect(exportedSettingKeys).not.toContain('db_ssl');
+  });
+
+  it('exports valid account group rate refresh settings and skips invalid imported intervals', async () => {
+    await db.insert(schema.settings).values([
+      { key: 'account_group_rate_refresh_enabled', value: JSON.stringify(false) },
+      { key: 'account_group_rate_refresh_interval_minutes', value: JSON.stringify(45) },
+    ]).run();
+
+    const exported = await backupService.exportBackup('preferences') as any;
+    expect(exported.preferences.settings).toEqual(expect.arrayContaining([
+      { key: 'account_group_rate_refresh_enabled', value: false },
+      { key: 'account_group_rate_refresh_interval_minutes', value: 45 },
+    ]));
+
+    await db.delete(schema.settings).run();
+    const result = await backupService.importBackup({
+      version: '2.1',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [
+          { key: 'account_group_rate_refresh_enabled', value: false },
+          { key: 'account_group_rate_refresh_interval_minutes', value: 45 },
+          { key: 'account_group_rate_refresh_interval_minutes', value: 4 },
+        ],
+      },
+    });
+
+    expect(result.appliedSettings).toEqual([
+      { key: 'account_group_rate_refresh_enabled', value: false },
+      { key: 'account_group_rate_refresh_interval_minutes', value: 45 },
+    ]);
+    const savedInterval = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'account_group_rate_refresh_interval_minutes')).get();
+    expect(savedInterval?.value).toBe(JSON.stringify(45));
   });
 
   it('ignores imported runtime database config settings', async () => {
@@ -1803,9 +1924,213 @@ describe('backupService', () => {
       expect(scheduleSpy).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('invalid config'));
     } finally {
-      backupService.__resetBackupWebdavSchedulerForTests();
+      await backupService.__resetBackupWebdavSchedulerForTests();
       scheduleSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+
+  it('waits for an in-flight WebDAV task when stopping the scheduler', async () => {
+    let scheduledCallback: (() => void) | undefined;
+    const cronModule = await import('node-cron');
+    const scheduleSpy = vi.spyOn(cronModule.default, 'schedule').mockImplementation(((_expr: string, callback: () => void) => {
+      scheduledCallback = callback;
+      return { stop: vi.fn() } as never;
+    }) as typeof cronModule.default.schedule);
+    let releaseFetch!: () => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise((resolve) => {
+      releaseFetch = () => resolve(new Response('', { status: 201 }));
+    }));
+
+    try {
+      await backupService.saveBackupWebdavConfig({
+        enabled: true,
+        fileUrl: 'https://dav.example/backup.json',
+        username: '',
+        password: '',
+        exportType: 'all',
+        autoSyncEnabled: true,
+        autoSyncCron: '0 */6 * * *',
+      });
+      await backupService.reloadBackupWebdavScheduler();
+      scheduledCallback?.();
+      let stopped = false;
+      const stopping = backupService.stopBackupWebdavScheduler().then(() => { stopped = true; });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      releaseFetch();
+      await stopping;
+      expect(stopped).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      scheduleSpy.mockRestore();
+      await backupService.stopBackupWebdavScheduler();
+    }
+  });
+
+  it('rolls back accounts and preferences together when a preference cannot be persisted', async () => {
+    await db.insert(schema.sites).values({
+      id: 99,
+      name: 'local-site',
+      url: 'https://local.example.com',
+      platform: 'new-api',
+    }).run();
+
+    const payload = {
+      version: '2.1',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{ id: 1, name: 'imported-site', url: 'https://imported.example.com', platform: 'new-api' }],
+        accounts: [],
+        accountTokens: [],
+        tokenRoutes: [],
+        routeChannels: [],
+      },
+      preferences: {
+        settings: [{ key: 'invalid_bigint', value: 1n }],
+      },
+    } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+    })).rejects.toThrow();
+
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([99]);
+  });
+
+  it('awaits the exclusive scheduler drain before mutating restore data', async () => {
+    let releaseDrain!: () => void;
+    const drain = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    await db.insert(schema.sites).values({
+      id: 99,
+      name: 'local-site',
+      url: 'https://local.example.com',
+      platform: 'new-api',
+    }).run();
+    const payload = {
+      version: '2.1',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'imported-site', url: 'https://imported.example.com', platform: 'new-api' }],
+        accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [],
+      },
+    } as Record<string, unknown>;
+
+    const restore = backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: () => drain,
+      startAccountRateRefreshScheduler: () => undefined,
+    });
+    await Promise.resolve();
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([99]);
+
+    releaseDrain();
+    await restore;
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([1]);
+  });
+
+  it.each([
+    ['duplicate site ids', { sites: [{ id: 1, name: 'a', url: 'https://a.example', platform: 'new-api' }, { id: 1, name: 'b', url: 'https://b.example', platform: 'new-api' }] }],
+    ['invalid site row', { sites: [{ id: 1, name: '', url: 'https://a.example', platform: 'new-api' }] }],
+    ['orphan endpoint', { siteApiEndpoints: [{ id: 1, siteId: 99, url: 'https://endpoint.example' }] }],
+    ['orphan route group source', { tokenRoutes: [{ id: 1, modelPattern: 'gpt-*' }], routeGroupSources: [{ id: 1, groupRouteId: 1, sourceRouteId: 99 }] }],
+    ['orphan disabled model', { siteDisabledModels: [{ siteId: 99, modelName: 'gpt-x' }] }],
+    ['orphan manual model', { manualModels: [{ accountId: 99, modelName: 'gpt-x' }] }],
+    ['orphan downstream route', { downstreamApiKeys: [{ name: 'client', key: 'client-key', allowedRouteIds: JSON.stringify([99]) }] }],
+  ])('rejects %s before maintenance or database writes', async (_, overrides) => {
+    await db.insert(schema.sites).values({ id: 77, name: 'local', url: 'https://local.example', platform: 'new-api' }).run();
+    const stop = vi.fn(async () => undefined);
+    const base = { sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }], accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [] };
+    const payload = { version: '2.1', timestamp: Date.now(), type: 'accounts', accounts: { ...base, ...overrides } } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, { stopAccountRateRefreshScheduler: stop }))
+      .rejects.toThrow('导入数据格式错误');
+
+    expect(stop).not.toHaveBeenCalled();
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([77]);
+  });
+
+  it.each([
+    ['duplicate site identity', { sites: [{ id: 1, name: 'a', url: 'https://same.example', platform: 'new-api' }, { id: 2, name: 'b', url: 'https://same.example', platform: 'new-api' }] }],
+    ['duplicate endpoint identity', { siteApiEndpoints: [{ id: 1, siteId: 1, url: 'https://api.example' }, { id: 2, siteId: 1, url: 'https://api.example' }] }],
+    ['duplicate group rate identity', { accounts: [{ id: 1, siteId: 1, accessToken: 'session' }], accountGroupRates: [{ accountId: 1, groupKey: 'default', groupName: 'Default', ratio: 1, lastSyncedAt: '2026-01-01' }, { accountId: 1, groupKey: 'default', groupName: 'Default', ratio: 2, lastSyncedAt: '2026-01-01' }] }],
+    ['duplicate route group identity', { tokenRoutes: [{ id: 1, modelPattern: 'group' }, { id: 2, modelPattern: 'source' }], routeGroupSources: [{ id: 1, groupRouteId: 1, sourceRouteId: 2 }, { id: 2, groupRouteId: 1, sourceRouteId: 2 }] }],
+    ['duplicate disabled model identity', { siteDisabledModels: [{ siteId: 1, modelName: 'gpt-x' }, { siteId: 1, modelName: 'gpt-x' }] }],
+    ['duplicate manual model identity', { accounts: [{ id: 1, siteId: 1, accessToken: 'session' }], manualModels: [{ accountId: 1, modelName: 'gpt-x' }, { accountId: 1, modelName: 'gpt-x' }] }],
+  ])('rejects %s before maintenance or database writes', async (_, overrides) => {
+    await db.insert(schema.sites).values({ id: 77, name: 'local', url: 'https://local.example', platform: 'new-api' }).run();
+    const stop = vi.fn(async () => undefined);
+    const base = { sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }], accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [] };
+    const payload = { version: '2.1', timestamp: Date.now(), type: 'accounts', accounts: { ...base, ...overrides } } as unknown as Record<string, unknown>;
+    await expect(backupService.importBackup(payload, { stopAccountRateRefreshScheduler: stop })).rejects.toThrow('导入数据格式错误');
+    expect(stop).not.toHaveBeenCalled();
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([77]);
+  });
+
+  it.each([
+    ['site paths', { sites: [{ id: 1, name: 'a', url: 'https://same.example/a', platform: 'new-api' }, { id: 2, name: 'b', url: 'https://same.example/b', platform: 'new-api' }] }],
+    ['endpoint whitespace', { siteApiEndpoints: [{ id: 1, siteId: 1, url: 'https://api.example' }, { id: 2, siteId: 1, url: ' https://api.example ' }] }],
+    ['disabled model whitespace', { siteDisabledModels: [{ siteId: 1, modelName: 'gpt-x' }, { siteId: 1, modelName: ' gpt-x ' }] }],
+    ['manual model whitespace', { accounts: [{ id: 1, siteId: 1, accessToken: 'session' }], manualModels: [{ accountId: 1, modelName: 'gpt-x' }, { accountId: 1, modelName: ' gpt-x ' }] }],
+  ])('preserves distinct raw database identities for %s', async (_, overrides) => {
+    const base = { sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }], accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [] };
+    const payload = { version: '2.1', timestamp: Date.now(), type: 'accounts', accounts: { ...base, ...overrides } } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+    })).resolves.toMatchObject({ allImported: true });
+  });
+
+  it('hydrates once from persisted settings and clears backoff only after restore success', async () => {
+    const hydrate = vi.fn(async () => undefined);
+    const clearFailure = vi.fn(() => undefined);
+    const payload = {
+      version: '2.1', timestamp: Date.now(), type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'site', url: 'https://site.example.com', platform: 'new-api' }],
+        accounts: [{ id: 7, siteId: 1, username: 'user', accessToken: 'token', status: 'active' }],
+        accountTokens: [], tokenRoutes: [], routeChannels: [],
+      },
+    } as unknown as Record<string, unknown>;
+
+    await backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      hydrateRuntimeSettingsFromPersistedSnapshot: hydrate,
+      clearAccountRateRefreshFailureState: clearFailure,
+    });
+
+    expect(hydrate).toHaveBeenCalledTimes(1);
+    expect(clearFailure).toHaveBeenCalledWith(7);
+  });
+
+  it('does not clear backoff and reconciles committed runtime when hydration fails after commit', async () => {
+    const restoreRuntime = vi.fn(async () => undefined);
+    const reconcileCommitted = vi.fn()
+      .mockRejectedValueOnce(new Error('hydrate failed'))
+      .mockResolvedValueOnce(undefined);
+    const start = vi.fn(() => undefined);
+    const clearFailure = vi.fn(() => undefined);
+    const payload = {
+      version: '2.1', timestamp: Date.now(), type: 'accounts',
+      accounts: {
+        sites: [], accounts: [], accountTokens: [], tokenRoutes: [], routeChannels: [],
+      },
+    } as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: start,
+      restorePriorRuntime: restoreRuntime,
+      reconcileCommittedRuntime: reconcileCommitted,
+      clearAccountRateRefreshFailureState: clearFailure,
+    })).rejects.toThrow('hydrate failed');
+
+    expect(restoreRuntime).not.toHaveBeenCalled();
+    expect(reconcileCommitted).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(clearFailure).not.toHaveBeenCalled();
   });
 });

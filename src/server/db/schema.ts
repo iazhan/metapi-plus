@@ -104,6 +104,22 @@ export const accountTokens = sqliteTable('account_tokens', {
   enabledIdx: index('account_tokens_enabled_idx').on(table.enabled),
 }));
 
+export const accountGroupRates = sqliteTable('account_group_rates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  groupKey: text('group_key').notNull(),
+  groupName: text('group_name').notNull(),
+  description: text('description'),
+  ratio: real('ratio').notNull(),
+  lastSyncedAt: text('last_synced_at').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  accountGroupUnique: uniqueIndex('account_group_rates_account_group_unique').on(table.accountId, table.groupKey),
+  accountIdIdx: index('account_group_rates_account_id_idx').on(table.accountId),
+  nonNegativeRatio: check('account_group_rates_ratio_non_negative', sql`${table.ratio} >= 0`),
+}));
+
 export const checkinLogs = sqliteTable('checkin_logs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),

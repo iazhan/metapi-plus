@@ -184,6 +184,28 @@ function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   return 'unknown';
 }
 
+function selectModelDiscoveryFailure(messages: string[]): {
+  errorCode: ModelRefreshErrorCode;
+  message: string;
+} | null {
+  const failures = messages.map((message) => ({
+    errorCode: classifyModelDiscoveryError(message),
+    message,
+  }));
+  const priority: ModelRefreshErrorCode[] = [
+    'rate_limited',
+    'timeout',
+    'unauthorized',
+    'unknown',
+  ];
+
+  for (const errorCode of priority) {
+    const failure = failures.find((candidate) => candidate.errorCode === errorCode);
+    if (failure) return failure;
+  }
+  return null;
+}
+
 function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string, platform?: string | null) {
   const raw = String(fallback || '').trim();
   if (looksLikeHtmlJsonParseError(raw) || looksLikeShieldChallenge(raw)) {
@@ -1313,9 +1335,10 @@ export async function refreshModelsForAccount(
   }
 
   if (accountModels.size === 0) {
-    const firstMessage = failureMessages[0] || '';
-    const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
-    const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
+    const selectedFailure = selectModelDiscoveryFailure(failureMessages);
+    const errorCode = selectedFailure?.errorCode ?? 'empty_models';
+    const failureMessage = selectedFailure?.message ?? '';
+    const errorMessage = buildModelFailureMessage(errorCode, failureMessage, site.platform);
     await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
       reason: errorMessage,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api.js';
+import { api, type AccountGroupRateDto, type AccountTokenRateSyncDto } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
@@ -18,6 +18,7 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import { clearFocusParams, readFocusTokenId } from './helpers/navigationFocus.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
+import { buildTokenGroupOptions, formatTokenGroupLabel } from './helpers/tokenGroupPresentation.js';
 import { tr } from '../i18n.js';
 
 type SyncStatus = 'success' | 'skipped' | 'failed';
@@ -36,6 +37,7 @@ type AccountTokenSyncResult = {
   updated?: number;
   maskedPending?: number;
   pendingTokenIds?: number[];
+  rateSync?: AccountTokenRateSyncDto;
   accountId?: number;
   accountName?: string;
   account?: {
@@ -86,6 +88,9 @@ const isMaskedPendingToken = (token: any): boolean => token?.valueStatus === 'ma
 const isMaskedPendingSyncResult = (result: AccountTokenSyncResult | null | undefined) =>
   String(result?.reason || '').trim().toLowerCase() === 'upstream_masked_tokens'
   && Number(result?.maskedPending || 0) > 0;
+
+const resolveRateSyncFailure = (result: AccountTokenSyncResult | null | undefined): string =>
+  result?.rateSync?.status === 'failed' ? result.rateSync.message : '';
 
 const resolveAccountLabel = (result: AccountTokenSyncResult | null | undefined) => {
   const name = typeof result?.accountName === 'string' ? result.accountName.trim() : '';
@@ -164,8 +169,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     isDefault: false,
   });
   const [groupOptions, setGroupOptions] = useState<string[]>(['default']);
+  const [groupRates, setGroupRates] = useState<AccountGroupRateDto[]>([]);
   const [groupLoading, setGroupLoading] = useState(false);
   const [editGroupOptions, setEditGroupOptions] = useState<string[]>(['default']);
+  const [editGroupRates, setEditGroupRates] = useState<AccountGroupRateDto[]>([]);
   const [editGroupLoading, setEditGroupLoading] = useState(false);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -223,6 +230,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     if (!showAdd || !form.accountId) {
       setGroupLoading(false);
       setGroupOptions(['default']);
+      setGroupRates([]);
       return;
     }
 
@@ -234,9 +242,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         const groups: string[] = Array.isArray(res?.groups)
           ? res.groups.map((item: any) => String(item || '').trim()).filter(Boolean)
           : [];
-        const normalized = Array.from(new Set(groups));
-        const nextOptions = normalized.length > 0 ? normalized : ['default'];
+        const rates = Array.isArray(res?.rates) ? res.rates : [];
+        const nextOptions = buildTokenGroupOptions(groups, rates).map((option) => option.value);
         setGroupOptions(nextOptions);
+        setGroupRates(rates);
         setForm((prev) => {
           if (nextOptions.includes(prev.group)) return prev;
           return { ...prev, group: nextOptions[0] };
@@ -245,6 +254,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       .catch((error: any) => {
         if (cancelled) return;
         setGroupOptions(['default']);
+        setGroupRates([]);
         setForm((prev) => ({ ...prev, group: 'default' }));
         toast.error(error?.message || '拉取分组失败，已回退 default');
       })
@@ -262,6 +272,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     if (!editingToken?.id || !editingToken?.accountId) {
       setEditGroupLoading(false);
       setEditGroupOptions(['default']);
+      setEditGroupRates([]);
       return;
     }
 
@@ -274,16 +285,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         const groups = Array.isArray(res?.groups)
           ? res.groups.map((item: any) => String(item || '').trim()).filter(Boolean)
           : [];
-        const normalized = Array.from(new Set(groups));
-        setEditGroupOptions((current) => {
-          const next = normalized.length > 0 ? normalized : ['default'];
-          if (next.includes(currentGroup)) return next;
-          return [...next, currentGroup];
-        });
+        const rates = Array.isArray(res?.rates) ? res.rates : [];
+        const nextOptions = buildTokenGroupOptions([...groups, currentGroup], rates).map((option) => option.value);
+        setEditGroupOptions(nextOptions);
+        setEditGroupRates(rates);
       })
       .catch((error: any) => {
         if (cancelled) return;
         setEditGroupOptions((current) => (current.includes(currentGroup) ? current : [...current, currentGroup]));
+        setEditGroupRates([]);
         toast.error(error?.message || '拉取分组失败，已保留当前分组');
       })
       .finally(() => {
@@ -634,10 +644,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     try {
       const res = await api.syncAccountTokens(syncingAccountId) as AccountTokenSyncResult;
       const status = resolveSyncStatus(res);
+      const rateFailure = resolveRateSyncFailure(res);
       if (status === 'failed') {
-        toast.error(`同步失败：${resolveSyncMessage(res, '请检查账号令牌或站点状态')}`);
+        toast.error(`令牌同步失败：${resolveSyncMessage(res, '请检查账号令牌或站点状态')}`);
+        if (rateFailure) {
+          toast.info(`倍率同步失败：${rateFailure}`);
+        }
       } else if (isMaskedPendingSyncResult(res)) {
         toast.info(resolveSyncMessage(res, '上游返回了脱敏令牌，请补全明文 token'));
+        if (rateFailure) {
+          toast.info(`令牌已同步，但倍率同步失败：${rateFailure}`);
+        }
         const loaded = await load();
         const pendingIds = Array.isArray(res.pendingTokenIds)
           ? res.pendingTokenIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
@@ -656,7 +673,12 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         }
         return;
       } else if (status === 'skipped') {
-        toast.info(`同步已跳过：${resolveSyncMessage(res, '账号缺少可用 Session Cookie')}`);
+        toast.info(`令牌同步已跳过：${resolveSyncMessage(res, '账号缺少可用 Session Cookie')}`);
+        if (rateFailure) {
+          toast.info(`倍率同步失败：${rateFailure}`);
+        }
+      } else if (rateFailure) {
+        toast.info(`令牌同步完成，但倍率同步失败：${rateFailure}`);
       } else {
         toast.success(`同步完成：新增 ${res.created || 0}，更新 ${res.updated || 0}`);
       }
@@ -699,6 +721,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         const skippedRows = syncResults.filter((item) => resolveSyncStatus(item) === 'skipped');
         const successRows = syncResults.filter((item) => resolveSyncStatus(item) === 'success');
         const maskedRows = syncResults.filter((item) => isMaskedPendingSyncResult(item));
+        const rateFailedRows = syncResults.filter((item) => resolveRateSyncFailure(item));
 
         toast.success(`全部同步完成：成功 ${successRows.length}，跳过 ${skippedRows.length}，失败 ${failedRows.length}`);
 
@@ -710,6 +733,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         });
         skippedRows.slice(0, 3).forEach((item) => {
           toast.info(`${resolveAccountLabel(item)} 已跳过：${resolveSyncMessage(item, '不满足同步条件')}`);
+        });
+        rateFailedRows.slice(0, 3).forEach((item) => {
+          const status = resolveSyncStatus(item);
+          const tokenOutcome = status === 'failed'
+            ? '令牌同步失败，'
+            : status === 'skipped'
+              ? '令牌同步已跳过，'
+              : '令牌已同步，但';
+          toast.info(`${resolveAccountLabel(item)} ${tokenOutcome}倍率同步失败：${resolveRateSyncFailure(item)}`);
         });
 
         if (failedRows.length > 3) {
@@ -974,10 +1006,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                   <ModernSelect
                     value={editForm.group || 'default'}
                     onChange={(nextValue) => setEditForm((prev) => ({ ...prev, group: nextValue || 'default' }))}
-                    options={(editGroupOptions.length > 0 ? editGroupOptions : ['default']).map((group) => ({
-                      value: group,
-                      label: group,
-                    }))}
+                    options={buildTokenGroupOptions(
+                      editGroupOptions.length > 0 ? editGroupOptions : ['default'],
+                      editGroupRates,
+                    )}
                     placeholder={editGroupLoading ? '分组加载中...' : '选择分组'}
                     disabled={editGroupLoading}
                   />
@@ -1108,10 +1140,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             <ModernSelect
               value={form.group || ''}
               onChange={(nextValue) => setForm((prev) => ({ ...prev, group: nextValue }))}
-              options={(groupOptions.length > 0 ? groupOptions : ['default']).map((group) => ({
-                value: group,
-                label: group,
-              }))}
+              options={buildTokenGroupOptions(
+                groupOptions.length > 0 ? groupOptions : ['default'],
+                groupRates,
+              )}
               placeholder={groupLoading ? '分组加载中...' : '选择分组'}
               disabled={!form.accountId || groupLoading}
             />
@@ -1224,7 +1256,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     )}
                   >
                     <MobileField label="账号" value={token.account?.username || `account-${token.accountId}`} />
-                    <MobileField label="分组" value={token.tokenGroup || 'default'} />
+                    <MobileField label="分组" value={formatTokenGroupLabel(token)} />
                     <MobileField
                       label="状态"
                       value={(
@@ -1373,7 +1405,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                       )}
                     </td>
                     <td>{token.account?.username || `account-${token.accountId}`}</td>
-                    <td>{token.tokenGroup || 'default'}</td>
+                    <td>{formatTokenGroupLabel(token)}</td>
                     <td>
                       {isPending ? (
                         <span className="badge badge-warning" style={{ fontSize: 11 }}>待补全</span>

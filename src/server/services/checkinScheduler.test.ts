@@ -50,7 +50,7 @@ describe('checkinScheduler', () => {
 
   afterEach(async () => {
     const scheduler = await import('./checkinScheduler.js');
-    scheduler.__resetCheckinSchedulerForTests();
+    await scheduler.__resetCheckinSchedulerForTests();
     vi.useRealTimers();
   });
 
@@ -91,5 +91,33 @@ describe('checkinScheduler', () => {
       { id: 2, lastCheckinAt: '2026-03-20T05:59:59.000Z' },
       { id: 3, lastCheckinAt: '2026-03-20T06:30:00.000Z' },
     ], 6, now)).toEqual([1, 2]);
+  });
+
+  it('stops every owned schedule during server shutdown', async () => {
+    const scheduler = await import('./checkinScheduler.js');
+    await scheduler.startScheduler();
+    expect(scheduleMock).toHaveBeenCalledTimes(4);
+
+    await scheduler.stopScheduler();
+
+    expect(cronStopMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('waits for an in-flight scheduled check-in before shutdown completes', async () => {
+    let release!: (value: unknown[]) => void;
+    allMock.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const scheduler = await import('./checkinScheduler.js');
+    await scheduler.startScheduler();
+    const checkinCallback = scheduleMock.mock.calls[0]?.[1] as (() => void) | undefined;
+    expect(checkinCallback).toBeTypeOf('function');
+    checkinCallback?.();
+
+    let stopped = false;
+    const stopping = scheduler.stopScheduler().then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    release([]);
+    await stopping;
+    expect(stopped).toBe(true);
   });
 });

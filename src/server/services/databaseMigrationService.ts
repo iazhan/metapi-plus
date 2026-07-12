@@ -7,6 +7,7 @@ import {
   type RuntimeSchemaClient,
   type RuntimeSchemaDialect,
 } from '../db/runtimeSchemaBootstrap.js';
+import { normalizeGroupRate } from './accountGroupRateService.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
 
@@ -33,6 +34,7 @@ type BackupSnapshot = {
     siteAnnouncements: Array<Record<string, unknown>>;
     siteDisabledModels: Array<Record<string, unknown>>;
     accounts: Array<Record<string, unknown>>;
+    accountGroupRates: Array<Record<string, unknown>>;
     accountTokens: Array<Record<string, unknown>>;
     checkinLogs: Array<Record<string, unknown>>;
     modelAvailability: Array<Record<string, unknown>>;
@@ -63,6 +65,7 @@ export interface DatabaseMigrationSummary {
     siteAnnouncements: number;
     siteDisabledModels: number;
     accounts: number;
+    accountGroupRates: number;
     accountTokens: number;
     tokenRoutes: number;
     routeChannels: number;
@@ -257,6 +260,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       siteAnnouncements: await db.select().from(schema.siteAnnouncements).all() as Array<Record<string, unknown>>,
       siteDisabledModels: await db.select().from(schema.siteDisabledModels).all() as Array<Record<string, unknown>>,
       accounts: await db.select().from(schema.accounts).all() as Array<Record<string, unknown>>,
+      accountGroupRates: await db.select().from(schema.accountGroupRates).all() as Array<Record<string, unknown>>,
       accountTokens: await db.select().from(schema.accountTokens).all() as Array<Record<string, unknown>>,
       checkinLogs: await db.select().from(schema.checkinLogs).all() as Array<Record<string, unknown>>,
       modelAvailability: await db.select().from(schema.modelAvailability).all() as Array<Record<string, unknown>>,
@@ -298,6 +302,7 @@ async function clearTargetData(client: SqlClient): Promise<void> {
     'proxy_logs',
     'proxy_video_tasks',
     'proxy_files',
+    'account_group_rates',
     'account_tokens',
     'accounts',
     'site_announcements',
@@ -455,6 +460,40 @@ function buildStatements(
         asNullableString(row.lastCheckinAt),
         asNullableString(row.lastBalanceRefresh),
         serializeColumnValue('accounts', 'extra_config', row.extraConfig, contract),
+        asNullableString(row.createdAt),
+        asNullableString(row.updatedAt),
+      ],
+    });
+  }
+
+  for (const [index, row] of (snapshot.accounts.accountGroupRates || []).entries()) {
+    const normalizedRate = normalizeGroupRate({
+      groupKey: row.groupKey,
+      groupName: row.groupName,
+      description: row.description,
+      ratio: row.ratio,
+    }, index);
+    statements.push({
+      table: 'account_group_rates',
+      columns: [
+        'id',
+        'account_id',
+        'group_key',
+        'group_name',
+        'description',
+        'ratio',
+        'last_synced_at',
+        'created_at',
+        'updated_at',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.accountId, 0),
+        normalizedRate.groupKey,
+        normalizedRate.groupName,
+        normalizedRate.description ?? null,
+        normalizedRate.ratio,
+        asNullableString(row.lastSyncedAt),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -750,6 +789,7 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'site_announcements',
     'site_disabled_models',
     'accounts',
+    'account_group_rates',
     'account_tokens',
     'checkin_logs',
     'model_availability',
@@ -819,6 +859,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       siteAnnouncements: snapshot.accounts.siteAnnouncements.length,
       siteDisabledModels: snapshot.accounts.siteDisabledModels.length,
       accounts: snapshot.accounts.accounts.length,
+      accountGroupRates: snapshot.accounts.accountGroupRates.length,
       accountTokens: snapshot.accounts.accountTokens.length,
       tokenRoutes: snapshot.accounts.tokenRoutes.length,
       routeChannels: snapshot.accounts.routeChannels.length,

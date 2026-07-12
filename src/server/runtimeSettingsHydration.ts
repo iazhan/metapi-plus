@@ -1,9 +1,50 @@
 import {
+  buildConfig,
   config,
   normalizeTokenRouterFailureCooldownMaxSec,
 } from './config.js';
+import { db, schema } from './db/index.js';
+import { normalizeAccountGroupRateRefreshIntervalMinutes } from './shared/accountGroupRateRefresh.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
+
+export type RuntimeSettingsSnapshot = typeof config;
+
+const LOG_CLEANUP_SETTING_KEYS = [
+  'log_cleanup_cron',
+  'log_cleanup_usage_logs_enabled',
+  'log_cleanup_program_logs_enabled',
+  'log_cleanup_retention_days',
+] as const;
+
+export function hasExplicitLogCleanupSettings(settingsMap: Map<string, string>): boolean {
+  return LOG_CLEANUP_SETTING_KEYS.some((key) => settingsMap.has(key));
+}
+
+export function captureRuntimeSettingsSnapshot(): RuntimeSettingsSnapshot {
+  return structuredClone(config);
+}
+
+export function restoreRuntimeSettingsSnapshot(snapshot: RuntimeSettingsSnapshot): void {
+  Object.assign(config, structuredClone(snapshot));
+}
+
+/** Rebuilds runtime config once from one complete persisted settings snapshot. */
+export async function hydrateRuntimeSettingsFromPersistedSnapshot(): Promise<Map<string, string>> {
+  const rows = await db.select().from(schema.settings).all();
+  const settingsMap = new Map<string, string>(
+    rows.map((row) => [String(row.key), String(row.value)] as const),
+  );
+  const databaseState = {
+    dbType: config.dbType,
+    dbUrl: config.dbUrl,
+    dbSsl: config.dbSsl,
+  };
+
+  Object.assign(config, buildConfig(process.env), databaseState);
+  applyRuntimeSettings(settingsMap);
+  return settingsMap;
+}
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
   const raw = settingsMap.get(key);
@@ -39,6 +80,8 @@ function toStringList(value: unknown): string[] {
 }
 
 export function applyRuntimeSettings(settingsMap: Map<string, string>) {
+  config.logCleanupConfigured = hasExplicitLogCleanupSettings(settingsMap);
+
   const authToken = parseSettingFromMap<string>(settingsMap, 'auth_token');
   if (typeof authToken === 'string' && authToken) config.authToken = authToken;
 
@@ -120,6 +163,25 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const balanceRefreshCron = parseSettingFromMap<string>(settingsMap, 'balance_refresh_cron');
   if (typeof balanceRefreshCron === 'string' && balanceRefreshCron) config.balanceRefreshCron = balanceRefreshCron;
+
+  const accountGroupRateRefreshEnabled = parseSettingFromMap<boolean>(
+    settingsMap,
+    'account_group_rate_refresh_enabled',
+  );
+  if (typeof accountGroupRateRefreshEnabled === 'boolean') {
+    config.accountGroupRateRefreshEnabled = accountGroupRateRefreshEnabled;
+  }
+
+  const accountGroupRateRefreshIntervalMinutes =
+    normalizeAccountGroupRateRefreshIntervalMinutes(
+      parseSettingFromMap<number>(
+        settingsMap,
+        'account_group_rate_refresh_interval_minutes',
+      ),
+    );
+  if (accountGroupRateRefreshIntervalMinutes != null) {
+    config.accountGroupRateRefreshIntervalMinutes = accountGroupRateRefreshIntervalMinutes;
+  }
 
   const logCleanupCron = parseSettingFromMap<string>(settingsMap, 'log_cleanup_cron');
   if (typeof logCleanupCron === 'string' && logCleanupCron) config.logCleanupCron = logCleanupCron;

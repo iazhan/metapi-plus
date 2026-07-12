@@ -19,6 +19,8 @@ import {
   isFatalServerExit,
   resolveDesktopServerPort,
   resolveDesktopServerWorkingDir,
+  restartManagedBackendAfterStop,
+  stopManagedChildProcess,
   waitForServerReady,
 } from './runtime.js';
 import { getDesktopRuntimeIconPath, getDesktopTrayIconPath } from './iconAssets.js';
@@ -32,6 +34,8 @@ let serverProcess: ChildProcess | null = null;
 let serverUrl = '';
 let isQuitting = false;
 let isRestartingBackend = false;
+let backendStopPromise: Promise<void> | null = null;
+let backendShutdownComplete = false;
 
 log.initialize();
 
@@ -222,7 +226,7 @@ async function startManagedBackend() {
       ELECTRON_RUN_AS_NODE: '1',
       NODE_ENV: app.isPackaged ? 'production' : 'development',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     windowsHide: true,
   });
   serverProcess = child;
@@ -231,7 +235,7 @@ async function startManagedBackend() {
 
   child.once('exit', (code, signal) => {
     const fatal = isFatalServerExit({ code, signal });
-    serverProcess = null;
+    if (serverProcess === child) serverProcess = null;
     if (!fatal || isQuitting || isRestartingBackend) return;
     void handleServerCrash(code);
   });
@@ -250,28 +254,15 @@ async function connectToExternalBackend() {
 }
 
 async function stopManagedBackend() {
-  if (!serverProcess) return;
+  if (backendStopPromise) return backendStopPromise;
+  const current = serverProcess;
+  if (!current) return;
 
-  await new Promise<void>((resolve) => {
-    const current = serverProcess;
-    if (!current) {
-      resolve();
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      current.kill('SIGKILL');
-    }, 10_000);
-
-    current.once('exit', () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-
-    current.kill();
+  backendStopPromise = stopManagedChildProcess(current).finally(() => {
+    if (serverProcess === current) serverProcess = null;
+    backendStopPromise = null;
   });
-
-  serverProcess = null;
+  return backendStopPromise;
 }
 
 async function handleServerCrash(code: number | null) {
@@ -299,12 +290,18 @@ async function restartBackend() {
   if (isRestartingBackend) return;
   isRestartingBackend = true;
   try {
-    await stopManagedBackend();
-    if (resolveExternalServerUrl()) {
-      await connectToExternalBackend();
-    } else {
-      await startManagedBackend();
-    }
+    const restarted = await restartManagedBackendAfterStop({
+      stop: stopManagedBackend,
+      shouldRestart: () => !isQuitting,
+      start: async () => {
+        if (resolveExternalServerUrl()) {
+          await connectToExternalBackend();
+        } else {
+          await startManagedBackend();
+        }
+      },
+    });
+    if (!restarted) return;
     if (mainWindow) {
       await mainWindow.loadURL(resolveFrontendUrl());
       showMainWindow();
@@ -459,14 +456,24 @@ app.on('activate', () => {
   showMainWindow();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (backendShutdownComplete || !serverProcess) return;
+
+  event.preventDefault();
+  tray?.destroy();
+  tray = null;
+  void stopManagedBackend()
+    .catch((error) => log.error('Failed to stop managed backend', error))
+    .finally(() => {
+      backendShutdownComplete = true;
+      app.quit();
+    });
 });
 
 app.on('will-quit', () => {
   tray?.destroy();
   tray = null;
-  void stopManagedBackend();
 });
 
 app.on('window-all-closed', () => {

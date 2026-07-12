@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import {
   buildDesktopServerEnv,
   createDesktopServerUrl,
   isFatalServerExit,
   resolveDesktopServerPort,
   resolveDesktopServerWorkingDir,
+  restartManagedBackendAfterStop,
+  stopManagedChildProcess,
   waitForServerReady,
 } from './runtime.js';
 
@@ -87,5 +90,93 @@ describe('desktop runtime helpers', () => {
     expect(isFatalServerExit({ code: 1, signal: null })).toBe(true);
     expect(isFatalServerExit({ code: 0, signal: null })).toBe(false);
     expect(isFatalServerExit({ code: null, signal: 'SIGTERM' })).toBe(false);
+  });
+
+  it('waits for graceful child exit before using SIGKILL', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      connected: boolean;
+      kill: ReturnType<typeof vi.fn>;
+      send: ReturnType<typeof vi.fn>;
+    };
+    child.connected = true;
+    child.kill = vi.fn();
+    child.send = vi.fn();
+
+    const stopped = stopManagedChildProcess(child, { timeoutMs: 50 });
+    expect(child.send).toHaveBeenCalledWith(
+      { type: 'metapi:shutdown' },
+      expect.any(Function),
+    );
+    expect(child.kill).not.toHaveBeenCalledWith('SIGTERM');
+    expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
+    child.emit('exit', 0, 'SIGTERM');
+
+    await expect(stopped).resolves.toBeUndefined();
+    expect(child.kill).not.toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('uses SIGKILL only after the graceful timeout', async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
+    child.kill = vi.fn();
+
+    const stopped = stopManagedChildProcess(child, { timeoutMs: 100 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(child.kill.mock.calls.map((call) => call[0])).toEqual(['SIGTERM', 'SIGKILL']);
+    child.emit('exit', null, 'SIGKILL');
+    await stopped;
+    vi.useRealTimers();
+  });
+
+  it('falls back to SIGTERM when IPC send throws synchronously', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      connected: boolean;
+      kill: ReturnType<typeof vi.fn>;
+      send: ReturnType<typeof vi.fn>;
+    };
+    child.connected = true;
+    child.kill = vi.fn();
+    child.send = vi.fn(() => { throw new Error('channel closed'); });
+
+    const stopped = stopManagedChildProcess(child, { timeoutMs: 50 });
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    child.emit('exit', 0, 'SIGTERM');
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
+  it('falls back to SIGTERM when IPC send callback reports failure', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      connected: boolean;
+      kill: ReturnType<typeof vi.fn>;
+      send: ReturnType<typeof vi.fn>;
+    };
+    child.connected = true;
+    child.kill = vi.fn();
+    child.send = vi.fn((_message, callback: (error: Error | null) => void) => {
+      callback(new Error('channel closed'));
+      return false;
+    });
+
+    const stopped = stopManagedChildProcess(child, { timeoutMs: 50 });
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    child.emit('exit', 0, 'SIGTERM');
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
+  it('does not start a replacement backend when quit begins during restart drain', async () => {
+    let releaseStop!: () => void;
+    let quitting = false;
+    const start = vi.fn(async () => undefined);
+    const restarting = restartManagedBackendAfterStop({
+      stop: () => new Promise<void>((resolve) => { releaseStop = resolve; }),
+      shouldRestart: () => !quitting,
+      start,
+    });
+
+    quitting = true;
+    releaseStop();
+
+    await expect(restarting).resolves.toBe(false);
+    expect(start).not.toHaveBeenCalled();
   });
 });

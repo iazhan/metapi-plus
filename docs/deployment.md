@@ -31,7 +31,10 @@
 - 只有一个裸 Docker Compose 容器
 - 想直接从管理后台更新外部 Docker 主机上的容器
 
-但如果你是老用户，**正在计划从 Docker Compose 迁到 K3s / Helm，以获得滚动更新能力**，那么这一节和对应专题页是值得提前看的。它写的不是“怎么原地升级 Compose”，而是“迁移完成后你会如何使用更新中心”。
+但如果你是老用户，正在计划从 Docker Compose 迁到 K3s / Helm，以获得版本管理、回滚和后台更新入口，那么这一节和对应专题页是值得提前看的。它写的不是“怎么原地升级 Compose”，而是“迁移完成后你会如何使用更新中心”。
+
+> [!IMPORTANT]
+> Metapi 当前正式支持单实例运行。仓库自带 Helm chart 固定使用 `replicaCount: 1` 和 `Recreate` 更新策略，升级时会有短暂停机；不要通过增加副本实现滚动更新，否则内存调度器和维护任务可能重复执行。
 
 如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
 
@@ -139,6 +142,14 @@
 | `DB_SSL` | 启用 SSL 连接 | `true` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 | `PORT` | 服务端口（默认即可） | `4000` |
+| `ACCOUNT_GROUP_RATE_REFRESH_ENABLED` | 是否启用账号分组倍率自动刷新 | `true` |
+| `ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES` | 账号分组倍率自动刷新间隔（整数分钟，`5`-`10080`） | `30` |
+
+说明：
+
+- 这两个值默认开启并写成部署级启动默认值；如果你已经在后台「设置」里保存过账号分组倍率刷新配置，UI 持久化值会覆盖这里的环境默认值
+- 服务启动时或从关闭切回开启时，会立即执行一次**仅倍率刷新**；它不会同步 Token、余额、模型或路由
+- 刷新失败时会保留上一次成功的倍率快照；若账号 Session 已过期，会先尝试 `Refresh Token`，再尝试用加密保存的账号密码恢复
 
 ### 步骤 3：配置 UptimeRobot 防休眠
 
@@ -180,6 +191,8 @@ docker compose up -d
 # .env
 AUTH_TOKEN=your-admin-token
 PROXY_TOKEN=your-proxy-sk-token
+ACCOUNT_GROUP_RATE_REFRESH_ENABLED=true
+ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES=30
 TZ=Asia/Shanghai
 PORT=4000
 ```

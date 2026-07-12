@@ -311,6 +311,8 @@ services:
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
       BALANCE_REFRESH_CRON: "0 * * * *"
+      ACCOUNT_GROUP_RATE_REFRESH_ENABLED: "true"
+      ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: "30"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
@@ -356,6 +358,7 @@ After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 > If running outside Compose without explicitly setting `AUTH_TOKEN`, the default is `change-me-admin-token` (for local debugging only).
 > The desktop installer falls into this category on first launch too: if you do not inject `AUTH_TOKEN`, the default admin token is also `change-me-admin-token`.
 > If you change the admin token in the Settings panel, use the new token for subsequent logins.
+> Account-group rate refresh also starts enabled by default with `ACCOUNT_GROUP_RATE_REFRESH_ENABLED=true` and `ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES=30`. UI-saved values override these startup defaults. Startup, or switching from disabled back to enabled, triggers one immediate rate-only pass; it does not sync tokens, balances, models, or routes. Failed refreshes keep the last successful rate snapshot, and expired Session accounts first try Refresh Token recovery, then encrypted-password recovery.
 
 For Docker Compose, desktop installers, reverse proxy, upgrades, and database options, see [Deployment Guide](docs/deployment.md).
 
@@ -410,6 +413,10 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | --- | --- | --- |
 | `CHECKIN_CRON` | Auto check-in cron expression | `0 8 * * *` |
 | `BALANCE_REFRESH_CRON` | Balance refresh cron expression | `0 * * * *` |
+| `ACCOUNT_GROUP_RATE_REFRESH_ENABLED` | Enable automatic account-group rate refresh | `true` |
+| `ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES` | Automatic account-group rate refresh interval in integer minutes (`5`-`10080`) | `30` |
+
+UI-saved settings override these environment defaults. Startup, or re-enabling the switch, triggers one immediate rate-only pass. Automatic refresh only updates the account-group rate snapshot; it does not sync tokens, balances, models, or routes. Failed refreshes keep the last successful snapshot, and expired Session accounts attempt Refresh Token recovery before encrypted-password recovery.
 
 <details>
 <summary><strong>Smart Routing, Notification & Security Configuration</strong></summary>

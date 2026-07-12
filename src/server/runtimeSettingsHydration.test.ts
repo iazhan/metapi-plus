@@ -54,4 +54,35 @@ describe('applyRuntimeSettings', () => {
 
     expect(config.globalAllowedModels).toEqual(['model-alpha', 'model-beta', 'model-gamma']);
   });
+
+  it('hydrates valid account group rate refresh settings and ignores invalid intervals', () => {
+    config.accountGroupRateRefreshEnabled = true;
+    config.accountGroupRateRefreshIntervalMinutes = 30;
+
+    applyRuntimeSettings(new Map([
+      ['account_group_rate_refresh_enabled', JSON.stringify(false)],
+      ['account_group_rate_refresh_interval_minutes', JSON.stringify(45)],
+    ]));
+
+    expect(config.accountGroupRateRefreshEnabled).toBe(false);
+    expect(config.accountGroupRateRefreshIntervalMinutes).toBe(45);
+
+    applyRuntimeSettings(new Map([
+      ['account_group_rate_refresh_interval_minutes', JSON.stringify(4)],
+    ]));
+
+    expect(config.accountGroupRateRefreshIntervalMinutes).toBe(45);
+  });
+
+  it('derives explicit log cleanup ownership from the complete settings snapshot', () => {
+    config.logCleanupConfigured = false;
+    applyRuntimeSettings(new Map([
+      ['log_cleanup_retention_days', JSON.stringify(14)],
+    ]));
+    expect(config.logCleanupConfigured).toBe(true);
+
+    config.logCleanupConfigured = true;
+    applyRuntimeSettings(new Map());
+    expect(config.logCleanupConfigured).toBe(false);
+  });
 });

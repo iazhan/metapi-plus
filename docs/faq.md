@@ -67,10 +67,11 @@
 
 **A:** Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。当前建议：
 
-1. 在「凭证模式」里选择 Session 模式，分别粘贴 F12 界面中的 `auth_token`、`refresh_token`、`token_expires_at` 字段进行验证，无需配置用户 ID
-2. 不要使用账号密码登录，Metapi 不支持代替 Sub2API 做登录
-3. Sub2API 通常为订阅制使用，不支持签到；如果你只关心代理调用，也可以直接改用 API Key 模式
-4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
+1. 可以使用账号密码登录。Metapi 会调用 `/api/v1/auth/login`，保存 Access Token、Refresh Token 和过期时间，并初始化账号令牌与分组倍率
+2. 如果站点要求 2FA 或 Turnstile，Metapi 不会接入第三方打码服务；请先在原站完成验证，再改用 Session 凭证导入
+3. 手动导入时，在 Session 模式分别粘贴 F12 中的 `auth_token`、`refresh_token`、`token_expires_at`，无需配置用户 ID
+4. Sub2API 通常为订阅制使用，不支持签到；如果只关心代理调用，也可以直接使用 API Key 模式
+5. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
 
 详细操作说明见 [上游接入](/upstream-integration)。
 

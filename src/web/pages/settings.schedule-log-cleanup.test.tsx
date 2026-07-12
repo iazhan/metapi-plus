@@ -53,6 +53,8 @@ describe('Settings log cleanup schedule', () => {
       checkinScheduleMode: 'interval',
       checkinIntervalHours: 6,
       balanceRefreshCron: '0 * * * *',
+      accountGroupRateRefreshEnabled: true,
+      accountGroupRateRefreshIntervalMinutes: 30,
       logCleanupCron: '15 4 * * *',
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
@@ -78,7 +80,84 @@ describe('Settings log cleanup schedule', () => {
     vi.clearAllMocks();
   });
 
-  it('saves schedule mode and interval fields together with other schedule settings', async () => {
+  it('renders account group rate refresh controls from runtime settings', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-enabled',
+      });
+      const interval = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+
+      expect(toggle.props.checked).toBe(true);
+      expect(interval.props.value).toBe('30');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('disables the account group rate refresh interval input when the toggle is off', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-enabled',
+      });
+
+      await act(async () => {
+        toggle.props.onChange({ target: { checked: false } });
+      });
+
+      const interval = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+
+      expect(interval.props.disabled).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('saves account group rate refresh fields together with other schedule settings', async () => {
+    apiMock.getRuntimeSettings.mockResolvedValueOnce({
+      checkinCron: '0 8 * * *',
+      checkinScheduleMode: 'interval',
+      checkinIntervalHours: 6,
+      balanceRefreshCron: '0 * * * *',
+      accountGroupRateRefreshEnabled: true,
+      accountGroupRateRefreshIntervalMinutes: 45,
+      logCleanupCron: '15 4 * * *',
+      logCleanupUsageLogsEnabled: true,
+      logCleanupProgramLogsEnabled: true,
+      logCleanupRetentionDays: 14,
+      routingFallbackUnitCost: 1,
+      routingWeights: {},
+      adminIpAllowlist: [],
+      systemProxyUrl: '',
+    });
+
     let root!: WebTestRenderer;
     try {
       await act(async () => {
@@ -108,11 +187,142 @@ describe('Settings log cleanup schedule', () => {
         checkinScheduleMode: 'interval',
         checkinIntervalHours: 6,
         balanceRefreshCron: '0 * * * *',
+        accountGroupRateRefreshEnabled: true,
+        accountGroupRateRefreshIntervalMinutes: 45,
         logCleanupCron: '15 4 * * *',
         logCleanupUsageLogsEnabled: true,
         logCleanupProgramLogsEnabled: true,
         logCleanupRetentionDays: 14,
       });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('renders numeric bounds for the account group rate refresh interval input', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const interval = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+
+      expect(interval.props.min).toBe(5);
+      expect(interval.props.max).toBe(10080);
+      expect(interval.props.step).toBe(1);
+      expect(interval.props.type).toBe('number');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('allows editing through a temporary below-minimum value and saves the final interval', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const interval = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+
+      await act(async () => {
+        interval.props.onChange({ target: { value: '' } });
+      });
+
+      const afterClear = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+      expect(afterClear.props.value).toBe('');
+
+      await act(async () => {
+        afterClear.props.onChange({ target: { value: '3' } });
+      });
+
+      const afterThree = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+      expect(afterThree.props.value).toBe('3');
+
+      await act(async () => {
+        afterThree.props.onChange({ target: { value: '5' } });
+      });
+
+      const afterFive = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+      expect(afterFive.props.value).toBe('5');
+
+      const saveButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存定时任务'
+      ));
+
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith(expect.objectContaining({
+        accountGroupRateRefreshIntervalMinutes: 5,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not send an empty account group rate refresh interval', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const interval = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-interval-minutes',
+      });
+      await act(async () => {
+        interval.props.onChange({ target: { value: '' } });
+      });
+
+      const saveButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存定时任务'
+      ));
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRuntimeSettings).not.toHaveBeenCalled();
+      expect(collectText(root.root)).toContain('倍率刷新间隔必须是 5 到 10080 之间的整数');
     } finally {
       root?.unmount();
     }

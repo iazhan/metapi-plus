@@ -19,6 +19,7 @@ function createDbSchemaMock() {
     siteDisabledModels: { __table: 'siteDisabledModels' },
     accounts: { __table: 'accounts' },
     accountTokens: { __table: 'accountTokens' },
+    accountGroupRates: { __table: 'accountGroupRates' },
     checkinLogs: { __table: 'checkinLogs' },
     modelAvailability: { __table: 'modelAvailability' },
     tokenModelAvailability: { __table: 'tokenModelAvailability' },
@@ -911,7 +912,113 @@ describe('databaseMigrationService', () => {
     expect(statement?.values[statement?.columns.indexOf('title') ?? -1]).toBe('????');
   });
 
-  it('includes site announcements in migration summary', async () => {
+  it('inserts account group-rate snapshots after their owning accounts', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 7,
+          siteId: 3,
+          username: 'rate-owner',
+          accessToken: 'session-token',
+          status: 'active',
+        }],
+        accountGroupRates: [{
+          id: 9,
+          accountId: 7,
+          groupKey: 'vip',
+          groupName: 'VIP',
+          description: 'discount group',
+          ratio: 0.8,
+          lastSyncedAt: '2026-07-10T01:02:03.000Z',
+          createdAt: '2026-07-10T01:02:03.000Z',
+          updatedAt: '2026-07-10T01:02:03.000Z',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: { settings: [] },
+    } as any);
+
+    const accountIndex = statements.findIndex((statement) => statement.table === 'accounts');
+    const rateIndex = statements.findIndex((statement) => statement.table === 'account_group_rates');
+    const rateStatement = statements[rateIndex];
+
+    expect(rateIndex).toBeGreaterThan(accountIndex);
+    expect(rateStatement?.columns).toEqual([
+      'id',
+      'account_id',
+      'group_key',
+      'group_name',
+      'description',
+      'ratio',
+      'last_synced_at',
+      'created_at',
+      'updated_at',
+    ]);
+    expect(rateStatement?.values).toEqual([
+      9,
+      7,
+      'vip',
+      'VIP',
+      'discount group',
+      0.8,
+      '2026-07-10T01:02:03.000Z',
+      '2026-07-10T01:02:03.000Z',
+      '2026-07-10T01:02:03.000Z',
+    ]);
+  });
+
+  it('rejects invalid group rates before building cross-dialect migration statements', () => {
+    expect(() => __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [],
+        siteApiEndpoints: [],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [],
+        accountGroupRates: [{
+          id: 1,
+          accountId: 2,
+          groupKey: 'vip',
+          groupName: 'VIP',
+          ratio: Number.POSITIVE_INFINITY,
+          lastSyncedAt: '2026-07-10T01:02:03.000Z',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: { settings: [] },
+    } as any)).toThrow(/invalid group rate/i);
+  });
+
+  it('migrates account group rates with overwrite ordering, postgres sequence, and summary count', async () => {
     vi.resetModules();
 
     const rowsByTable = {
@@ -939,6 +1046,17 @@ describe('databaseMigrationService', () => {
       siteDisabledModels: [],
       accounts: [],
       accountTokens: [],
+      accountGroupRates: [{
+        id: 12,
+        accountId: 7,
+        groupKey: 'vip',
+        groupName: 'VIP',
+        description: null,
+        ratio: 0.8,
+        lastSyncedAt: '2026-07-10T01:02:03.000Z',
+        createdAt: '2026-07-10T01:02:03.000Z',
+        updatedAt: '2026-07-10T01:02:03.000Z',
+      }],
       checkinLogs: [],
       modelAvailability: [],
       tokenModelAvailability: [],
@@ -953,8 +1071,8 @@ describe('databaseMigrationService', () => {
     };
 
     const client = {
-      dialect: 'sqlite',
-      connectionString: ':memory:',
+      dialect: 'postgres',
+      connectionString: 'postgres://example.invalid/metapi',
       ssl: false,
       begin: vi.fn(async () => {}),
       commit: vi.fn(async () => {}),
@@ -976,15 +1094,24 @@ describe('databaseMigrationService', () => {
     try {
       const { migrateCurrentDatabase } = await import('./databaseMigrationService.js');
       const summary = await migrateCurrentDatabase({
-        dialect: 'sqlite',
-        connectionString: ':memory:',
+        dialect: 'postgres',
+        connectionString: 'postgres://example.invalid/metapi',
         overwrite: true,
       });
 
       expect(summary.rows.siteAnnouncements).toBe(1);
+      expect(summary.rows.accountGroupRates).toBe(1);
       expect(client.begin).toHaveBeenCalledTimes(1);
       expect(client.commit).toHaveBeenCalledTimes(1);
       expect(client.close).toHaveBeenCalledTimes(1);
+
+      const executedSql = client.execute.mock.calls.map(([sqlText]) => String(sqlText));
+      const rateDeleteIndex = executedSql.indexOf('DELETE FROM "account_group_rates"');
+      const accountDeleteIndex = executedSql.indexOf('DELETE FROM "accounts"');
+      expect(rateDeleteIndex).toBeGreaterThanOrEqual(0);
+      expect(rateDeleteIndex).toBeLessThan(accountDeleteIndex);
+      expect(executedSql.some((sqlText) => sqlText.startsWith('INSERT INTO "account_group_rates"'))).toBe(true);
+      expect(executedSql.some((sqlText) => sqlText.includes("pg_get_serial_sequence('account_group_rates', 'id')"))).toBe(true);
     } finally {
       vi.doUnmock('../db/index.js');
       vi.doUnmock('../db/runtimeSchemaBootstrap.js');

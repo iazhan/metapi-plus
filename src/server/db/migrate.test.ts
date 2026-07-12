@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 type MigrationJournalEntry = {
+  idx: number;
   tag: string;
   when: number;
 };
@@ -57,6 +58,12 @@ describe('sqlite migrate bootstrap', () => {
     delete process.env.DATA_DIR;
     delete process.env.DB_URL;
     vi.resetModules();
+  });
+
+  it('keeps journal indexes contiguous even when migration filename prefixes have gaps', () => {
+    readMigrationJournalEntries().forEach((entry, index) => {
+      expect(entry.idx, `journal index mismatch for ${entry.tag}`).toBe(index);
+    });
   });
 
   it('accepts an already-synced sqlite schema with an empty drizzle journal', async () => {

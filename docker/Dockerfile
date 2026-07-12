@@ -51,12 +51,13 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/drizzle ./drizzle
+COPY docker/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 4000
 
 ENV NODE_ENV=production
 ENV DATA_DIR=/app/data
 
-CMD ["sh", "-c", "node dist/server/db/migrate.js && node dist/server/index.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

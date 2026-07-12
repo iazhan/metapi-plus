@@ -1,10 +1,30 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import {
+  ApiTokenInfo,
+  BasePlatformAdapter,
+  CheckinResult,
+  BalanceInfo,
+  UserInfo,
+  TokenVerifyResult,
+  CreateApiTokenOptions,
+  PlatformHttpError,
+  parseSafePositiveInteger,
+  type GroupRateInfo,
+  type LoginResult,
+  type SiteAnnouncement,
+} from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
 
 const SHIELD_VM_TIMEOUT_MS = 1_000;
+
+class NewApiShieldChallengeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NewApiShieldChallengeError';
+  }
+}
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -43,13 +63,16 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-      if (typeof payload?.id === 'number') return payload.id;
-      if (typeof payload?.sub === 'string' || typeof payload?.sub === 'number') {
-        const n = Number.parseInt(String(payload.sub), 10);
-        if (!Number.isNaN(n)) return n;
-      }
+      const id = parseSafePositiveInteger(payload?.id);
+      if (id !== undefined) return id;
+      const subject = parseSafePositiveInteger(payload?.sub);
+      if (subject !== undefined) return subject;
     } catch {}
     return null;
+  }
+
+  private parsePlatformUserId(raw: unknown): number | undefined {
+    return parseSafePositiveInteger(raw);
   }
 
   private authHeaders(accessToken: string, userId?: number): Record<string, string> {
@@ -261,8 +284,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   private isTokenListResponse(payload: any): boolean {
-    if (!payload || typeof payload !== 'object') return false;
-    if (payload?.success === true) return true;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    if (payload?.success === false) return false;
     return (
       Array.isArray(payload?.data)
       || Array.isArray(payload?.data?.items)
@@ -271,6 +294,22 @@ export class NewApiAdapter extends BasePlatformAdapter {
       || Array.isArray(payload?.list)
       || Array.isArray(payload?.data?.list)
     );
+  }
+
+  private parseApiTokenList(payload: any): ApiTokenInfo[] {
+    if (payload?.success === false) {
+      throw new Error(this.extractResponseMessage(payload) || 'Failed to fetch token list');
+    }
+    if (!this.isTokenListResponse(payload)) {
+      throw new Error('Invalid token list response from /api/token/');
+    }
+
+    const items = this.parseTokenItems(payload);
+    const normalized = this.normalizeTokenItems(items);
+    if (items.length > 0 && normalized.length === 0) {
+      throw new Error('Invalid token list response from /api/token/');
+    }
+    return normalized;
   }
 
   private normalizeTokenKeyForCompare(value?: string | null): string {
@@ -300,18 +339,114 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
+  private parseGroupRates(payload: any): GroupRateInfo[] {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid group rate response from /api/user/self/groups');
+    }
+    if (payload.success === false) {
+      throw new Error(this.resolveGroupFetchErrorMessage(payload));
+    }
+
+    const hasEnvelopeFields = Object.prototype.hasOwnProperty.call(payload, 'success')
+      || Object.prototype.hasOwnProperty.call(payload, 'data');
+    let source: unknown = payload;
+    if (hasEnvelopeFields) {
+      if (payload.success !== true || !Object.prototype.hasOwnProperty.call(payload, 'data')) {
+        throw new Error('Invalid group rate response envelope from /api/user/self/groups');
+      }
+      source = payload.data;
+    } else if (Object.keys(payload).length === 0) {
+      throw new Error('Invalid group rate response: ambiguous empty object');
+    }
+
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      throw new Error('Invalid group rate list from /api/user/self/groups');
+    }
+
+    const entries = Object.entries(source as Record<string, unknown>);
+    const rates: GroupRateInfo[] = [];
+    for (const [rawGroupName, rawValue] of entries) {
+      const groupName = rawGroupName.trim();
+      if (!groupName || !rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) {
+        throw new Error(`Invalid group rate entry: ${rawGroupName || '<empty>'}`);
+      }
+      const value = rawValue as Record<string, unknown>;
+      if (typeof value.ratio === 'string' && value.ratio.trim() === '自动') {
+        continue;
+      }
+      if (typeof value.ratio !== 'number' || !Number.isFinite(value.ratio) || value.ratio < 0) {
+        throw new Error(`Invalid group rate entry: ${groupName}`);
+      }
+      const description = typeof value.desc === 'string'
+        ? value.desc.trim()
+        : (typeof value.description === 'string' ? value.description.trim() : '');
+      rates.push({
+        groupKey: groupName,
+        groupName,
+        ratio: value.ratio,
+        ...(description ? { description } : {}),
+      });
+    }
+    if (entries.length > 0 && rates.length === 0) {
+      throw new Error('Invalid group rate response: no numeric group rates');
+    }
+    return rates;
+  }
+
+  private isGroupRateSessionFailureMessage(message?: string | null): boolean {
+    if (!message) return false;
+    const text = message.toLowerCase();
+    const hasSessionFailureQualifier = (
+      text.includes('invalid')
+      || text.includes('expired')
+      || text.includes('missing')
+      || text.includes('required')
+      || text.includes('无效')
+      || text.includes('过期')
+      || text.includes('失效')
+      || text.includes('未提供')
+      || text.includes('缺少')
+      || text.includes('需要')
+    ) && (
+      /access[\s_-]*token/.test(text)
+      || /\btoken\b/.test(text)
+      || /\bsession\b/.test(text)
+      || /\blogin\b/.test(text)
+      || text.includes('登录')
+      || text.includes('会话')
+      || text.includes('认证')
+      || text.includes('凭证')
+      || /(?:new-api-user|user[\s_-]*id)/.test(text)
+    );
+    return (
+      text.includes('unauthorized')
+      || text.includes('未登录')
+      || text.includes('未授权')
+      || text.includes('not login')
+      || text.includes('not logged')
+      || text.includes('login required')
+      || text.includes('please login')
+      || text.includes('会话无效')
+      || text.includes('凭证无效')
+      || text.includes('登录状态无效')
+      || hasSessionFailureQualifier
+    );
+  }
+
+  private shouldRetryGroupRatesWithCookie(error: unknown): boolean {
+    if (error instanceof PlatformHttpError) {
+      return error.status === 401
+        || (error.status === 403 && this.isGroupRateSessionFailureMessage(error.responseBody));
+    }
+    if (error instanceof NewApiShieldChallengeError) return true;
+    return error instanceof Error && this.isGroupRateSessionFailureMessage(error.message);
+  }
+
   private resolveGroupFetchErrorMessage(payload: any): string {
     const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
-    const normalized = message.toLowerCase();
-    const indicatesExpired = normalized.includes('expired')
-      || normalized.includes('invalid token')
-      || normalized.includes('access token')
-      || normalized.includes('unauthorized')
-      || normalized.includes('forbidden')
-      || normalized.includes('未登录')
-      || normalized.includes('登录')
-      || normalized.includes('过期');
-    if (indicatesExpired) return '账号会话可能已过期，请重新登录后再拉取分组';
+    if (this.isGroupRateSessionFailureMessage(message)) {
+      return '账号会话可能已过期，请重新登录后再拉取分组';
+    }
     return message || '拉取分组失败';
   }
 
@@ -570,7 +705,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
   private isShieldChallenge(contentType: string, text: string): boolean {
     const ct = (contentType || '').toLowerCase();
-    if (ct.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)) {
+    if (ct.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc/i.test(text)) {
       return true;
     }
     return /var\s+arg1\s*=/.test(text);
@@ -664,22 +799,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
   private isCookieSessionFailureMessage(message?: string | null): boolean {
     if (!message) return false;
-    const text = message.toLowerCase();
-    return (
-      text.includes('access token') ||
-      text.includes('unauthorized') ||
-      text.includes('forbidden') ||
-      text.includes('new-api-user') ||
-      text.includes('user id') ||
-      text.includes('invalid token') ||
-      text.includes('expired') ||
-      text.includes('无权') ||
-      text.includes('未登录') ||
-      text.includes('未提供') ||
-      text.includes('未授权') ||
-      text.includes('not login') ||
-      text.includes('not logged')
-    );
+    return this.isGroupRateSessionFailureMessage(message);
   }
 
   private async detectCookieSessionFailureMessage(
@@ -717,7 +837,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
   private async fetchJsonRawWithCookie<T>(
     url: string,
     options?: UndiciRequestInit,
-  ): Promise<{ data: T | null; cookieHeader: string }> {
+  ): Promise<{ data: T | null; cookieHeader: string; status: number; responseBody: string }> {
     const { fetch } = await import('undici');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -731,6 +851,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
       delete headers['cookie'];
     }
 
+    let lastStatus = 0;
+    let lastResponseBody = '';
+
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const requestOptions: UndiciRequestInit = {
         ...options,
@@ -740,29 +863,38 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
       const res = await fetch(url, proxiedRequestOptions);
       const text = await res.text();
+      lastStatus = res.status;
+      lastResponseBody = text;
       const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
       if (typeof getSetCookie === 'function') {
         cookieHeader = this.mergeSetCookiePairs(cookieHeader, getSetCookie.call(res.headers) || []);
       }
       const parsed = this.parseJsonSafe<T>(text);
-      if (parsed) return { data: parsed, cookieHeader };
+      if (parsed) {
+        return { data: parsed, cookieHeader, status: res.status, responseBody: text };
+      }
 
       if (!this.isShieldChallenge(res.headers.get('content-type') || '', text)) {
-        return { data: null, cookieHeader };
+        return { data: null, cookieHeader, status: res.status, responseBody: text };
       }
       if (!cookieHeader) {
-        return { data: null, cookieHeader };
+        return { data: null, cookieHeader, status: res.status, responseBody: text };
       }
 
       const acwScV2 = this.solveAcwScV2(text);
       if (!acwScV2) {
-        return { data: null, cookieHeader };
+        return { data: null, cookieHeader, status: res.status, responseBody: text };
       }
       cookieHeader = this.upsertCookie(cookieHeader, 'acw_sc__v2', acwScV2);
       headers['Cookie'] = cookieHeader;
     }
 
-    return { data: null, cookieHeader };
+    return {
+      data: null,
+      cookieHeader,
+      status: lastStatus,
+      responseBody: lastResponseBody,
+    };
   }
 
   private async fetchJsonRaw<T>(url: string, options?: UndiciRequestInit): Promise<T | null> {
@@ -775,31 +907,41 @@ export class NewApiAdapter extends BasePlatformAdapter {
     token: string,
     platformUserId?: number,
     onFailureMessage?: (message: string) => void,
+    signal?: AbortSignal,
   ): Promise<any | null> {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
         Object.assign(headers, this.userIdHeaders(platformUserId));
-        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, { headers });
+        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, { headers, signal });
         if (res?.success && res?.data) return res;
         if (typeof res?.message === 'string' && res.message.trim()) {
           onFailureMessage?.(res.message.trim());
         }
-      } catch {}
+      } catch {
+        signal?.throwIfAborted();
+      }
     }
     return null;
   }
 
-  private async probeUserIdByCookie(baseUrl: string, token: string): Promise<number | null> {
+  private async probeUserIdByCookie(
+    baseUrl: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<number | null> {
     const candidates = this.buildUserIdProbeCandidates(token);
     for (const cookie of this.buildCookieCandidates(token)) {
       for (const id of candidates) {
         try {
           const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
             headers: { Cookie: cookie, ...this.userIdHeaders(id) },
+            signal,
           });
           if (res?.success && res?.data) return id;
-        } catch {}
+        } catch {
+          signal?.throwIfAborted();
+        }
       }
     }
     return null;
@@ -809,8 +951,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     token: string,
     currentUserId?: number | null,
+    signal?: AbortSignal,
   ): Promise<number | null> {
-    const probed = await this.probeUserIdByCookie(baseUrl, token);
+    const probed = await this.probeUserIdByCookie(baseUrl, token, signal);
     if (!probed) return null;
     if (typeof currentUserId === 'number' && currentUserId > 0 && probed === currentUserId) {
       return null;
@@ -818,17 +961,34 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return probed;
   }
 
-  private async getApiTokensByCookie(baseUrl: string, token: string, userId?: number | null): Promise<ApiTokenInfo[]> {
+  private async getApiTokensByCookie(
+    baseUrl: string,
+    token: string,
+    userId?: number | null,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    let terminalError: Error | null = null;
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const headers: Record<string, string> = { Cookie: cookie };
         Object.assign(headers, this.userIdHeaders(userId));
-        const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/token/?p=0&size=100`, { headers });
-        const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
-        if (normalized.length > 0) return normalized;
-      } catch {}
+        const response = await this.fetchJsonRawWithCookie<any>(
+          `${baseUrl}/api/token/?p=0&size=100`,
+          { headers, signal },
+        );
+        if (response.status < 200 || response.status >= 300) {
+          throw new PlatformHttpError(response.status, response.responseBody);
+        }
+        return this.parseApiTokenList(response.data);
+      } catch (error) {
+        signal?.throwIfAborted();
+        const candidate = error instanceof Error ? error : new Error(String(error));
+        if (candidate instanceof PlatformHttpError && candidate.status === 403) throw candidate;
+        terminalError = candidate;
+      }
     }
-    return [];
+    if (terminalError) throw terminalError;
+    throw new Error('Invalid token list response: no cookie credential available');
   }
 
   private async getSessionModelsByCookie(baseUrl: string, token: string, userId?: number | null): Promise<string[]> {
@@ -889,30 +1049,42 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return this.getOpenAiModelsByBearer(baseUrl, token);
   }
 
-  private async discoverUserId(baseUrl: string, accessToken: string): Promise<number | null> {
+  private async discoverUserId(
+    baseUrl: string,
+    accessToken: string,
+    signal?: AbortSignal,
+  ): Promise<number | null> {
     const jwtId = this.tryDecodeUserId(accessToken);
     if (jwtId) {
       try {
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
           headers: this.authHeaders(accessToken, jwtId),
+          signal,
         });
         if (res?.success && res?.data) return jwtId;
-      } catch {}
+      } catch {
+        signal?.throwIfAborted();
+      }
     }
 
     try {
       const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/self`, {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal,
       });
       if (res?.success && res?.data?.id) return res.data.id;
-    } catch {}
+    } catch {
+      signal?.throwIfAborted();
+    }
 
     try {
-      const cookieRes = await this.fetchUserSelfByCookie(baseUrl, accessToken);
+      const cookieRes = await this.fetchUserSelfByCookie(baseUrl, accessToken, undefined, undefined, signal);
       if (cookieRes?.success && cookieRes?.data?.id) return cookieRes.data.id;
-    } catch {}
+    } catch {
+      signal?.throwIfAborted();
+    }
 
-    const cookieId = await this.probeUserIdByCookie(baseUrl, accessToken);
+    const cookieId = await this.probeUserIdByCookie(baseUrl, accessToken, signal);
     if (cookieId) return cookieId;
 
     return null;
@@ -952,7 +1124,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+    signal?: AbortSignal,
+  ): Promise<LoginResult> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
@@ -960,17 +1133,27 @@ export class NewApiAdapter extends BasePlatformAdapter {
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
         },
+        signal,
       });
       if (!res) {
         return { success: false, message: 'shield challenge blocked login' };
       }
 
+      const loginData = res?.data && typeof res.data === 'object' ? res.data : null;
+      if (loginData?.require_2fa === true || loginData?.requires_2fa === true) {
+        return { success: false, message: 'NewAPI account requires 2FA; password login is unavailable' };
+      }
+
+      const platformUserId = this.parsePlatformUserId(
+        loginData?.id ?? loginData?.user_id ?? loginData?.userId ?? loginData?.user?.id,
+      );
       const accessToken = this.extractLoginAccessToken(res);
       if (res?.success && accessToken) {
         return {
           success: true,
           accessToken,
           username,
+          ...(platformUserId ? { platformUserId } : {}),
         };
       }
       if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
@@ -978,6 +1161,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
           success: true,
           accessToken: cookieHeader,
           username,
+          ...(platformUserId ? { platformUserId } : {}),
         };
       }
 
@@ -986,6 +1170,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         message: this.extractResponseMessage(res) || '登录失败：未获取到可用会话凭据，请改用 Cookie/Token 导入',
       };
     } catch (err: any) {
+      signal?.throwIfAborted();
       return {
         success: false,
         message: this.formatRequestErrorMessage(err) || err?.message || '登录请求失败',
@@ -1260,15 +1445,25 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  async getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null> {
-    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
-    const tokens = await this.getApiTokensWithUser(baseUrl, accessToken, userId);
+  async getApiToken(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken, signal);
+    const tokens = await this.getApiTokensWithUser(baseUrl, accessToken, userId, signal);
     return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
   }
 
-  async getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]> {
-    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
-    return this.getApiTokensWithUser(baseUrl, accessToken, userId);
+  async getApiTokens(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    const userId = platformUserId || await this.discoverUserId(baseUrl, accessToken, signal);
+    return this.getApiTokensWithUser(baseUrl, accessToken, userId, signal);
   }
 
   private async getApiTokenWithUser(baseUrl: string, accessToken: string, userId: number | null): Promise<string | null> {
@@ -1369,6 +1564,62 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return ['default'];
   }
 
+  async getGroupRates(
+    baseUrl: string,
+    accessToken: string,
+    platformUserId?: number,
+    signal?: AbortSignal,
+  ): Promise<GroupRateInfo[]> {
+    const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken, signal);
+    let terminalError: Error | null = null;
+
+    try {
+      const response = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/self/groups`, {
+        headers: this.authHeaders(accessToken, resolvedUserId || undefined),
+        signal,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        throw new PlatformHttpError(response.status, response.responseBody);
+      }
+      if (!response.data) {
+        if (this.isShieldChallenge('text/html', response.responseBody)) {
+          throw new NewApiShieldChallengeError('shield challenge blocked bearer group rate fetch');
+        }
+        throw new SyntaxError('Invalid group rate response: expected JSON');
+      }
+      const parsed = this.parseGroupRates(response.data);
+      return parsed;
+    } catch (error) {
+      signal?.throwIfAborted();
+      terminalError = error instanceof Error ? error : new Error(String(error));
+      if (!this.shouldRetryGroupRatesWithCookie(terminalError)) throw terminalError;
+    }
+
+    const cookieUserId = resolvedUserId || await this.probeUserIdByCookie(baseUrl, accessToken, signal);
+    for (const cookie of this.buildCookieCandidates(accessToken)) {
+      try {
+        const headers: Record<string, string> = { Cookie: cookie };
+        Object.assign(headers, this.userIdHeaders(cookieUserId));
+        const response = await this.fetchJsonRawWithCookie<any>(
+          `${baseUrl}/api/user/self/groups`,
+          { headers, signal },
+        );
+        if (response.status < 200 || response.status >= 300) {
+          throw new PlatformHttpError(response.status, response.responseBody);
+        }
+        const parsed = this.parseGroupRates(response.data);
+        return parsed;
+      } catch (error) {
+        signal?.throwIfAborted();
+        terminalError = error instanceof Error ? error : new Error(String(error));
+        if (!this.shouldRetryGroupRatesWithCookie(terminalError)) throw terminalError;
+      }
+    }
+
+    if (terminalError) throw terminalError;
+    return [];
+  }
+
   async deleteApiToken(
     baseUrl: string,
     accessToken: string,
@@ -1432,25 +1683,53 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return false;
   }
 
-  private async getApiTokensWithUser(baseUrl: string, accessToken: string, userId: number | null): Promise<ApiTokenInfo[]> {
+  private async getApiTokensWithUser(
+    baseUrl: string,
+    accessToken: string,
+    userId: number | null,
+    signal?: AbortSignal,
+  ): Promise<ApiTokenInfo[]> {
+    let terminalError: Error | null = null;
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
         headers: this.authHeaders(accessToken, userId || undefined),
+        signal,
       });
-      const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
-      if (normalized.length > 0) return normalized;
-      if (this.isTokenListResponse(res)) return [];
-    } catch {}
-
-    const cookieTokens = await this.getApiTokensByCookie(baseUrl, accessToken, userId);
-    if (cookieTokens.length > 0) return cookieTokens;
-
-    const alternateCookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, accessToken, userId);
-    if (alternateCookieUserId) {
-      const fallbackTokens = await this.getApiTokensByCookie(baseUrl, accessToken, alternateCookieUserId);
-      if (fallbackTokens.length > 0) return fallbackTokens;
+      return this.parseApiTokenList(res);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const candidate = error instanceof Error ? error : new Error(String(error));
+      if (candidate instanceof PlatformHttpError && candidate.status === 403) throw candidate;
+      terminalError = candidate;
     }
 
-    return [];
+    try {
+      return await this.getApiTokensByCookie(baseUrl, accessToken, userId, signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      const candidate = error instanceof Error ? error : new Error(String(error));
+      if (candidate instanceof PlatformHttpError && candidate.status === 403) throw candidate;
+      terminalError = candidate;
+    }
+
+    const alternateCookieUserId = await this.probeAlternateUserIdByCookie(
+      baseUrl,
+      accessToken,
+      userId,
+      signal,
+    );
+    if (alternateCookieUserId) {
+      try {
+        return await this.getApiTokensByCookie(baseUrl, accessToken, alternateCookieUserId, signal);
+      } catch (error) {
+        signal?.throwIfAborted();
+        const candidate = error instanceof Error ? error : new Error(String(error));
+        if (candidate instanceof PlatformHttpError && candidate.status === 403) throw candidate;
+        terminalError = candidate;
+      }
+    }
+
+    if (terminalError) throw terminalError;
+    throw new Error('Failed to fetch token list');
   }
 }

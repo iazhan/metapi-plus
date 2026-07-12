@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ensureDefaultTokenForAccountMock = vi.fn();
 const syncTokensFromUpstreamMock = vi.fn();
+const syncTokensFromUpstreamForSessionMock = vi.fn();
 const refreshBalanceMock = vi.fn();
 const refreshModelsForAccountMock = vi.fn();
 const rebuildTokenRoutesFromAvailabilityMock = vi.fn();
@@ -9,6 +10,7 @@ const rebuildTokenRoutesFromAvailabilityMock = vi.fn();
 vi.mock('./accountTokenService.js', () => ({
   ensureDefaultTokenForAccount: (...args: unknown[]) => ensureDefaultTokenForAccountMock(...args),
   syncTokensFromUpstream: (...args: unknown[]) => syncTokensFromUpstreamMock(...args),
+  syncTokensFromUpstreamForSession: (...args: unknown[]) => syncTokensFromUpstreamForSessionMock(...args),
 }));
 
 vi.mock('./balanceService.js', () => ({
@@ -24,6 +26,7 @@ describe('accountMutationWorkflow', () => {
   beforeEach(() => {
     ensureDefaultTokenForAccountMock.mockReset();
     syncTokensFromUpstreamMock.mockReset();
+    syncTokensFromUpstreamForSessionMock.mockReset();
     refreshBalanceMock.mockReset();
     refreshModelsForAccountMock.mockReset();
     rebuildTokenRoutesFromAvailabilityMock.mockReset();
@@ -84,6 +87,32 @@ describe('accountMutationWorkflow', () => {
     });
     expect(result.defaultTokenId).toBe(22);
     expect(result.tokenSync).toBeNull();
+  });
+
+  it.each([
+    { ensurePreferredTokenBeforeSync: true, upstreamTokens: [{ name: 'upstream', key: 'sk-upstream' }] },
+    { ensurePreferredTokenBeforeSync: false, upstreamTokens: [{ name: 'upstream', key: 'sk-upstream' }] },
+    { ensurePreferredTokenBeforeSync: false, upstreamTokens: undefined },
+  ])('rejects preferred token writes in a session-aware convergence', async (input) => {
+    const { convergeAccountMutation } = await import('./accountMutationWorkflow.js');
+
+    await expect(convergeAccountMutation({
+      accountId: 7,
+      expectedSession: {
+        id: 7,
+        siteId: 3,
+        username: 'tester',
+        accessToken: 'session-token',
+        extraConfig: null,
+        status: 'active',
+      },
+      preferredApiToken: 'sk-preferred',
+      ensurePreferredTokenBeforeSync: input.ensurePreferredTokenBeforeSync,
+      upstreamTokens: input.upstreamTokens,
+    })).rejects.toThrow('preferredApiToken is not supported with expectedSession');
+
+    expect(ensureDefaultTokenForAccountMock).not.toHaveBeenCalled();
+    expect(syncTokensFromUpstreamMock).not.toHaveBeenCalled();
   });
 
   it('continues through later refresh steps when continueOnError is enabled', async () => {

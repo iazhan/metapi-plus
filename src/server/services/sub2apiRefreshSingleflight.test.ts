@@ -96,4 +96,73 @@ describe('sub2apiRefreshSingleflight', () => {
     });
     expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the shared refresh active when the first waiter cancels', async () => {
+    let resolveRefresh!: (value: { accessToken: string; extraConfig: string }) => void;
+    let operationSignal: AbortSignal | undefined;
+    refreshSub2ApiManagedSessionMock.mockImplementation((input: { signal?: AbortSignal }) => {
+      operationSignal = input.signal;
+      return new Promise((resolve) => { resolveRefresh = resolve; });
+    });
+    const { refreshSub2ApiManagedSessionSingleflight } = await import('./sub2apiRefreshSingleflight.js');
+    const params = {
+      account: { id: 43 },
+      site: { id: 7, platform: 'sub2api', url: 'https://sub2.example.com' },
+      currentAccessToken: 'stale-access-token',
+      currentExtraConfig: '{"sub2apiAuth":{"refreshToken":"refresh-token"}}',
+    };
+    const firstOwner = new AbortController();
+    const secondOwner = new AbortController();
+
+    const first = refreshSub2ApiManagedSessionSingleflight({ ...params, signal: firstOwner.signal } as never);
+    const second = refreshSub2ApiManagedSessionSingleflight({ ...params, signal: secondOwner.signal } as never);
+    firstOwner.abort(new DOMException('first owner cancelled', 'AbortError'));
+
+    await expect(first).rejects.toMatchObject({ name: 'AbortError', message: 'first owner cancelled' });
+    expect(operationSignal).toBeInstanceOf(AbortSignal);
+    expect(operationSignal).not.toBe(firstOwner.signal);
+    expect(operationSignal?.aborted).toBe(false);
+
+    resolveRefresh({ accessToken: 'fresh-token', extraConfig: '{}' });
+    await expect(second).resolves.toMatchObject({ accessToken: 'fresh-token' });
+    expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases an abandoned refresh generation and ignores its late settlement', async () => {
+    const resolvers: Array<(value: { accessToken: string; extraConfig: string }) => void> = [];
+    const operationSignals: AbortSignal[] = [];
+    refreshSub2ApiManagedSessionMock.mockImplementation((input: { signal?: AbortSignal }) => {
+      if (input.signal) operationSignals.push(input.signal);
+      return new Promise((resolve) => { resolvers.push(resolve); });
+    });
+    const { refreshSub2ApiManagedSessionSingleflight } = await import('./sub2apiRefreshSingleflight.js');
+    const params = {
+      account: { id: 44 },
+      site: { id: 7, platform: 'sub2api', url: 'https://sub2.example.com' },
+      currentAccessToken: 'stale-access-token',
+      currentExtraConfig: '{"sub2apiAuth":{"refreshToken":"refresh-token"}}',
+    };
+    const abandonedOwner = new AbortController();
+
+    const abandoned = refreshSub2ApiManagedSessionSingleflight({
+      ...params,
+      signal: abandonedOwner.signal,
+    } as never);
+    abandonedOwner.abort(new DOMException('abandon first generation', 'AbortError'));
+    await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+    expect(operationSignals[0]?.aborted).toBe(true);
+
+    const fresh = refreshSub2ApiManagedSessionSingleflight(params as never);
+    expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(2);
+    resolvers[0]?.({ accessToken: 'stale-token', extraConfig: '{}' });
+    await Promise.resolve();
+
+    const joinedFresh = refreshSub2ApiManagedSessionSingleflight(params as never);
+    expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(2);
+    resolvers[1]?.({ accessToken: 'fresh-token', extraConfig: '{}' });
+    await expect(Promise.all([fresh, joinedFresh])).resolves.toEqual([
+      expect.objectContaining({ accessToken: 'fresh-token' }),
+      expect.objectContaining({ accessToken: 'fresh-token' }),
+    ]);
+  });
 });

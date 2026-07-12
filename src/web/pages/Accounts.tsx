@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api } from "../api.js";
+import { api, type AccountLoginResponseDto } from "../api.js";
 import CenteredModal from "../components/CenteredModal.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import ResponsiveFormGrid from "../components/ResponsiveFormGrid.js";
@@ -102,6 +102,41 @@ function resolveConnectionsSegment(search: string): ConnectionsSegment {
   const rawSegment = new URLSearchParams(search).get("segment");
   if (rawSegment === "apikey" || rawSegment === "tokens") return rawSegment;
   return "session";
+}
+
+function buildLoginAddFeedback(
+  username: string,
+  result: Extract<AccountLoginResponseDto, { success: true }>,
+): { message: string; warning: boolean } {
+  const prefix = `账号 "${username}" 已添加`;
+  const tokenFailed = result.tokenSync.status === "failed";
+  const tokenSkipped = result.tokenSync.status === "skipped";
+  const rateFailure = result.rateSync.status === "failed"
+    ? result.rateSync.message.trim()
+    : "";
+
+  let message: string;
+  if (tokenFailed) {
+    const tokenFailure = result.tokenSync.message?.trim()
+      || result.tokenSync.reason?.trim()
+      || "请稍后重试";
+    message = `${prefix}，但令牌同步失败：${tokenFailure}`;
+  } else if (result.apiTokenFound) {
+    message = `${prefix}，API Key 已自动获取`;
+  } else {
+    message = `${prefix}（未找到 API Key，请手动设置）`;
+  }
+
+  if (rateFailure) {
+    message += tokenFailed
+      ? `；倍率同步失败：${rateFailure}`
+      : `，但倍率同步失败：${rateFailure}`;
+  }
+
+  return {
+    message,
+    warning: tokenFailed || tokenSkipped || Boolean(rateFailure),
+  };
 }
 
 export default function Accounts() {
@@ -389,10 +424,12 @@ export default function Accounts() {
       const result = await api.loginAccount(loginForm);
       if (result.success) {
         closeAddPanel();
-        const msg = result.apiTokenFound
-          ? `账号 "${loginForm.username}" 已添加，API Key 已自动获取`
-          : `账号 "${loginForm.username}" 已添加（未找到 API Key，请手动设置）`;
-        toast.success(msg);
+        const feedback = buildLoginAddFeedback(loginForm.username, result);
+        if (feedback.warning) {
+          toast.info(feedback.message);
+        } else {
+          toast.success(feedback.message);
+        }
         load(true);
       } else {
         toast.error(result.message || "登录失败");

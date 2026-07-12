@@ -20,6 +20,8 @@ import {
   type AccountCredentialMode,
 } from "../../services/accountExtraConfig.js";
 import { encryptAccountPassword } from "../../services/accountCredentialService.js";
+import { mergeLoginSessionMetadata } from "../../services/accountLoginSessionService.js";
+import { syncAccountPlatformData } from "../../services/accountPlatformSyncService.js";
 import { applyAccountUpdateWorkflow } from "../../services/accountUpdateWorkflow.js";
 import { startBackgroundTask } from "../../services/backgroundTaskService.js";
 import { parseCheckinRewardAmount } from "../../services/checkinRewardParser.js";
@@ -535,34 +537,9 @@ export async function accountsRoutes(app: FastifyInstance) {
         };
       }
 
-      const guessedPlatformUserId = guessPlatformUserIdFromUsername(username);
+      const resolvedLoginPlatformUserId = loginResult.platformUserId
+        ?? guessPlatformUserIdFromUsername(username);
 
-      // Auto-fetch API token(s)
-      let apiToken: string | null = null;
-      let apiTokens: Array<{
-        name?: string | null;
-        key?: string | null;
-        enabled?: boolean | null;
-      }> = [];
-      try {
-        apiToken = await adapter.getApiToken(
-          site.url,
-          loginResult.accessToken,
-          guessedPlatformUserId,
-        );
-      } catch {}
-      try {
-        apiTokens = await adapter.getApiTokens(
-          site.url,
-          loginResult.accessToken,
-          guessedPlatformUserId,
-        );
-      } catch {}
-
-      const preferredApiToken =
-        apiTokens.find((token) => token.enabled !== false && token.key)?.key ||
-        apiToken ||
-        null;
       const existing = await db
         .select()
         .from(schema.accounts)
@@ -582,12 +559,13 @@ export async function accountsRoutes(app: FastifyInstance) {
           updatedAt: new Date().toISOString(),
         },
       };
-      if (guessedPlatformUserId) {
-        extraConfigPatch.platformUserId = guessedPlatformUserId;
+      if (resolvedLoginPlatformUserId) {
+        extraConfigPatch.platformUserId = resolvedLoginPlatformUserId;
       }
-      const extraConfig = mergeAccountExtraConfig(
-        existing?.extraConfig,
-        extraConfigPatch,
+      const extraConfig = mergeLoginSessionMetadata(
+        mergeAccountExtraConfig(existing?.extraConfig, extraConfigPatch),
+        site.platform,
+        loginResult,
       );
 
       // Create or update account
@@ -597,7 +575,6 @@ export async function accountsRoutes(app: FastifyInstance) {
           .update(schema.accounts)
           .set({
             accessToken: loginResult.accessToken,
-            apiToken: preferredApiToken || undefined,
             checkinEnabled: true,
             status: "active",
             extraConfig,
@@ -615,7 +592,6 @@ export async function accountsRoutes(app: FastifyInstance) {
             siteId,
             username,
             accessToken: loginResult.accessToken,
-            apiToken: preferredApiToken || undefined,
             checkinEnabled: true,
             extraConfig,
             isPinned: false,
@@ -636,11 +612,13 @@ export async function accountsRoutes(app: FastifyInstance) {
         return { success: false, message: "account create failed" };
       }
 
+      const platformSync = await syncAccountPlatformData({
+        accounts: result,
+        sites: site,
+      });
+
       await convergeAccountMutation({
         accountId: result.id,
-        preferredApiToken,
-        defaultTokenSource: "sync",
-        upstreamTokens: apiTokens,
         refreshBalance: true,
         refreshModels: true,
         rebuildRoutes: true,
@@ -655,8 +633,16 @@ export async function accountsRoutes(app: FastifyInstance) {
       return {
         success: true,
         account,
-        apiTokenFound: !!preferredApiToken,
-        tokenCount: apiTokens.length,
+        apiTokenFound:
+          platformSync.status === "synced" &&
+          (platformSync.total > 0 || platformSync.defaultTokenId != null),
+        tokenCount: platformSync.total,
+        tokenSync: {
+          status: platformSync.status,
+          reason: platformSync.reason,
+          message: platformSync.message,
+        },
+        rateSync: platformSync.rateSync,
         reusedAccount: !!existing,
       };
     },

@@ -652,9 +652,15 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
   });
 
-  it('preserves active account availability and routes when model discovery is rate limited', async () => {
+  it.each([
+    ['HTTP 429 usage limit', 'HTTP 429: usage_limit_reached'],
+    [
+      'HTTP 403 insufficient balance',
+      'HTTP 403: {"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}',
+    ],
+  ])('preserves active account availability and routes when model discovery is rate limited: %s', async (_caseName, failureMessage) => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockRejectedValue(new Error('HTTP 429: usage_limit_reached'));
+    getModelsMock.mockRejectedValue(new Error(failureMessage));
 
     const site = await db.insert(schema.sites).values({
       name: 'site-rate-limited-refresh',
@@ -852,7 +858,9 @@ describe('refreshModelsForAccount credential discovery', () => {
     ))).toBe(true);
   });
 
-  it('does not restore unauthorized token coverage when all managed token refreshes fail with mixed errors', async () => {
+  it.each(['rate-limited-first', 'invalid-first'] as const)(
+    'does not restore unauthorized token coverage when all managed token refreshes fail with mixed errors: %s',
+    async (tokenOrder) => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (_baseUrl: string, tokenValue: string) => {
       if (tokenValue === 'session-access-token') return [];
@@ -877,7 +885,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     }).returning().get();
 
-    const limitedToken = await db.insert(schema.accountTokens).values({
+    const limitedTokenValues = {
       accountId: account.id,
       name: 'limited',
       token: 'sk-rate-limited-token',
@@ -885,9 +893,8 @@ describe('refreshModelsForAccount credential discovery', () => {
       enabled: true,
       isDefault: true,
       valueStatus: 'ready' as any,
-    }).returning().get();
-
-    const invalidToken = await db.insert(schema.accountTokens).values({
+    };
+    const invalidTokenValues = {
       accountId: account.id,
       name: 'invalid',
       token: 'sk-invalid-token',
@@ -895,7 +902,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       enabled: true,
       isDefault: false,
       valueStatus: 'ready' as any,
-    }).returning().get();
+    };
+    const insertedTokens = await db.insert(schema.accountTokens).values(
+      tokenOrder === 'invalid-first'
+        ? [invalidTokenValues, limitedTokenValues]
+        : [limitedTokenValues, invalidTokenValues],
+    ).returning().all();
+    const limitedToken = insertedTokens.find((token) => token.token === 'sk-rate-limited-token')!;
+    const invalidToken = insertedTokens.find((token) => token.token === 'sk-invalid-token')!;
 
     await db.insert(schema.modelAvailability).values([
       {

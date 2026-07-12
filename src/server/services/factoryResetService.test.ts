@@ -17,12 +17,10 @@ describe('factoryResetService', () => {
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-factory-reset-service-'));
     process.env.DATA_DIR = dataDir;
-
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const configModule = await import('../config.js');
     const serviceModule = await import('./factoryResetService.js');
-
     db = dbModule.db;
     schema = dbModule.schema;
     config = configModule.config;
@@ -35,7 +33,9 @@ describe('factoryResetService', () => {
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.proxyVideoTasks).run();
+    await db.delete(schema.proxyFiles).run();
     await db.delete(schema.checkinLogs).run();
+    await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.tokenRoutes).run();
@@ -43,55 +43,100 @@ describe('factoryResetService', () => {
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.events).run();
     await db.delete(schema.settings).run();
-
-    config.authToken = 'external-reset-token';
-    config.dbType = 'postgres';
-    config.dbUrl = 'postgres://user:pass@127.0.0.1:5432/metapi';
-    config.dbSsl = true;
+    config.authToken = 'reset-token';
+    config.proxyToken = 'reset-proxy-token';
+    config.systemProxyUrl = 'http://127.0.0.1:7890';
   });
 
   afterAll(() => {
     delete process.env.DATA_DIR;
   });
 
-  it('clears current active data while preserving external runtime connectivity', async () => {
+  it.each([
+    ['sqlite', 'D:/custom/metapi.db', true],
+    ['mysql', 'mysql://user:pass@127.0.0.1:3306/metapi', false],
+    ['postgres', 'postgres://user:pass@127.0.0.1:5432/metapi', true],
+  ] as const)('preserves the current %s database without switching runtime databases', async (dbType, dbUrl, dbSsl) => {
+    config.dbType = dbType;
+    config.dbUrl = dbUrl;
+    config.dbSsl = dbSsl;
     await db.insert(schema.sites).values({
-      name: 'External Runtime Site',
-      url: 'https://external.example.com',
-      platform: 'new-api',
+      name: 'reset-me', url: 'https://reset.example.com', platform: 'new-api',
     }).run();
-    await db.insert(schema.settings).values([
-      { key: 'auth_token', value: JSON.stringify('external-reset-token') },
-      { key: 'db_type', value: JSON.stringify('postgres') },
-      { key: 'db_url', value: JSON.stringify('postgres://user:pass@127.0.0.1:5432/metapi') },
-      { key: 'db_ssl', value: JSON.stringify(true) },
-    ]).run();
 
-    const switchRuntimeDatabase = vi.fn(async () => undefined);
-    const runSqliteMigrations = vi.fn(() => undefined);
     const ensureDefaultSitesSeeded = vi.fn(async () => ({
-      seeded: 0,
-      alreadyMarked: false,
-      hadExistingSites: false,
+      seeded: 0, alreadyMarked: false, hadExistingSites: false,
     }));
-
+    const switchRuntimeDatabase = vi.fn(async () => undefined);
     await performFactoryReset({
-      switchRuntimeDatabase,
-      runSqliteMigrations,
       ensureDefaultSitesSeeded,
+      switchRuntimeDatabase,
+      runSqliteMigrations: () => undefined,
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
     });
 
-    expect(switchRuntimeDatabase).toHaveBeenCalledWith('postgres', 'postgres://user:pass@127.0.0.1:5432/metapi', true);
-    expect(runSqliteMigrations).not.toHaveBeenCalled();
+    expect(config.dbType).toBe(dbType);
+    expect(config.dbUrl).toBe(dbUrl);
+    expect(config.dbSsl).toBe(dbSsl);
+    expect(switchRuntimeDatabase).not.toHaveBeenCalled();
     expect(ensureDefaultSitesSeeded).toHaveBeenCalledTimes(1);
-    expect(await db.select().from(schema.sites).all()).toHaveLength(0);
-    expect(await db.select().from(schema.settings).all()).toEqual([
-      { key: 'auth_token', value: JSON.stringify('external-reset-token') },
-      { key: 'proxy_token', value: JSON.stringify('change-me-proxy-sk-token') },
-      { key: 'system_proxy_url', value: JSON.stringify('') },
-      { key: 'db_type', value: JSON.stringify('postgres') },
-      { key: 'db_url', value: JSON.stringify('postgres://user:pass@127.0.0.1:5432/metapi') },
-      { key: 'db_ssl', value: JSON.stringify(true) },
-    ]);
+    const settings = Object.fromEntries((await db.select().from(schema.settings).all())
+      .map((row) => [row.key, JSON.parse(row.value)]));
+    expect(settings).toMatchObject({ db_type: dbType, db_url: dbUrl, db_ssl: dbSsl });
+  });
+
+  it('awaits drain, clears backoff only on success, and restarts after consistent reset', async () => {
+    config.dbType = 'sqlite';
+    config.dbUrl = 'D:/custom/current.db';
+    config.dbSsl = false;
+    const steps: string[] = [];
+    const clearFailure = vi.fn((accountId: number) => { steps.push(`clear:${accountId}`); });
+    const account = await db.insert(schema.sites).values({
+      name: 'site', url: 'https://site.example.com', platform: 'new-api',
+    }).returning().get().then((site) => db.insert(schema.accounts).values({
+      siteId: site.id, username: 'user', accessToken: 'session-token', status: 'active',
+    }).returning().get());
+
+    await performFactoryReset({
+      switchRuntimeDatabase: async () => undefined,
+      runSqliteMigrations: () => undefined,
+      ensureDefaultSitesSeeded: async () => {
+        steps.push('seed');
+        return { seeded: 0, alreadyMarked: false, hadExistingSites: false };
+      },
+      stopAccountRateRefreshScheduler: async () => { steps.push('stop'); },
+      startAccountRateRefreshScheduler: () => { steps.push('start'); },
+      clearAccountRateRefreshFailureState: clearFailure,
+    });
+
+    expect(steps).toEqual(['stop', 'seed', `clear:${account.id}`, 'start']);
+  });
+
+  it('rolls back persistent reset and restores prior runtime without clearing backoff on failure', async () => {
+    config.dbType = 'sqlite';
+    config.dbUrl = 'D:/custom/current.db';
+    config.dbSsl = false;
+    await db.insert(schema.sites).values({
+      id: 99, name: 'keep-me', url: 'https://keep.example.com', platform: 'new-api',
+    }).run();
+    const start = vi.fn(() => undefined);
+    const restoreRuntime = vi.fn(async () => undefined);
+    const clearFailure = vi.fn(() => undefined);
+
+    await expect(performFactoryReset({
+      switchRuntimeDatabase: async () => undefined,
+      runSqliteMigrations: () => undefined,
+      ensureDefaultSitesSeeded: async () => { throw new Error('seed failed'); },
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: start,
+      restorePriorRuntime: restoreRuntime,
+      clearAccountRateRefreshFailureState: clearFailure,
+    })).rejects.toThrow('seed failed');
+
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([99]);
+    expect(restoreRuntime).toHaveBeenCalledTimes(1);
+    expect(clearFailure).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
   });
 });

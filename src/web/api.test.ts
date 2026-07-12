@@ -98,6 +98,56 @@ describe('api proxy test timeout handling', () => {
     await expect(promise).resolves.toMatchObject({ message: '请求超时（30s）' });
   });
 
+  it('keeps account password login alive for the full 90 second sync window', async () => {
+    installPendingFetch();
+
+    let settled = false;
+    const handled = api.loginAccount({
+      siteId: 1,
+      username: 'demo-user',
+      password: 'password',
+    })
+      .then(() => ({ ok: true as const }))
+      .catch((error: Error) => ({ ok: false as const, error }))
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await handled;
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('Expected account login to time out');
+    }
+    expect(result.error.message).toBe('请求超时（90s）');
+  });
+
+  it('keeps single-account token sync alive beyond the 45 second server worst path', async () => {
+    installPendingFetch();
+
+    let settled = false;
+    const handled = api.syncAccountTokens(1)
+      .then(() => ({ ok: true as const }))
+      .catch((error: Error) => ({ ok: false as const, error }))
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    const result = await handled;
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('Expected single-account token sync to time out');
+    }
+    expect(result.error.message).toBe('请求超时（75s）');
+  });
+
   it('keeps all-model site probes alive past the default 30 second timeout', async () => {
     installPendingFetch();
 

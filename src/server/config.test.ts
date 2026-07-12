@@ -106,4 +106,24 @@ describe('buildConfig', () => {
     expect(response.json()).toEqual({ ip: '203.0.113.5' });
     await app.close();
   });
+
+  it('defaults account group rate refresh to enabled every 30 minutes', () => {
+    const built = buildConfig({});
+    expect(built.accountGroupRateRefreshEnabled).toBe(true);
+    expect(built.accountGroupRateRefreshIntervalMinutes).toBe(30);
+  });
+
+  it('reads valid account group rate refresh environment values and rejects invalid intervals', () => {
+    expect(buildConfig({
+      ACCOUNT_GROUP_RATE_REFRESH_ENABLED: 'false',
+      ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: '5',
+    })).toMatchObject({
+      accountGroupRateRefreshEnabled: false,
+      accountGroupRateRefreshIntervalMinutes: 5,
+    });
+
+    expect(buildConfig({
+      ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: '4',
+    }).accountGroupRateRefreshIntervalMinutes).toBe(30);
+  });
 });

@@ -109,10 +109,17 @@ describe('accounts background initialization', () => {
     refreshBalanceMock.mockResolvedValue({ balance: 1, used: 0, quota: 1 });
     refreshModelsForAccountMock.mockResolvedValue(undefined);
     rebuildTokenRoutesFromAvailabilityMock.mockResolvedValue(undefined);
-    syncTokensFromUpstreamMock.mockResolvedValue(undefined);
+    syncTokensFromUpstreamMock.mockResolvedValue({
+      synced: 1,
+      created: 1,
+      updated: 0,
+      total: 1,
+      defaultTokenId: 1,
+      maskedPending: 0,
+    });
 
-    let releaseTokens: ((value: Array<{ name: string; value: string }>) => void) | null = null;
-    const pendingTokens = new Promise<Array<{ name: string; value: string }>>((resolve) => {
+    let releaseTokens: ((value: Array<{ name: string; key: string }>) => void) | null = null;
+    const pendingTokens = new Promise<Array<{ name: string; key: string }>>((resolve) => {
       releaseTokens = resolve;
     });
     getApiTokensMock.mockReturnValue(pendingTokens);
@@ -158,7 +165,7 @@ describe('accounts background initialization', () => {
         status: expect.stringMatching(/pending|running/),
       });
 
-      releaseTokens?.([{ name: 'default', value: 'sk-demo' }]);
+      releaseTokens?.([{ name: 'default', key: 'sk-demo' }]);
 
       const task = await waitForBackgroundTaskToReachTerminalState(
         (taskId) => getBackgroundTask?.(taskId) ?? null,

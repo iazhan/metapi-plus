@@ -382,6 +382,8 @@ export type RuntimeSettingsPayload = {
   checkinScheduleMode?: "cron" | "interval";
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  accountGroupRateRefreshEnabled?: boolean;
+  accountGroupRateRefreshIntervalMinutes?: number;
   logCleanupCron?: string;
   logCleanupUsageLogsEnabled?: boolean;
   logCleanupProgramLogsEnabled?: boolean;
@@ -770,6 +772,76 @@ export type DownstreamApiKeyTrendResponse = {
   buckets: DownstreamApiKeyTrendBucket[];
 };
 
+export type AccountGroupRateDto = {
+  groupKey: string;
+  groupName: string;
+  description?: string | null;
+  ratio: number;
+  lastSyncedAt: string;
+};
+
+export type AccountTokenRateSyncDto =
+  | { status: "synced"; total: number; syncedAt: string }
+  | { status: "unsupported" }
+  | { status: "failed"; message: string }
+  | { status: "skipped"; reason: string };
+
+export type AccountTokenDto = {
+  id: number;
+  accountId: number;
+  name: string;
+  tokenGroup?: string | null;
+  groupRate?: AccountGroupRateDto | null;
+  account: {
+    id: number;
+    username?: string | null;
+    status?: string | null;
+  };
+  site: {
+    id: number;
+    name?: string | null;
+    url?: string | null;
+    platform?: string | null;
+  };
+  [key: string]: unknown;
+};
+
+export type AccountTokenGroupsDto = {
+  success: true;
+  groups: string[];
+  rates: AccountGroupRateDto[];
+};
+
+export type AccountTokenSyncDto = {
+  success?: boolean;
+  status: "synced" | "skipped" | "failed";
+  synced: boolean;
+  reason?: string;
+  message?: string;
+  created: number;
+  updated: number;
+  maskedPending?: number;
+  pendingTokenIds?: number[];
+  total: number;
+  rateSync: AccountTokenRateSyncDto;
+  [key: string]: unknown;
+};
+
+export type AccountLoginResponseDto =
+  | {
+    success: true;
+    account: Record<string, unknown> | null;
+    apiTokenFound: boolean;
+    tokenCount: number;
+    tokenSync: Pick<AccountTokenSyncDto, "status" | "reason" | "message">;
+    rateSync: AccountTokenRateSyncDto;
+    reusedAccount: boolean;
+  }
+  | {
+    success: false;
+    message?: string;
+  };
+
 export const api = {
   // Sites
   getSites: () => request("/api/sites"),
@@ -821,9 +893,10 @@ export const api = {
     username: string;
     password: string;
   }) =>
-    request("/api/accounts/login", {
+    request<AccountLoginResponseDto>("/api/accounts/login", {
       method: "POST",
       body: JSON.stringify(data),
+      timeoutMs: 90_000,
     }),
   verifyToken: (data: {
     siteId: number;
@@ -877,7 +950,7 @@ export const api = {
 
   // Account tokens
   getAccountTokens: (accountId?: number) =>
-    request(`/api/account-tokens${accountId ? `?accountId=${accountId}` : ""}`),
+    request<AccountTokenDto[]>(`/api/account-tokens${accountId ? `?accountId=${accountId}` : ""}`),
   addAccountToken: (data: any) =>
     request("/api/account-tokens", {
       method: "POST",
@@ -896,15 +969,15 @@ export const api = {
       body: JSON.stringify(data),
     }),
   getAccountTokenGroups: (accountId: number) =>
-    request(`/api/account-tokens/groups/${accountId}`),
+    request<AccountTokenGroupsDto>(`/api/account-tokens/groups/${accountId}`),
   setDefaultAccountToken: (id: number) =>
     request(`/api/account-tokens/${id}/default`, { method: "POST" }),
   getAccountTokenValue: (id: number) =>
     request(`/api/account-tokens/${id}/value`),
   syncAccountTokens: (accountId: number) =>
-    request(`/api/account-tokens/sync/${accountId}`, {
+    request<AccountTokenSyncDto>(`/api/account-tokens/sync/${accountId}`, {
       method: "POST",
-      timeoutMs: 45_000,
+      timeoutMs: 75_000,
     }),
   syncAllAccountTokens: (wait = false) =>
     request("/api/account-tokens/sync-all", {

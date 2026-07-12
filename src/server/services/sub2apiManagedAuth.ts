@@ -1,10 +1,10 @@
-import { eq } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { schema } from '../db/index.js';
 import {
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
 } from './accountExtraConfig.js';
+import { persistRecoveredAccountSession } from './accountSessionPersistenceService.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
 
 export const SUB2API_MANAGED_REFRESH_LEAD_MS = 120 * 1000;
@@ -121,6 +121,7 @@ export async function refreshSub2ApiManagedSession(params: {
   site: typeof schema.sites.$inferSelect;
   currentAccessToken: string;
   currentExtraConfig: string | null;
+  signal?: AbortSignal;
 }): Promise<{ accessToken: string; extraConfig: string }> {
   const managedAuth = getSub2ApiAuthFromExtraConfig(params.currentExtraConfig);
   const refreshToken = managedAuth?.refreshToken || '';
@@ -144,6 +145,7 @@ export async function refreshSub2ApiManagedSession(params: {
       method: 'POST',
       headers,
       body: JSON.stringify({ refresh_token: refreshToken }),
+      signal: params.signal,
     }, resolveProxyUrlFromExtraConfig(params.currentExtraConfig)));
     status = response.status;
     if (typeof response.text === 'function') {
@@ -154,10 +156,13 @@ export async function refreshSub2ApiManagedSession(params: {
       rawText = payload == null ? '' : JSON.stringify(payload);
     }
   } catch (err: any) {
+    params.signal?.throwIfAborted();
+    if (err?.name === 'AbortError') throw err;
     throw new Error(err?.message || 'sub2api token refresh request failed');
   }
 
   const refreshed = parseSub2ApiRefreshPayload(payload);
+  params.signal?.throwIfAborted();
   if (!refreshed) {
     throw new Error(buildSub2ApiRefreshFailureMessage({
       status,
@@ -166,24 +171,27 @@ export async function refreshSub2ApiManagedSession(params: {
     }));
   }
 
-  const nextExtraConfig = mergeAccountExtraConfig(params.currentExtraConfig, {
-    sub2apiAuth: {
-      refreshToken: refreshed.refreshToken,
-      tokenExpiresAt: refreshed.tokenExpiresAt,
+  const persisted = await persistRecoveredAccountSession({
+    account: {
+      ...params.account,
+      accessToken: params.currentAccessToken,
+      extraConfig: params.currentExtraConfig,
     },
+    accessToken: refreshed.accessToken,
+    signal: params.signal,
+    mergeExtraConfig: (latestExtraConfig) => mergeAccountExtraConfig(latestExtraConfig, {
+      sub2apiAuth: {
+        refreshToken: refreshed.refreshToken,
+        tokenExpiresAt: refreshed.tokenExpiresAt,
+      },
+    }),
   });
-  await db.update(schema.accounts)
-    .set({
-      accessToken: refreshed.accessToken,
-      extraConfig: nextExtraConfig,
-      status: params.account.status === 'expired' ? 'active' : params.account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, params.account.id))
-    .run();
+  if (!persisted) {
+    throw new Error('account session changed during refresh');
+  }
 
   return {
     accessToken: refreshed.accessToken,
-    extraConfig: nextExtraConfig,
+    extraConfig: persisted.extraConfig,
   };
 }

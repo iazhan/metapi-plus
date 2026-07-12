@@ -23,6 +23,14 @@ type DesktopServerWorkingDirInput = {
   isPackaged: boolean;
 };
 
+type ManagedChildProcess = {
+  connected?: boolean;
+  kill(signal?: NodeJS.Signals | number): boolean;
+  once(event: 'exit', listener: () => void): unknown;
+  off(event: 'exit', listener: () => void): unknown;
+  send?(message: unknown, callback?: (error: Error | null) => void): boolean;
+};
+
 const DEFAULT_DESKTOP_SERVER_PORT = 4000;
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const DEFAULT_READY_INTERVAL_MS = 250;
@@ -83,4 +91,53 @@ export async function waitForServerReady(input: WaitForServerReadyInput): Promis
 
 export function isFatalServerExit(exitState: ServerExitState): boolean {
   return exitState.code !== null && exitState.code !== 0 && !exitState.signal;
+}
+
+export function stopManagedChildProcess(
+  child: ManagedChildProcess,
+  options: { timeoutMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 10_000;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      child.off('exit', finish);
+      resolve();
+    };
+
+    child.once('exit', finish);
+    timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    const fallbackToSignal = () => {
+      child.kill('SIGTERM');
+    };
+    if (child.connected && typeof child.send === 'function') {
+      try {
+        child.send({ type: 'metapi:shutdown' }, (error) => {
+          if (error) fallbackToSignal();
+        });
+      } catch {
+        fallbackToSignal();
+      }
+    } else {
+      fallbackToSignal();
+    }
+  });
+}
+
+export async function restartManagedBackendAfterStop(input: {
+  stop: () => Promise<void>;
+  shouldRestart: () => boolean;
+  start: () => Promise<void>;
+}): Promise<boolean> {
+  await input.stop();
+  if (!input.shouldRestart()) return false;
+  await input.start();
+  return true;
 }
