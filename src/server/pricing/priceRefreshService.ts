@@ -44,6 +44,7 @@ export interface PriceRefreshDependencies {
   replaceSitePriceSnapshot: (siteId: number, rows: SitePriceInput[]) => Promise<void>;
   recordSuccess: (scope: 'official' | 'site', scopeId: number) => Promise<void>;
   recordFailure: (scope: 'official' | 'site', scopeId: number, kind: PriceRefreshFailureKind) => Promise<void>;
+  recordPassResult?: (result: PriceRefreshPassResult) => Promise<void>;
 }
 
 async function listEnabledSiteIds(): Promise<number[]> {
@@ -100,6 +101,29 @@ async function recordFailure(
   }
 }
 
+async function recordPassResult(result: PriceRefreshPassResult): Promise<void> {
+  await createRefreshEvent(
+    'official',
+    0,
+    result.officialRefreshed ? '价格刷新完成' : '价格刷新失败',
+    result.officialRefreshed
+      ? `官方目录已更新，站点刷新成功 ${result.siteRefreshed}/${result.siteScanned}，失败 ${result.siteFailed}`
+      : '官方价格目录刷新失败，未继续刷新站点价格',
+    !result.officialRefreshed || result.siteFailed > 0 ? 'warning' : 'info',
+  );
+}
+
+function createOfficialFailureResult(): PriceRefreshPassResult {
+  return {
+    officialRefreshed: false,
+    siteScanned: 0,
+    siteRefreshed: 0,
+    siteFailed: 0,
+    refreshedSiteIds: [],
+    failedSiteIds: [],
+  };
+}
+
 function classifyFailure(error: unknown): PriceRefreshFailureKind {
   if (error instanceof SitePriceSourceError) {
     if (error.kind === 'unsupported') return 'unsupported';
@@ -121,6 +145,7 @@ const defaultDependencies: PriceRefreshDependencies = {
   replaceSitePriceSnapshot,
   recordSuccess,
   recordFailure,
+  recordPassResult,
 };
 
 export async function refreshSitePriceSnapshot(
@@ -159,6 +184,7 @@ export async function runPriceRefreshPass(
   } catch (error) {
     input.signal?.throwIfAborted();
     await deps.recordFailure('official', 0, classifyFailure(error));
+    await deps.recordPassResult?.(createOfficialFailureResult());
     throw new Error('official price refresh failed');
   }
   try {
@@ -166,6 +192,7 @@ export async function runPriceRefreshPass(
   } catch (error) {
     input.signal?.throwIfAborted();
     await deps.recordFailure('official', 0, 'storage');
+    await deps.recordPassResult?.(createOfficialFailureResult());
     throw new Error('official price refresh failed');
   }
   await deps.recordSuccess('official', 0);
@@ -198,5 +225,6 @@ export async function runPriceRefreshPass(
   await Promise.all(
     Array.from({ length: Math.min(PRICE_REFRESH_CONCURRENCY, enabledSiteIds.length) }, () => worker()),
   );
+  await deps.recordPassResult?.(result);
   return result;
 }

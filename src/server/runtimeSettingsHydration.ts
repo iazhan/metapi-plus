@@ -175,6 +175,16 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.priceRefreshCron = priceRefreshCron;
   }
 
+  const priceRefreshScheduleMode = parseSettingFromMap<string>(settingsMap, 'price_refresh_schedule_mode');
+  if (priceRefreshScheduleMode === 'cron' || priceRefreshScheduleMode === 'interval') {
+    config.priceRefreshScheduleMode = priceRefreshScheduleMode;
+  }
+
+  const priceRefreshIntervalHours = parseSettingFromMap<number>(settingsMap, 'price_refresh_interval_hours');
+  if (typeof priceRefreshIntervalHours === 'number' && Number.isFinite(priceRefreshIntervalHours) && priceRefreshIntervalHours >= 1 && priceRefreshIntervalHours <= 24) {
+    config.priceRefreshIntervalHours = Math.trunc(priceRefreshIntervalHours);
+  }
+
   const logCleanupCron = parseSettingFromMap<string>(settingsMap, 'log_cleanup_cron');
   if (typeof logCleanupCron === 'string' && logCleanupCron) config.logCleanupCron = logCleanupCron;
 

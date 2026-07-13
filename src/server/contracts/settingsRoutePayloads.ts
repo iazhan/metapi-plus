@@ -24,6 +24,10 @@ const runtimeSettingsPayloadSchema = z.object({
   smtpSecure: z.boolean().optional(),
   logCleanupUsageLogsEnabled: z.boolean().optional(),
   logCleanupProgramLogsEnabled: z.boolean().optional(),
+  priceRefreshEnabled: z.boolean().optional(),
+  priceRefreshCron: z.string().optional(),
+  priceRefreshScheduleMode: z.enum(['cron', 'interval']).optional(),
+  priceRefreshIntervalHours: z.number().int().min(1).max(24).optional(),
 }).passthrough();
 
 const systemProxyTestPayloadSchema = z.object({
@@ -129,6 +133,18 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'logCleanupProgramLogsEnabled') {
     return '自动清理程序日志格式无效：需要 boolean';
+  }
+  if (firstPath === 'priceRefreshCron') {
+    return '价格刷新 Cron 格式无效：需要 string';
+  }
+  if (firstPath === 'priceRefreshEnabled') {
+    return '价格自动刷新开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'priceRefreshScheduleMode') {
+    return '价格刷新方式无效：仅支持 cron 或 interval';
+  }
+  if (firstPath === 'priceRefreshIntervalHours') {
+    return '价格刷新间隔必须是 1 到 24 的整数小时';
   }
   return 'Invalid settings payload.';
 }

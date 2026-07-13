@@ -48,6 +48,7 @@ import {
 } from '../../services/modelAvailabilityProbeService.js';
 import { updateAccountRateRefreshScheduler } from '../../services/accountRateRefreshScheduler.js';
 import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
+import { updatePriceRefreshScheduler } from '../../pricing/priceRefreshScheduler.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
@@ -75,6 +76,10 @@ interface RuntimeSettingsBody {
   checkinScheduleMode?: 'cron' | 'interval';
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  priceRefreshEnabled?: boolean;
+  priceRefreshCron?: string;
+  priceRefreshScheduleMode?: 'cron' | 'interval';
+  priceRefreshIntervalHours?: number;
   logCleanupCron?: string;
   logCleanupUsageLogsEnabled?: boolean;
   logCleanupProgramLogsEnabled?: boolean;
@@ -374,6 +379,51 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       if (typeof value !== 'string' || !value || !cron.validate(value)) return;
       config.balanceRefreshCron = value;
       updateBalanceRefreshCron(value);
+      return;
+    }
+    case 'price_refresh_cron': {
+      if (typeof value !== 'string' || !value || !cron.validate(value)) return;
+      config.priceRefreshCron = value;
+      void updatePriceRefreshScheduler({
+        enabled: config.priceRefreshEnabled,
+        cronExpr: config.priceRefreshCron,
+        scheduleMode: config.priceRefreshScheduleMode,
+        intervalHours: config.priceRefreshIntervalHours,
+      });
+      return;
+    }
+    case 'price_refresh_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.priceRefreshEnabled = value;
+      void updatePriceRefreshScheduler({
+        enabled: config.priceRefreshEnabled,
+        cronExpr: config.priceRefreshCron,
+        scheduleMode: config.priceRefreshScheduleMode,
+        intervalHours: config.priceRefreshIntervalHours,
+      });
+      return;
+    }
+    case 'price_refresh_schedule_mode': {
+      if (value !== 'cron' && value !== 'interval') return;
+      config.priceRefreshScheduleMode = value;
+      void updatePriceRefreshScheduler({
+        enabled: config.priceRefreshEnabled,
+        cronExpr: config.priceRefreshCron,
+        scheduleMode: config.priceRefreshScheduleMode,
+        intervalHours: config.priceRefreshIntervalHours,
+      });
+      return;
+    }
+    case 'price_refresh_interval_hours': {
+      const intervalHours = Number(value);
+      if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) return;
+      config.priceRefreshIntervalHours = Math.trunc(intervalHours);
+      void updatePriceRefreshScheduler({
+        enabled: config.priceRefreshEnabled,
+        cronExpr: config.priceRefreshCron,
+        scheduleMode: config.priceRefreshScheduleMode,
+        intervalHours: config.priceRefreshIntervalHours,
+      });
       return;
     }
     case 'log_cleanup_cron': {
@@ -735,6 +785,10 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     checkinScheduleMode: config.checkinScheduleMode,
     checkinIntervalHours: config.checkinIntervalHours,
     balanceRefreshCron: config.balanceRefreshCron,
+    priceRefreshEnabled: config.priceRefreshEnabled,
+    priceRefreshCron: config.priceRefreshCron,
+    priceRefreshScheduleMode: config.priceRefreshScheduleMode,
+    priceRefreshIntervalHours: config.priceRefreshIntervalHours,
     logCleanupCron: config.logCleanupCron,
     logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
@@ -1071,6 +1125,67 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       updateBalanceRefreshCron(body.balanceRefreshCron);
       upsertSetting('balance_refresh_cron', body.balanceRefreshCron);
+    }
+
+    const priceRefreshScheduleTouched = body.priceRefreshEnabled !== undefined
+      || body.priceRefreshCron !== undefined
+      || body.priceRefreshScheduleMode !== undefined
+      || body.priceRefreshIntervalHours !== undefined;
+    if (priceRefreshScheduleTouched) {
+      const nextPriceRefreshCron = body.priceRefreshCron !== undefined
+        ? String(body.priceRefreshCron || '').trim()
+        : config.priceRefreshCron;
+      const nextPriceRefreshEnabled = body.priceRefreshEnabled !== undefined
+        ? body.priceRefreshEnabled
+        : config.priceRefreshEnabled;
+      const nextPriceRefreshScheduleMode = body.priceRefreshScheduleMode !== undefined
+        ? body.priceRefreshScheduleMode
+        : config.priceRefreshScheduleMode;
+      const rawPriceRefreshIntervalHours = body.priceRefreshIntervalHours !== undefined
+        ? Number(body.priceRefreshIntervalHours)
+        : config.priceRefreshIntervalHours;
+      const nextPriceRefreshIntervalHours = body.priceRefreshIntervalHours !== undefined
+        ? Math.trunc(rawPriceRefreshIntervalHours)
+        : config.priceRefreshIntervalHours;
+
+      if (nextPriceRefreshScheduleMode !== 'cron' && nextPriceRefreshScheduleMode !== 'interval') {
+        return reply.code(400).send({ success: false, message: '价格刷新方式无效：仅支持 cron 或 interval' });
+      }
+      if (!cron.validate(nextPriceRefreshCron)) {
+        return reply.code(400).send({ success: false, message: '价格刷新 Cron 表达式无效' });
+      }
+      if (!Number.isInteger(rawPriceRefreshIntervalHours) || nextPriceRefreshIntervalHours < 1 || nextPriceRefreshIntervalHours > 24) {
+        return reply.code(400).send({ success: false, message: '价格刷新间隔必须是 1 到 24 的整数小时' });
+      }
+      if (nextPriceRefreshCron !== config.priceRefreshCron) {
+        changedLabels.push(`价格刷新 Cron（${config.priceRefreshCron} -> ${nextPriceRefreshCron}）`);
+      }
+      if (nextPriceRefreshEnabled !== config.priceRefreshEnabled) {
+        changedLabels.push(nextPriceRefreshEnabled ? '开启价格自动刷新' : '关闭价格自动刷新');
+      }
+      if (nextPriceRefreshScheduleMode !== config.priceRefreshScheduleMode) {
+        changedLabels.push('价格刷新方式');
+      }
+      if (nextPriceRefreshIntervalHours !== config.priceRefreshIntervalHours) {
+        changedLabels.push(`价格刷新间隔（${config.priceRefreshIntervalHours}h -> ${nextPriceRefreshIntervalHours}h）`);
+      }
+
+      await db.transaction(async (tx) => {
+        await upsertSetting('price_refresh_cron', nextPriceRefreshCron, tx as typeof db);
+        await upsertSetting('price_refresh_enabled', nextPriceRefreshEnabled, tx as typeof db);
+        await upsertSetting('price_refresh_schedule_mode', nextPriceRefreshScheduleMode, tx as typeof db);
+        await upsertSetting('price_refresh_interval_hours', nextPriceRefreshIntervalHours, tx as typeof db);
+      });
+      config.priceRefreshCron = nextPriceRefreshCron;
+      config.priceRefreshEnabled = nextPriceRefreshEnabled;
+      config.priceRefreshScheduleMode = nextPriceRefreshScheduleMode;
+      config.priceRefreshIntervalHours = nextPriceRefreshIntervalHours;
+      await updatePriceRefreshScheduler({
+        enabled: nextPriceRefreshEnabled,
+        cronExpr: nextPriceRefreshCron,
+        scheduleMode: nextPriceRefreshScheduleMode,
+        intervalHours: nextPriceRefreshIntervalHours,
+      });
     }
 
     const logCleanupTouched =

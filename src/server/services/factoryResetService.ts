@@ -25,6 +25,8 @@ import {
 import {
   PRICE_REFRESH_DEFAULT_CRON,
   PRICE_REFRESH_DEFAULT_ENABLED,
+  PRICE_REFRESH_DEFAULT_INTERVAL_HOURS,
+  PRICE_REFRESH_DEFAULT_SCHEDULE_MODE,
 } from '../pricing/settings.js';
 
 export const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
@@ -137,6 +139,8 @@ async function restoreInfrastructureSettings(
   await upsertSetting('db_ssl', preserved.dbSsl, tx);
   await upsertSetting('price_refresh_enabled', PRICE_REFRESH_DEFAULT_ENABLED, tx);
   await upsertSetting('price_refresh_cron', PRICE_REFRESH_DEFAULT_CRON, tx);
+  await upsertSetting('price_refresh_schedule_mode', PRICE_REFRESH_DEFAULT_SCHEDULE_MODE, tx);
+  await upsertSetting('price_refresh_interval_hours', PRICE_REFRESH_DEFAULT_INTERVAL_HOURS, tx);
 }
 
 async function seedFactoryDefaults(tx: typeof db): Promise<void> {
@@ -182,6 +186,8 @@ export async function performFactoryReset(deps: FactoryResetDependencies = {}): 
       await startPriceScheduler({
         enabled: config.priceRefreshEnabled,
         cronExpr: config.priceRefreshCron,
+        scheduleMode: config.priceRefreshScheduleMode,
+        intervalHours: config.priceRefreshIntervalHours,
       });
     },
     restorePriorRuntime: deps.restorePriorRuntime ?? (async () => {

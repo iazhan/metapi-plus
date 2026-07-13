@@ -40,20 +40,33 @@ export async function getPricingSettings() {
   return {
     enabled: config.priceRefreshEnabled,
     cronExpr: config.priceRefreshCron,
+    scheduleMode: config.priceRefreshScheduleMode,
+    intervalHours: config.priceRefreshIntervalHours,
     timeZone: getPriceRefreshTimeZone(),
     refreshStates: await listPricingRefreshStates(),
   };
 }
 
-export async function updatePricingSettings(input: { enabled: boolean; cronExpr: string }) {
+export async function updatePricingSettings(input: {
+  enabled: boolean;
+  cronExpr: string;
+  scheduleMode?: 'cron' | 'interval';
+  intervalHours?: number;
+}) {
+  const scheduleMode = input.scheduleMode ?? config.priceRefreshScheduleMode;
+  const intervalHours = input.intervalHours ?? config.priceRefreshIntervalHours;
   await db.transaction(async (tx) => {
     await upsertSetting('price_refresh_enabled', input.enabled, tx as typeof db);
     await upsertSetting('price_refresh_cron', input.cronExpr, tx as typeof db);
+    await upsertSetting('price_refresh_schedule_mode', scheduleMode, tx as typeof db);
+    await upsertSetting('price_refresh_interval_hours', intervalHours, tx as typeof db);
   });
   config.priceRefreshEnabled = input.enabled;
   config.priceRefreshCron = input.cronExpr;
-  await updatePriceRefreshScheduler(input);
-  return { success: true, ...input, timeZone: getPriceRefreshTimeZone() };
+  config.priceRefreshScheduleMode = scheduleMode;
+  config.priceRefreshIntervalHours = intervalHours;
+  await updatePriceRefreshScheduler({ ...input, scheduleMode, intervalHours });
+  return { success: true, ...input, scheduleMode, intervalHours, timeZone: getPriceRefreshTimeZone() };
 }
 
 export async function refreshPricing() {

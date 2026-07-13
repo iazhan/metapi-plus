@@ -110,3 +110,18 @@ npm audit --omit=dev --audit-level=high
 Before committing, report the changed files, verification commands and results,
 skipped checks with reasons, and remaining CI or environment risks. Do not
 create the commit until the user confirms after that report.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels with their default names. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context domain documentation layout. See `docs/agents/domain.md`.

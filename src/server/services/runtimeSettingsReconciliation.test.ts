@@ -24,6 +24,8 @@ describe('runtimeSettingsReconciliation', () => {
       config.modelAvailabilityProbeEnabled = input.probeEnabled;
       config.priceRefreshEnabled = false;
       config.priceRefreshCron = '0 6 * * *';
+      config.priceRefreshScheduleMode = 'cron';
+      config.priceRefreshIntervalHours = 6;
       return new Map();
     });
     const { reconcileRuntimeSettingsFromPersistedSnapshot } = await import('./runtimeSettingsReconciliation.js');
@@ -43,7 +45,12 @@ describe('runtimeSettingsReconciliation', () => {
     expect(calls[input.logAction as keyof typeof calls]).toHaveBeenCalledTimes(1);
     expect(calls[input.modelAction as keyof typeof calls]).toHaveBeenCalledTimes(1);
     expect(calls.invalidate).toHaveBeenCalledTimes(1);
-    expect(calls.updatePriceRefresh).toHaveBeenCalledWith({ enabled: false, cronExpr: '0 6 * * *' });
+    expect(calls.updatePriceRefresh).toHaveBeenCalledWith({
+      enabled: false,
+      cronExpr: '0 6 * * *',
+      scheduleMode: 'cron',
+      intervalHours: 6,
+    });
     expect(calls.invalidatePricing).toHaveBeenCalledTimes(1);
   });
 });

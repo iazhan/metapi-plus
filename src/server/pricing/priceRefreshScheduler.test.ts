@@ -41,6 +41,34 @@ describe('price refresh scheduler', () => {
     await scheduler.stop();
   });
 
+  it('runs interval mode without registering a cron task', async () => {
+    vi.useFakeTimers();
+    try {
+      const runPass = vi.fn().mockResolvedValue({});
+      const schedule = vi.fn().mockReturnValue({ stop: vi.fn(), destroy: vi.fn() });
+      const scheduler = createPriceRefreshScheduler({
+        runPass,
+        schedule,
+        needsImmediateRefresh: vi.fn().mockResolvedValue(false),
+        timeZone: () => 'Asia/Shanghai',
+      });
+
+      await scheduler.start({
+        enabled: true,
+        cronExpr: '0 0 * * *',
+        scheduleMode: 'interval',
+        intervalHours: 2,
+      });
+      expect(schedule).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      expect(runPass).toHaveBeenCalledTimes(1);
+      await scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('aborts and drains in-flight work before stop resolves', async () => {
     let observedSignal: AbortSignal | undefined;
     let release!: () => void;

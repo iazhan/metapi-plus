@@ -381,6 +381,10 @@ export type RuntimeSettingsPayload = {
   checkinScheduleMode?: "cron" | "interval";
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  priceRefreshEnabled?: boolean;
+  priceRefreshCron?: string;
+  priceRefreshScheduleMode?: "cron" | "interval";
+  priceRefreshIntervalHours?: number;
   accountGroupRateRefreshEnabled?: boolean;
   accountGroupRateRefreshIntervalMinutes?: number;
   logCleanupCron?: string;
@@ -571,6 +575,8 @@ export type SitePricingView = {
 export type PricingSettingsView = {
   enabled: boolean;
   cronExpr: string;
+  scheduleMode?: "cron" | "interval";
+  intervalHours?: number;
   timeZone: string;
   refreshStates: Array<{
     scopeType: "official" | "site";

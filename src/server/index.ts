@@ -281,6 +281,8 @@ startAccountRateRefreshScheduler();
 await startPriceRefreshScheduler({
   enabled: config.priceRefreshEnabled,
   cronExpr: config.priceRefreshCron,
+  scheduleMode: config.priceRefreshScheduleMode,
+  intervalHours: config.priceRefreshIntervalHours,
 });
 startChannelRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();

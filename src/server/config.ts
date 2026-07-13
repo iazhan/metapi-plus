@@ -9,6 +9,8 @@ import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import {
   PRICE_REFRESH_DEFAULT_CRON,
   PRICE_REFRESH_DEFAULT_ENABLED,
+  PRICE_REFRESH_DEFAULT_INTERVAL_HOURS,
+  PRICE_REFRESH_DEFAULT_SCHEDULE_MODE,
 } from './pricing/settings.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
@@ -97,6 +99,10 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       PRICE_REFRESH_DEFAULT_ENABLED,
     ),
     priceRefreshCron: env.PRICE_REFRESH_CRON || PRICE_REFRESH_DEFAULT_CRON,
+    priceRefreshScheduleMode: (env.PRICE_REFRESH_SCHEDULE_MODE || PRICE_REFRESH_DEFAULT_SCHEDULE_MODE).trim().toLowerCase() === 'interval'
+      ? 'interval' as const
+      : 'cron' as const,
+    priceRefreshIntervalHours: Math.min(24, Math.max(1, Math.trunc(parseNumber(env.PRICE_REFRESH_INTERVAL_HOURS, PRICE_REFRESH_DEFAULT_INTERVAL_HOURS)))),
     logCleanupCron: env.LOG_CLEANUP_CRON || '0 6 * * *',
     logCleanupConfigured: false,
     logCleanupUsageLogsEnabled: parseBoolean(env.LOG_CLEANUP_USAGE_LOGS_ENABLED, false),

@@ -39,6 +39,7 @@ describe('price refresh service', () => {
 
   it('isolates one site failure and records only fixed failure metadata', async () => {
     const recordFailure = vi.fn();
+    const recordPassResult = vi.fn();
     const result = await runPriceRefreshPass({}, {
       fetchModelsDevPrices: async () => [{ providerId: 'p', modelId: 'm', displayName: 'M', fetchedAt: '2026-07-12T00:00:00.000Z' }],
       replaceOfficialPriceSnapshot: vi.fn(),
@@ -50,14 +51,21 @@ describe('price refresh service', () => {
       replaceSitePriceSnapshot: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure,
+      recordPassResult,
     });
     expect(result).toMatchObject({ siteRefreshed: 1, siteFailed: 1 });
     expect(recordFailure).toHaveBeenCalledWith('site', 1, 'upstream');
+    expect(recordPassResult).toHaveBeenCalledWith(expect.objectContaining({
+      officialRefreshed: true,
+      siteRefreshed: 1,
+      siteFailed: 1,
+    }));
     expect(JSON.stringify(recordFailure.mock.calls)).not.toContain('secret');
   });
 
   it('stops before site refresh when the official catalog fails', async () => {
     const listEnabledSiteIds = vi.fn();
+    const recordPassResult = vi.fn();
     await expect(runPriceRefreshPass({}, {
       fetchModelsDevPrices: async () => { throw new Error('network'); },
       replaceOfficialPriceSnapshot: vi.fn(),
@@ -66,8 +74,10 @@ describe('price refresh service', () => {
       replaceSitePriceSnapshot: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure: vi.fn(),
+      recordPassResult,
     })).rejects.toThrow('official price refresh failed');
     expect(listEnabledSiteIds).not.toHaveBeenCalled();
+    expect(recordPassResult).toHaveBeenCalledWith(expect.objectContaining({ officialRefreshed: false }));
   });
 
   it('classifies snapshot persistence failures as storage errors', async () => {

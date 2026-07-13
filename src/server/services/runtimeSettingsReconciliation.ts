@@ -64,6 +64,8 @@ export async function reconcileRuntimeSettingsFromPersistedSnapshot(
   await (deps.updatePriceRefresh ?? updatePriceRefreshScheduler)({
     enabled: config.priceRefreshEnabled,
     cronExpr: config.priceRefreshCron,
+    scheduleMode: config.priceRefreshScheduleMode,
+    intervalHours: config.priceRefreshIntervalHours,
   });
   (deps.invalidatePricingCache ?? invalidateEffectivePriceCache)();
   return settingsMap;

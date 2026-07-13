@@ -6,17 +6,23 @@ import {
   getPriceRefreshTimeZone,
   PRICE_REFRESH_DEFAULT_CRON,
   PRICE_REFRESH_DEFAULT_ENABLED,
+  PRICE_REFRESH_DEFAULT_INTERVAL_HOURS,
+  PRICE_REFRESH_DEFAULT_SCHEDULE_MODE,
 } from './settings.js';
 
 export {
   getPriceRefreshTimeZone,
   PRICE_REFRESH_DEFAULT_CRON,
   PRICE_REFRESH_DEFAULT_ENABLED,
+  PRICE_REFRESH_DEFAULT_INTERVAL_HOURS,
+  PRICE_REFRESH_DEFAULT_SCHEDULE_MODE,
 };
 
 export interface PriceRefreshSchedulerSettings {
   enabled: boolean;
   cronExpr: string;
+  scheduleMode?: 'cron' | 'interval';
+  intervalHours?: number;
 }
 
 type ScheduledTaskLike = Pick<ScheduledTask, 'stop' | 'destroy'>;
@@ -53,6 +59,7 @@ const defaultDependencies: PriceRefreshSchedulerDependencies = {
 
 export function createPriceRefreshScheduler(deps: PriceRefreshSchedulerDependencies = defaultDependencies) {
   let task: ScheduledTaskLike | null = null;
+  let intervalTimer: ReturnType<typeof setInterval> | null = null;
   let inFlight: Promise<PriceRefreshPassResult | object> | null = null;
   let controller: AbortController | null = null;
   let enabled = false;
@@ -77,11 +84,27 @@ export function createPriceRefreshScheduler(deps: PriceRefreshSchedulerDependenc
     task?.stop();
     task?.destroy();
     task = null;
+    if (intervalTimer) {
+      clearInterval(intervalTimer);
+      intervalTimer = null;
+    }
     enabled = settings.enabled;
     if (!enabled) return;
-    task = deps.schedule(settings.cronExpr, () => {
-      void trigger().catch(() => undefined);
-    }, { timezone: deps.timeZone() });
+    const scheduleMode = settings.scheduleMode ?? PRICE_REFRESH_DEFAULT_SCHEDULE_MODE;
+    if (scheduleMode === 'cron') {
+      task = deps.schedule(settings.cronExpr, () => {
+        void trigger().catch(() => undefined);
+      }, { timezone: deps.timeZone() });
+    } else {
+      const intervalHours = settings.intervalHours ?? PRICE_REFRESH_DEFAULT_INTERVAL_HOURS;
+      if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) {
+        throw new Error(`Invalid price refresh interval hours: ${String(intervalHours)}`);
+      }
+      intervalTimer = setInterval(() => {
+        void trigger().catch(() => undefined);
+      }, Math.trunc(intervalHours) * 60 * 60 * 1000);
+      intervalTimer.unref?.();
+    }
     if (await deps.needsImmediateRefresh()) {
       void trigger().catch(() => undefined);
     }
@@ -93,6 +116,10 @@ export function createPriceRefreshScheduler(deps: PriceRefreshSchedulerDependenc
     task?.stop();
     task?.destroy();
     task = null;
+    if (intervalTimer) {
+      clearInterval(intervalTimer);
+      intervalTimer = null;
+    }
     controller?.abort();
     if (inFlight) await inFlight.catch((error) => {
       if (!(error instanceof Error) || error.name !== 'AbortError') throw error;
@@ -105,7 +132,9 @@ export function createPriceRefreshScheduler(deps: PriceRefreshSchedulerDependenc
 const singleton = createPriceRefreshScheduler();
 
 export function startPriceRefreshScheduler(settings: PriceRefreshSchedulerSettings): Promise<void> {
-  if (!cron.validate(settings.cronExpr)) throw new Error('Invalid price refresh cron');
+  if ((settings.scheduleMode ?? PRICE_REFRESH_DEFAULT_SCHEDULE_MODE) === 'cron' && !cron.validate(settings.cronExpr)) {
+    throw new Error('Invalid price refresh cron');
+  }
   return singleton.start(settings);
 }
 

@@ -20,7 +20,6 @@ import {
 } from './settings/payloadRulesVisual.js';
 import { PAYLOAD_RULE_PROTOCOL_OPTIONS } from './settings/payloadRuleProtocolOptions.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
-import PricingRefreshSection from './settings/PricingRefreshSection.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -60,6 +59,14 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
     label: `${hour} 小时`,
   };
 });
+const PRICE_REFRESH_SCHEDULE_MODE_OPTIONS = [
+  { value: 'cron', label: 'Cron' },
+  { value: 'interval', label: '间隔刷新' },
+] as const;
+const PRICE_REFRESH_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
+  const hour = index + 1;
+  return { value: String(hour), label: `${hour} 小时` };
+});
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
@@ -71,6 +78,10 @@ type RuntimeSettings = {
   checkinScheduleMode: 'cron' | 'interval';
   checkinIntervalHours: number;
   balanceRefreshCron: string;
+  priceRefreshEnabled: boolean;
+  priceRefreshCron: string;
+  priceRefreshScheduleMode: 'cron' | 'interval';
+  priceRefreshIntervalHours: number;
   accountGroupRateRefreshEnabled: boolean;
   accountGroupRateRefreshIntervalMinutes: number;
   logCleanupCron: string;
@@ -347,6 +358,38 @@ function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number 
   return normalizedValue * unitConfig.multiplierSec;
 }
 
+function ScheduleSubsection({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      data-testid={`schedule-section-${id}`}
+      aria-labelledby={`schedule-section-${id}-title`}
+      style={{
+        marginTop: 16,
+        paddingTop: 16,
+        borderTop: '1px solid var(--color-border-light)',
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <h3
+        id={`schedule-section-${id}-title`}
+        style={{ margin: 0, fontWeight: 600, fontSize: 13, lineHeight: 1.5 }}
+      >
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
 export default function Settings() {
   const isMobile = useIsMobile();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
@@ -354,6 +397,10 @@ export default function Settings() {
     checkinScheduleMode: 'cron',
     checkinIntervalHours: 6,
     balanceRefreshCron: '0 * * * *',
+    priceRefreshEnabled: true,
+    priceRefreshCron: '0 0 * * *',
+    priceRefreshScheduleMode: 'cron',
+    priceRefreshIntervalHours: 6,
     accountGroupRateRefreshEnabled: ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
     accountGroupRateRefreshIntervalMinutes: ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_INTERVAL_MINUTES,
     logCleanupCron: '0 6 * * *',
@@ -383,6 +430,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [testingCheckin, setTestingCheckin] = useState(false);
+  const [testingPriceRefresh, setTestingPriceRefresh] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
   const [savingModelAvailabilityProbe, setSavingModelAvailabilityProbe] = useState(false);
@@ -684,6 +732,14 @@ export default function Settings() {
           ? Math.min(24, Math.trunc(Number(runtimeInfo.checkinIntervalHours)))
           : 6,
         balanceRefreshCron: runtimeInfo.balanceRefreshCron || '0 * * * *',
+        priceRefreshEnabled: typeof runtimeInfo.priceRefreshEnabled === 'boolean'
+          ? runtimeInfo.priceRefreshEnabled
+          : true,
+        priceRefreshCron: runtimeInfo.priceRefreshCron || '0 0 * * *',
+        priceRefreshScheduleMode: runtimeInfo.priceRefreshScheduleMode === 'interval' ? 'interval' : 'cron',
+        priceRefreshIntervalHours: Number(runtimeInfo.priceRefreshIntervalHours) >= 1
+          ? Math.min(24, Math.trunc(Number(runtimeInfo.priceRefreshIntervalHours)))
+          : 6,
         accountGroupRateRefreshEnabled: typeof runtimeInfo.accountGroupRateRefreshEnabled === 'boolean'
           ? runtimeInfo.accountGroupRateRefreshEnabled
           : ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,
@@ -816,6 +872,10 @@ export default function Settings() {
         checkinScheduleMode: runtime.checkinScheduleMode,
         checkinIntervalHours: runtime.checkinIntervalHours,
         balanceRefreshCron: runtime.balanceRefreshCron,
+        priceRefreshEnabled: runtime.priceRefreshEnabled,
+        priceRefreshCron: runtime.priceRefreshCron,
+        priceRefreshScheduleMode: runtime.priceRefreshScheduleMode,
+        priceRefreshIntervalHours: runtime.priceRefreshIntervalHours,
         accountGroupRateRefreshEnabled: runtime.accountGroupRateRefreshEnabled,
         accountGroupRateRefreshIntervalMinutes,
         logCleanupCron: runtime.logCleanupCron,
@@ -845,6 +905,18 @@ export default function Settings() {
       toast.error(err?.message || '触发签到失败');
     } finally {
       setTestingCheckin(false);
+    }
+  };
+
+  const triggerPriceRefresh = async () => {
+    setTestingPriceRefresh(true);
+    try {
+      await api.refreshPricing();
+      toast.success('已开始价格刷新，请稍后查看程序日志');
+    } catch (err: any) {
+      toast.error(err?.message || '触发价格刷新失败');
+    } finally {
+      setTestingPriceRefresh(false);
     }
   };
 
@@ -1348,7 +1420,6 @@ export default function Settings() {
       </div>
 
       <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <PricingRefreshSection />
         <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员登录令牌</div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 12 }}>
@@ -1366,40 +1437,40 @@ export default function Settings() {
 
         <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end', marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到方式</div>
-              <ModernSelect
-                value={runtime.checkinScheduleMode}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
-                }))}
-                options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
-              />
+          <ScheduleSubsection id="checkin" title="自动签到">
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end' }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到方式</div>
+                <ModernSelect
+                  value={runtime.checkinScheduleMode}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
+                  }))}
+                  options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到间隔</div>
+                <ModernSelect
+                  value={String(runtime.checkinIntervalHours)}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
+                  }))}
+                  disabled={runtime.checkinScheduleMode !== 'interval'}
+                  options={CHECKIN_INTERVAL_OPTIONS}
+                />
+              </div>
+              <button
+                onClick={triggerScheduleCheckin}
+                disabled={testingCheckin}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+              >
+                {testingCheckin ? '触发中...' : '测试一次签到'}
+              </button>
             </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到间隔</div>
-              <ModernSelect
-                value={String(runtime.checkinIntervalHours)}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
-                }))}
-                disabled={runtime.checkinScheduleMode !== 'interval'}
-                options={CHECKIN_INTERVAL_OPTIONS}
-              />
-            </div>
-            <button
-              onClick={triggerScheduleCheckin}
-              disabled={testingCheckin}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-            >
-              {testingCheckin ? '触发中...' : '测试一次签到'}
-            </button>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到 Cron</div>
               <input
@@ -1409,6 +1480,9 @@ export default function Settings() {
                 disabled={runtime.checkinScheduleMode !== 'cron'}
               />
             </div>
+          </ScheduleSubsection>
+
+          <ScheduleSubsection id="balance-refresh" title="余额自动刷新">
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>余额刷新 Cron</div>
               <input
@@ -1417,16 +1491,68 @@ export default function Settings() {
                 style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
               />
             </div>
-          </div>
-          <div
-            style={{
-              marginTop: 16,
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 180px',
-              gap: 12,
-              alignItems: 'end',
-            }}
-          >
+          </ScheduleSubsection>
+
+          <ScheduleSubsection id="price-refresh" title="价格自动刷新">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={runtime.priceRefreshEnabled}
+                onChange={(event) => setRuntime((previous) => ({
+                  ...previous,
+                  priceRefreshEnabled: event.target.checked,
+                }))}
+              />
+              启用价格自动刷新
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end' }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>刷新方式</div>
+                <ModernSelect
+                  value={runtime.priceRefreshScheduleMode}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    priceRefreshScheduleMode: value === 'interval' ? 'interval' : 'cron',
+                  }))}
+                  options={PRICE_REFRESH_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>刷新间隔</div>
+                <ModernSelect
+                  value={String(runtime.priceRefreshIntervalHours)}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    priceRefreshIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
+                  }))}
+                  disabled={runtime.priceRefreshScheduleMode !== 'interval'}
+                  options={PRICE_REFRESH_INTERVAL_OPTIONS}
+                />
+              </div>
+              <button
+                onClick={triggerPriceRefresh}
+                disabled={testingPriceRefresh}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+              >
+                {testingPriceRefresh ? '刷新中...' : '立即刷新价格'}
+              </button>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>价格刷新 Cron</div>
+              <input
+                value={runtime.priceRefreshCron}
+                onChange={(e) => setRuntime((prev) => ({ ...prev, priceRefreshCron: e.target.value }))}
+                style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+                disabled={runtime.priceRefreshScheduleMode !== 'cron'}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              刷新结果和最近状态请到程序日志查看。
+            </div>
+          </ScheduleSubsection>
+
+          <ScheduleSubsection id="account-rate-refresh" title="账号倍率自动刷新">
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
               <input
                 data-testid="account-group-rate-refresh-enabled"
@@ -1437,9 +1563,9 @@ export default function Settings() {
                   accountGroupRateRefreshEnabled: event.target.checked,
                 }))}
               />
-              自动刷新账号倍率
+              启用账号倍率自动刷新
             </label>
-            <div>
+            <div style={{ width: isMobile ? '100%' : 220, maxWidth: '100%' }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>倍率刷新间隔（分钟）</div>
               <input
                 data-testid="account-group-rate-refresh-interval-minutes"
@@ -1453,17 +1579,9 @@ export default function Settings() {
                 style={inputStyle}
               />
             </div>
-          </div>
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 16,
-              borderTop: '1px solid var(--color-border-light)',
-              display: 'grid',
-              gap: 12,
-            }}
-          >
-            <div style={{ fontWeight: 600, fontSize: 13 }}>自动清理日志</div>
+          </ScheduleSubsection>
+
+          <ScheduleSubsection id="log-cleanup" title="自动清理日志">
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 160px', gap: 12 }}>
               <div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>清理 Cron</div>
@@ -1513,7 +1631,7 @@ export default function Settings() {
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
               默认每天早上 6 点执行。按每次定时任务执行时间，清理早于“保留天数”的日志；两个选项都不勾选时不会实际删除日志。
             </div>
-          </div>
+          </ScheduleSubsection>
           <div style={{ marginTop: 12 }}>
             <button onClick={saveSchedule} disabled={savingSchedule} className="btn btn-primary">
               {savingSchedule ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存定时任务'}

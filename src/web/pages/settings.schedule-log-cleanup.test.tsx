@@ -108,6 +108,38 @@ describe('Settings log cleanup schedule', () => {
     }
   });
 
+  it('groups every scheduled task family under a titled divider', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const sections = [
+        ['checkin', '自动签到'],
+        ['balance-refresh', '余额自动刷新'],
+        ['price-refresh', '价格自动刷新'],
+        ['account-rate-refresh', '账号倍率自动刷新'],
+        ['log-cleanup', '自动清理日志'],
+      ] as const;
+
+      for (const [id, title] of sections) {
+        const section = root.root.findByProps({ 'data-testid': `schedule-section-${id}` });
+        expect(section.props.style.borderTop).toBe('1px solid var(--color-border-light)');
+        expect(collectText(section)).toContain(title);
+      }
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('disables the account group rate refresh interval input when the toggle is off', async () => {
     let root!: WebTestRenderer;
     try {
@@ -187,6 +219,10 @@ describe('Settings log cleanup schedule', () => {
         checkinScheduleMode: 'interval',
         checkinIntervalHours: 6,
         balanceRefreshCron: '0 * * * *',
+        priceRefreshEnabled: true,
+        priceRefreshCron: '0 0 * * *',
+        priceRefreshScheduleMode: 'cron',
+        priceRefreshIntervalHours: 6,
         accountGroupRateRefreshEnabled: true,
         accountGroupRateRefreshIntervalMinutes: 45,
         logCleanupCron: '15 4 * * *',

@@ -11,6 +11,8 @@ const pricingSettingsSchema = z.object({
   cronExpr: z.string().trim().min(1).refine((value) => cron.validate(value), {
     message: 'Invalid cron expression',
   }),
+  scheduleMode: z.enum(['cron', 'interval']).optional(),
+  intervalHours: z.number().int().min(1).max(24).optional(),
 });
 
 type ParseResult<T> = { success: true; data: T } | { success: false; error: string };
