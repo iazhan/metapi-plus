@@ -890,6 +890,26 @@ function toOpenAiMessageContent(content: unknown): string | Array<string | Recor
   return blocks;
 }
 
+function convertResponsesFunctionToolToOpenAi(
+  item: Record<string, unknown>,
+): Record<string, unknown> | null {
+  if (isRecord(item.function) && asTrimmedString(item.function.name)) return item;
+
+  const name = asTrimmedString(item.name);
+  if (!name) return null;
+
+  const fn: Record<string, unknown> = { name };
+  const description = asTrimmedString(item.description);
+  if (description) fn.description = description;
+  if (item.parameters !== undefined) fn.parameters = item.parameters;
+  if (item.strict !== undefined) fn.strict = item.strict;
+
+  return {
+    type: 'function',
+    function: fn,
+  };
+}
+
 function convertResponsesToolsToOpenAi(rawTools: unknown): unknown {
   if (!Array.isArray(rawTools)) return rawTools;
 
@@ -900,21 +920,7 @@ function convertResponsesToolsToOpenAi(rawTools: unknown): unknown {
 
       if (type === 'custom' || type === 'image_generation') return item;
       if (type !== 'function') return item;
-      if (isRecord(item.function) && asTrimmedString(item.function.name)) return item;
-
-      const name = asTrimmedString(item.name);
-      if (!name) return null;
-
-      const fn: Record<string, unknown> = { name };
-      const description = asTrimmedString(item.description);
-      if (description) fn.description = description;
-      if (item.parameters !== undefined) fn.parameters = item.parameters;
-      if (item.strict !== undefined) fn.strict = item.strict;
-
-      return {
-        type: 'function',
-        function: fn,
-      };
+      return convertResponsesFunctionToolToOpenAi(item);
     })
     .filter((item): item is Record<string, unknown> => !!item);
 }
@@ -969,6 +975,7 @@ export function convertResponsesBodyToOpenAiBody(
   let functionCallIndex = 0;
   let pendingToolCalls: OpenAiToolCall[] = [];
   const emittedToolCallIds = new Set<string>();
+  const collectedAdditionalTools: Array<Record<string, unknown>> = [];
 
   const flushPendingToolCalls = () => {
     if (pendingToolCalls.length <= 0) return;
@@ -1005,6 +1012,26 @@ export function convertResponsesBodyToOpenAiBody(
     if (!isRecord(item)) return;
 
     const itemType = asTrimmedString(item.type).toLowerCase();
+    if (itemType === 'additional_tools' && Array.isArray(item.tools)) {
+      for (const tool of item.tools) {
+        if (!isRecord(tool)) continue;
+        const toolType = asTrimmedString(tool.type).toLowerCase();
+        if (toolType === 'function') {
+          const converted = convertResponsesFunctionToolToOpenAi(tool);
+          if (converted) collectedAdditionalTools.push(converted);
+          continue;
+        }
+        if (toolType !== 'namespace' || !Array.isArray(tool.tools)) continue;
+
+        for (const namespacedTool of tool.tools) {
+          if (!isRecord(namespacedTool)) continue;
+          if (asTrimmedString(namespacedTool.type).toLowerCase() !== 'function') continue;
+          const converted = convertResponsesFunctionToolToOpenAi(namespacedTool);
+          if (converted) collectedAdditionalTools.push(converted);
+        }
+      }
+      return;
+    }
     if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
       const toolCall = toResponsesMcpCompatToolCall(item, `call_${Date.now()}_${functionCallIndex}`);
       if (toolCall) {
@@ -1110,6 +1137,11 @@ export function convertResponsesBodyToOpenAiBody(
   if (normalizedBody.audio !== undefined) payload.audio = cloneJsonValue(normalizedBody.audio);
   if (normalizedBody.parallel_tool_calls !== undefined) payload.parallel_tool_calls = normalizedBody.parallel_tool_calls;
   if (normalizedBody.tools !== undefined) payload.tools = convertResponsesToolsToOpenAi(normalizedBody.tools);
+  if (collectedAdditionalTools.length > 0) {
+    payload.tools = Array.isArray(payload.tools)
+      ? [...payload.tools, ...collectedAdditionalTools]
+      : collectedAdditionalTools;
+  }
   if (normalizedBody.tool_choice !== undefined) payload.tool_choice = convertResponsesToolChoiceToOpenAi(normalizedBody.tool_choice);
   if (Array.isArray(payload.tools) && payload.tools.length === 0) {
     delete payload.tool_choice;

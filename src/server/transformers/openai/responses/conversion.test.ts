@@ -56,6 +56,26 @@ describe('responses conversion single source of truth', () => {
     ]);
   });
 
+  it('preserves additional_tools items during Responses input normalization', () => {
+    const additionalTools = {
+      type: 'additional_tools',
+      role: 'developer',
+      tools: [
+        {
+          type: 'function',
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: { type: 'object' },
+          strict: true,
+        },
+      ],
+    };
+
+    expect(normalizeResponsesInputForCompatibility([additionalTools])).toEqual([
+      additionalTools,
+    ]);
+  });
+
   it('filters whitespace-only string entries from normalized responses input arrays', () => {
     expect(normalizeResponsesInputForCompatibility([
       'hello',
@@ -1291,6 +1311,100 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         },
       ],
     });
+  });
+
+  it('merges function tools from additional_tools into OpenAI-compatible tools', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'additional_tools',
+            role: 'developer',
+            tools: [
+              {
+                type: 'function',
+                name: ' read_file ',
+                description: ' Read a file ',
+                parameters: {
+                  type: 'object',
+                  properties: { path: { type: 'string' } },
+                },
+                strict: true,
+              },
+              {
+                type: 'namespace',
+                name: 'workspace',
+                tools: [
+                  {
+                    type: 'function',
+                    name: 'list_files',
+                    description: 'List files',
+                    parameters: { type: 'object' },
+                    strict: false,
+                  },
+                  {
+                    type: 'function',
+                    name: '   ',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Inspect the workspace' }],
+          },
+        ],
+        tools: [
+          {
+            type: 'function',
+            name: 'search',
+            parameters: { type: 'object' },
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Inspect the workspace' }],
+      },
+    ]);
+    expect(result.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'search',
+          parameters: { type: 'object' },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: {
+            type: 'object',
+            properties: { path: { type: 'string' } },
+          },
+          strict: true,
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'list_files',
+          description: 'List files',
+          parameters: { type: 'object' },
+          strict: false,
+        },
+      },
+    ]);
   });
 
   it('converts custom tool calls and outputs into OpenAI-compatible tool messages', () => {
