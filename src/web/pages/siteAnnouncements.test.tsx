@@ -84,6 +84,40 @@ describe('SiteAnnouncements page', () => {
     expect(labels).toContain('站点公告');
   });
 
+  it('collapses announcement details by default and expands them from the title row', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/site-announcements']}>
+              <Routes>
+                <Route path="/site-announcements" element={<SiteAnnouncements />} />
+              </Routes>
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = root.root.findByProps({ 'data-testid': 'site-announcement-toggle-12' });
+      expect(toggle.props['aria-expanded']).toBe(false);
+      expect(JSON.stringify(root.toJSON())).not.toContain('Window starts at 10:00');
+      expect(JSON.stringify(root.toJSON())).not.toContain('2026/03/20 12:23:27');
+
+      await act(async () => {
+        toggle.props.onClick();
+      });
+
+      const expandedToggle = root.root.findByProps({ 'data-testid': 'site-announcement-toggle-12' });
+      expect(expandedToggle.props['aria-expanded']).toBe(true);
+      expect(JSON.stringify(root.toJSON())).toContain('Window starts at 10:00');
+      expect(JSON.stringify(root.toJSON())).toContain('2026/03/20 12:23:27');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('loads announcements, highlights the focused row, and clears local rows', async () => {
     let root!: WebTestRenderer;
     try {

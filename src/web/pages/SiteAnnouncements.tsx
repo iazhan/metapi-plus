@@ -42,6 +42,7 @@ export default function SiteAnnouncements() {
   const [markingAll, setMarkingAll] = useState(false);
   const [serverTimeZone, setServerTimeZone] = useState<string | undefined>(undefined);
   const [highlightAnnouncementId, setHighlightAnnouncementId] = useState<number | null>(null);
+  const [expandedAnnouncementIds, setExpandedAnnouncementIds] = useState<number[]>([]);
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewerTimeZone = useMemo(() => readClientTimeZone(), []);
@@ -104,6 +105,9 @@ export default function SiteAnnouncements() {
       return;
     }
     row.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setExpandedAnnouncementIds((current) => (
+      current.includes(focusAnnouncementId) ? current : [...current, focusAnnouncementId]
+    ));
     setHighlightAnnouncementId(focusAnnouncementId);
     if (highlightTimerRef.current && typeof win.clearTimeout === 'function') {
       win.clearTimeout(highlightTimerRef.current);
@@ -121,6 +125,7 @@ export default function SiteAnnouncements() {
     try {
       await api.clearSiteAnnouncements();
       setRows([]);
+      setExpandedAnnouncementIds([]);
       toast.success('公告已清空');
     } catch (error: any) {
       toast.error(error?.message || '清空公告失败');
@@ -152,6 +157,14 @@ export default function SiteAnnouncements() {
     } catch (error: any) {
       toast.error(error?.message || '启动同步失败');
     }
+  };
+
+  const toggleAnnouncement = (announcementId: number) => {
+    setExpandedAnnouncementIds((current) => (
+      current.includes(announcementId)
+        ? current.filter((id) => id !== announcementId)
+        : [...current, announcementId]
+    ));
   };
 
   return (
@@ -203,36 +216,75 @@ export default function SiteAnnouncements() {
             <div className="empty-state-desc">当前没有可显示的站点公告。</div>
           </div>
         ) : (
-          rows.map((row, index) => (
-            <div
-              key={row.id}
-              ref={(node) => {
-                if (node) rowRefs.current.set(row.id, node);
-                else rowRefs.current.delete(row.id);
-              }}
-              className={`animate-slide-up stagger-${Math.min(index + 1, 5)} ${highlightAnnouncementId === row.id ? 'row-focus-highlight' : ''}`.trim()}
-              style={{
-                padding: '16px 18px',
-                borderBottom: index === rows.length - 1 ? 'none' : '1px solid var(--color-border-light)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 6 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{row.title}</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span className="badge badge-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</span>
-                  <span className="badge badge-info">{row.platform}</span>
-                  <span className={`badge ${row.readAt ? 'badge-muted' : 'badge-warning'}`}>{row.readAt ? '已读' : '未读'}</span>
-                </div>
-              </div>
-              <SiteAnnouncementContent content={row.content} />
+          rows.map((row, index) => {
+            const isExpanded = expandedAnnouncementIds.includes(row.id);
+            const contentId = `site-announcement-content-${row.id}`;
+            const titleId = `site-announcement-title-${row.id}`;
+            return (
               <div
-                style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}
-                title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
+                key={row.id}
+                ref={(node) => {
+                  if (node) rowRefs.current.set(row.id, node);
+                  else rowRefs.current.delete(row.id);
+                }}
+                className={`site-announcement-row animate-slide-up stagger-${Math.min(index + 1, 5)} ${highlightAnnouncementId === row.id ? 'row-focus-highlight' : ''}`.trim()}
+                style={{
+                  borderBottom: index === rows.length - 1 ? 'none' : '1px solid var(--color-border-light)',
+                }}
               >
-                首次发现：{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
+                <button
+                  type="button"
+                  data-testid={`site-announcement-toggle-${row.id}`}
+                  className="site-announcement-toggle"
+                  aria-expanded={isExpanded}
+                  aria-controls={contentId}
+                  onClick={() => toggleAnnouncement(row.id)}
+                >
+                  <span className="site-announcement-toggle-main">
+                    <svg
+                      className={`site-announcement-chevron ${isExpanded ? 'is-expanded' : ''}`.trim()}
+                      width="14"
+                      height="14"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2.5}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                    <span id={titleId} className="site-announcement-title">{row.title}</span>
+                  </span>
+                  <span className="site-announcement-badges">
+                    <span className="badge badge-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</span>
+                    <span className="badge badge-info">{row.platform}</span>
+                    <span className={`badge ${row.readAt ? 'badge-muted' : 'badge-warning'}`}>{row.readAt ? '已读' : '未读'}</span>
+                  </span>
+                </button>
+                {isExpanded && (
+                  <div
+                    id={contentId}
+                    data-testid={`site-announcement-content-${row.id}`}
+                    className="site-announcement-detail"
+                    role="region"
+                    aria-labelledby={titleId}
+                  >
+                    <SiteAnnouncementContent content={row.content} />
+                    <div
+                      className="site-announcement-seen-at"
+                      title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
+                    >
+                      首次发现：{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

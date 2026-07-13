@@ -1799,6 +1799,126 @@ body {
   animation: row-focus-glow 2.2s ease;
 }
 
+.site-announcement-row.row-focus-highlight {
+  animation: row-focus-glow 2.2s ease;
+}
+
+.site-announcement-toggle {
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 18px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s ease;
+}
+
+.site-announcement-toggle:hover {
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+}
+
+.site-announcement-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.site-announcement-toggle-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.site-announcement-chevron {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  transform: rotate(0deg);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.site-announcement-chevron.is-expanded {
+  color: var(--color-primary);
+  transform: rotate(90deg);
+}
+
+.site-announcement-title {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.site-announcement-badges {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.site-announcement-detail {
+  padding: 0 18px 16px 42px;
+  animation: site-announcement-detail-enter 0.18s ease-out;
+}
+
+.site-announcement-seen-at {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+@keyframes site-announcement-detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .site-announcement-toggle {
+    min-height: 64px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .site-announcement-badges {
+    padding-left: 24px;
+    justify-content: flex-start;
+  }
+
+  .site-announcement-detail {
+    padding: 0 14px 14px 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-announcement-chevron {
+    transition: none;
+  }
+
+  .site-announcement-detail {
+    animation: none;
+  }
+}
+
 .announcement-rich-content {
   font-size: 13px;
   color: var(--color-text-secondary);
