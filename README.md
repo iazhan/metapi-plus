@@ -18,6 +18,8 @@
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/iazhan/metapi-plus?style=flat&logo=github&label=Stars">
 </a><a href="https://github.com/iazhan/metapi-plus/pkgs/container/metapi-plus">
   <img alt="Container" src="https://img.shields.io/badge/container-GHCR-blue?logo=github&style=flat">
+</a><a href="https://hub.docker.com/r/iazhan/metapi-plus">
+  <img alt="Docker Hub" src="https://img.shields.io/docker/pulls/iazhan/metapi-plus?label=Docker%20Hub&logo=docker&style=flat">
 </a><a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><img alt="Node.js" src="https://img.shields.io/badge/Node.js-25%2B-339933?logo=node.js&style=flat"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><a href="https://render.com/deploy?repo=https://github.com/iazhan/metapi-plus">
@@ -319,6 +321,9 @@ export AUTH_TOKEN=your-admin-token
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
+
+镜像同时发布到 [Docker Hub](https://hub.docker.com/r/iazhan/metapi-plus)。如需使用 Docker Hub，
+将示例中的 `ghcr.io/iazhan/metapi-plus:latest` 替换为 `docker.io/iazhan/metapi-plus:latest`。
 
 <details>
 <summary><strong>一行 Docker 命令</strong></summary>

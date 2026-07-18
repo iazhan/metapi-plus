@@ -26,6 +26,9 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 --><a href="https://github.com/iazhan/metapi-plus/pkgs/container/metapi-plus">
   <img alt="Container" src="https://img.shields.io/badge/container-GHCR-blue?logo=github&style=flat">
 </a><!--
+--><a href="https://hub.docker.com/r/iazhan/metapi-plus">
+  <img alt="Docker Hub" src="https://img.shields.io/docker/pulls/iazhan/metapi-plus?label=Docker%20Hub&logo=docker&style=flat">
+</a><!--
 --><a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><!--
@@ -336,6 +339,10 @@ export AUTH_TOKEN=your-admin-token
 export PROXY_TOKEN=your-proxy-sk-token
 docker compose up -d
 ```
+
+Images are also published to [Docker Hub](https://hub.docker.com/r/iazhan/metapi-plus).
+To use Docker Hub, replace `ghcr.io/iazhan/metapi-plus:latest` with
+`docker.io/iazhan/metapi-plus:latest` in the examples.
 
 <details>
 <summary><strong>One-line Docker command</strong></summary>

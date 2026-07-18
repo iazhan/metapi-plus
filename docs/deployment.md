@@ -203,6 +203,13 @@ docker compose --env-file .env up -d
 
 > ⚠️ `.env` 文件包含敏感信息，请勿提交到 Git 仓库。
 
+发布镜像同时提供 GHCR 与 Docker Hub 两个入口：
+
+- `ghcr.io/iazhan/metapi-plus:latest`（默认示例）
+- `docker.io/iazhan/metapi-plus:latest`
+
+两个入口使用相同版本标签，并提供 `amd64`、`arm64` 和 `armv7l` 多架构镜像。
+
 ## Docker 命令部署
 
 ```bash

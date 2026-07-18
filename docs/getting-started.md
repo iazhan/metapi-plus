@@ -55,6 +55,9 @@ services:
     restart: unless-stopped
 ```
 
+同一版本也会发布到 [Docker Hub](https://hub.docker.com/r/iazhan/metapi-plus)。如需使用 Docker Hub，
+将 `image` 改为 `docker.io/iazhan/metapi-plus:latest`；其架构和版本标签与 GHCR 保持一致。
+
 > [!TIP]
 > 账号分组倍率自动刷新默认开启，默认每 `30` 分钟执行一次；间隔只接受 `5` 到 `10080` 的整数分钟。你也可以在后台「设置」里保存自己的值，之后会覆盖这里的环境默认值。服务启动时或从关闭切回开启时，会立即执行一次**仅倍率刷新**，不会同步 Token、余额、模型或路由；如果刷新遇到过期 Session，系统会先尝试 `Refresh Token`，再尝试用加密保存的账号密码恢复。
 

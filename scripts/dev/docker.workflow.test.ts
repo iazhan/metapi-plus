@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+function extractSection(source: string, start: string, end?: string): string {
+  const startIndex = source.indexOf(start);
+  if (startIndex < 0) throw new Error(`Missing section: ${start}`);
+  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
+  if (end && endIndex < 0) throw new Error(`Missing section terminator: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
 describe('docker workflows', () => {
   it('publishes armv7 docker images in ci and release workflows', () => {
     const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
@@ -16,19 +24,70 @@ describe('docker workflows', () => {
     expect(releaseWorkflow).toContain('"${tag}-armv7"');
   });
 
-  it('publishes GHCR image names from the repository owner', () => {
+  it('keeps CI images on GHCR and publishes release images to GHCR and Docker Hub', () => {
     const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
     const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+    const releaseArchJob = extractSection(
+      releaseWorkflow,
+      '  publish-docker-arch:',
+      '  publish-docker:',
+    );
+    const releaseManifestJob = extractSection(releaseWorkflow, '  publish-docker:');
 
     expect(ciWorkflow).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
     expect(ciWorkflow).not.toContain('DOCKERHUB_IMAGE');
     expect(ciWorkflow).not.toContain('DOCKERHUB_USERNAME');
     expect(ciWorkflow).not.toContain('images: 1467078763/metapi');
 
-    expect(releaseWorkflow).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
-    expect(releaseWorkflow).not.toContain('DOCKERHUB_IMAGE');
-    expect(releaseWorkflow).not.toContain('DOCKERHUB_USERNAME');
+    for (const job of [releaseArchJob, releaseManifestJob]) {
+      expect(job).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
+      expect(job).toContain(
+        'DOCKERHUB_IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/metapi-plus',
+      );
+      expect(job).toContain('Login to Docker Hub');
+      expect(job).toContain('username: ${{ secrets.DOCKERHUB_USERNAME }}');
+      expect(job).toContain('password: ${{ secrets.DOCKERHUB_TOKEN }}');
+      expect(job).toContain('images: |');
+      expect(job).toContain('${{ env.GHCR_IMAGE }}');
+      expect(job).toContain('${{ env.DOCKERHUB_IMAGE }}');
+    }
     expect(releaseWorkflow).not.toContain('1467078763/metapi');
+  });
+
+  it('can mirror an existing GHCR release to Docker Hub without rebuilding it', () => {
+    const workflow = readFileSync(
+      resolve(process.cwd(), '.github/workflows/dockerhub-backfill.yml'),
+      'utf8',
+    );
+    const sourceTagInput = extractSection(workflow, '      source_tag:', '      publish_latest:');
+    const publishLatestInput = extractSection(workflow, '      publish_latest:', 'permissions:');
+    const versionStep = extractSection(
+      workflow,
+      '      - name: Mirror version tag',
+      '      - name: Mirror latest tag',
+    );
+    const latestStep = extractSection(workflow, '      - name: Mirror latest tag');
+
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(sourceTagInput).not.toContain('default:');
+    expect(publishLatestInput).toContain('default: false');
+    expect(workflow).toContain('SOURCE_IMAGE: ghcr.io/${{ github.repository_owner }}/metapi-plus');
+    expect(workflow).toContain(
+      'TARGET_IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/metapi-plus',
+    );
+    expect(workflow).toContain('Login to GitHub Container Registry');
+    expect(workflow).toContain('Login to Docker Hub');
+    expect(workflow).toContain('Validate source tag');
+    expect(workflow).toContain('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$');
+    for (const step of [versionStep, latestStep]) {
+      expect(step).toContain('skopeo copy --all');
+      expect(step).toContain('--src-authfile "$HOME/.docker/config.json"');
+      expect(step).toContain('--dest-authfile "$HOME/.docker/config.json"');
+      expect(step).toContain('"docker://${SOURCE_IMAGE}:${SOURCE_TAG}"');
+    }
+    expect(versionStep).toContain('"docker://${TARGET_IMAGE}:${SOURCE_TAG}"');
+    expect(latestStep).toContain('if: inputs.publish_latest');
+    expect(latestStep).toContain('"docker://${TARGET_IMAGE}:latest"');
   });
 
   it('reserves the GHCR latest tag for release workflows', () => {
