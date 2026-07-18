@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
@@ -18,6 +18,12 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock('../api.js', () => ({
   api: apiMock,
 }));
+
+function collectText(node: ReactTestInstance): string {
+  return (node.children || []).map((child) => (
+    typeof child === 'string' ? child : collectText(child)
+  )).join('');
+}
 
 async function flushMicrotasks() {
   await act(async () => {
@@ -63,6 +69,7 @@ describe('Accounts create intent handling', () => {
   it('opens the session add modal and preselects the site for session create intent', async () => {
     const root = await renderAccounts('/accounts?create=1&siteId=10');
     try {
+      expect(apiMock.getAccountsSnapshot).toHaveBeenCalledWith({ refresh: true });
       const rendered = JSON.stringify(root.toJSON());
       expect(rendered).toContain('添加 Session 连接');
       expect(rendered).not.toContain('添加 API Key 连接');
@@ -74,9 +81,30 @@ describe('Accounts create intent handling', () => {
     }
   });
 
+  it('keeps the created site selected when switching to password login', async () => {
+    const root = await renderAccounts('/accounts?create=1&siteId=10');
+    try {
+      const passwordLoginTab = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '账号密码登录'
+      ));
+
+      await act(async () => {
+        passwordLoginTab.props.onClick();
+      });
+
+      const selects = root.root.findAllByType(ModernSelect);
+      expect(selects[1]?.props.value).toBe('10');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('opens the apikey add modal and preselects the site for apikey create intent', async () => {
     const root = await renderAccounts('/accounts?segment=apikey&create=1&siteId=10');
     try {
+      expect(apiMock.getAccountsSnapshot).toHaveBeenCalledWith({ refresh: true });
       const rendered = JSON.stringify(root.toJSON());
       expect(rendered).toContain('添加 API Key 连接');
 

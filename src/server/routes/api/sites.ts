@@ -27,6 +27,7 @@ import {
   SiteModelAliasSiteNotFoundError,
 } from '../../services/siteModelAliasService.js';
 import { replaceSiteModelAliasesAndRebuildRoutes } from '../../services/routeRefreshWorkflow.js';
+import { invalidateAccountsSnapshot } from '../../services/accountsOverviewService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -417,9 +418,10 @@ function aggregateSiteSubscription(
 }
 
 export async function sitesRoutes(app: FastifyInstance) {
-  function invalidateSiteCaches() {
+  async function invalidateSiteCaches() {
     invalidateSiteProxyCache();
     invalidateTokenRouterCache();
+    await invalidateAccountsSnapshot();
   }
 
   async function applySiteStatusSideEffects(
@@ -656,7 +658,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
-    invalidateSiteCaches();
+    await invalidateSiteCaches();
     return {
       ...result,
       ...(responseInitializationPresetId ? { initializationPresetId: responseInitializationPresetId } : {}),
@@ -804,7 +806,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
-    invalidateSiteCaches();
+    await invalidateSiteCaches();
 
     return await loadSiteWithApiEndpoints(id);
   });
@@ -813,7 +815,7 @@ export async function sitesRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async (request) => {
     const id = parseInt(request.params.id);
     await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
-    invalidateSiteCaches();
+    await invalidateSiteCaches();
     return { success: true };
   });
 
@@ -869,7 +871,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
     }
 
-    invalidateSiteCaches();
+    await invalidateSiteCaches();
     return {
       success: true,
       successIds,
@@ -929,7 +931,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       ).run();
     }
 
-    invalidateSiteCaches();
+    await invalidateSiteCaches();
     return { siteId: id, models: uniqueModels };
   });
 

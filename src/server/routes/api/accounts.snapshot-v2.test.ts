@@ -4,6 +4,7 @@ import {
   formatLocalDate,
   formatUtcSqlDateTime,
 } from "../../services/localTimeService.js";
+import { clearSnapshotCache } from "../../services/snapshotCacheService.js";
 import { createTestDataDir, type TestDataDir } from "../../test-fixtures/testDataDir.js";
 
 type DbModule = typeof import("../../db/index.js");
@@ -21,15 +22,18 @@ describe("accounts snapshot v2", () => {
     await import("../../db/migrate.js");
     const dbModule = await import("../../db/index.js");
     const routesModule = await import("./accounts.js");
+    const sitesRoutesModule = await import("./sites.js");
     db = dbModule.db;
     schema = dbModule.schema;
     closeDbConnections = dbModule.closeDbConnections;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
+    await app.register(sitesRoutesModule.sitesRoutes);
   });
 
   beforeEach(async () => {
+    clearSnapshotCache("accounts-snapshot");
     await db.delete(schema.adminSnapshots).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
@@ -130,5 +134,50 @@ describe("accounts snapshot v2", () => {
         todayReward: 3.2,
       }),
     ]);
+  });
+
+  it("immediately includes a site created after the accounts snapshot was cached", async () => {
+    const previousVitestEnv = process.env.VITEST;
+    delete process.env.VITEST;
+
+    try {
+      const warmResponse = await app.inject({
+        method: "GET",
+        url: "/api/accounts",
+      });
+      expect(warmResponse.statusCode).toBe(200);
+      expect(warmResponse.headers["x-accounts-snapshot-cache"]).toBe("miss");
+
+      const createResponse = await app.inject({
+        method: "POST",
+        url: "/api/sites",
+        payload: {
+          name: "newly-created-site",
+          url: "https://newly-created-site.example.com",
+          platform: "new-api",
+        },
+      });
+      expect(createResponse.statusCode).toBe(200);
+      const createdSite = createResponse.json() as { id: number };
+
+      const immediateResponse = await app.inject({
+        method: "GET",
+        url: "/api/accounts",
+      });
+      expect(immediateResponse.statusCode).toBe(200);
+      const immediateBody = immediateResponse.json() as {
+        sites: Array<{ id: number; name: string }>;
+      };
+      expect(immediateBody.sites).toEqual([
+        expect.objectContaining({
+          id: createdSite.id,
+          name: "newly-created-site",
+        }),
+      ]);
+    } finally {
+      clearSnapshotCache("accounts-snapshot");
+      if (previousVitestEnv === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitestEnv;
+    }
   });
 });

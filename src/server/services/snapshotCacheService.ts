@@ -43,6 +43,28 @@ type ReadSnapshotOptions<T> = {
 
 const SNAPSHOT_CACHE_MAX_ENTRIES = 64;
 const snapshotCache = new Map<string, SnapshotCacheEntry<unknown>>();
+let globalInvalidationVersion = 0;
+const namespaceInvalidationVersions = new Map<string, number>();
+
+type SnapshotCacheVersion = {
+  global: number;
+  namespace: number;
+};
+
+function getSnapshotCacheVersion(namespace: string): SnapshotCacheVersion {
+  return {
+    global: globalInvalidationVersion,
+    namespace: namespaceInvalidationVersions.get(namespace) || 0,
+  };
+}
+
+function isSnapshotCacheVersionCurrent(
+  namespace: string,
+  version: SnapshotCacheVersion,
+) {
+  const current = getSnapshotCacheVersion(namespace);
+  return current.global === version.global && current.namespace === version.namespace;
+}
 
 function getSnapshotCacheEntry<T>(cacheKey: string) {
   const cached = snapshotCache.get(cacheKey) as SnapshotCacheEntry<T> | undefined;
@@ -75,7 +97,9 @@ function buildCacheKey(namespace: string, key: string) {
 }
 
 async function loadAndStoreSnapshot<T>(
+  namespace: string,
   cacheKey: string,
+  cacheVersion: SnapshotCacheVersion,
   loader: () => Promise<T>,
   ttlMs: number,
   staleMs: number,
@@ -96,11 +120,15 @@ async function loadAndStoreSnapshot<T>(
     generatedAt: persistedRecord.generatedAt,
     cacheStatus: "miss",
   };
+  if (!isSnapshotCacheVersionCurrent(namespace, cacheVersion)) {
+    return envelope;
+  }
   setSnapshotCacheEntry(cacheKey, {
     payload,
     generatedAtMs: nowMs,
     expiresAtMs: nowMs + Math.max(1, ttlMs),
     staleUntilMs: nowMs + Math.max(Math.max(1, ttlMs), staleMs),
+    inFlight: snapshotCache.get(cacheKey)?.inFlight,
   });
   if (persistence) {
     try {
@@ -145,6 +173,7 @@ export async function readSnapshotCache<T>(
   }
 
   const cacheKey = buildCacheKey(options.namespace, options.key);
+  let cacheVersion = getSnapshotCacheVersion(options.namespace);
   const nowMs = Date.now();
   let cached = getSnapshotCacheEntry<T>(cacheKey);
 
@@ -154,9 +183,16 @@ export async function readSnapshotCache<T>(
       const shared = getSnapshotCacheEntry<T>(cacheKey);
       if (shared) {
         cached = shared;
-      } else if (persisted) {
+      } else if (
+        persisted &&
+        isSnapshotCacheVersionCurrent(options.namespace, cacheVersion)
+      ) {
         cached = buildCacheEntryFromPersistedSnapshot(persisted);
         setSnapshotCacheEntry(cacheKey, cached);
+      }
+      if (!isSnapshotCacheVersionCurrent(options.namespace, cacheVersion)) {
+        cached = getSnapshotCacheEntry<T>(cacheKey);
+        cacheVersion = getSnapshotCacheVersion(options.namespace);
       }
     } catch (error) {
       console.warn(
@@ -186,17 +222,21 @@ export async function readSnapshotCache<T>(
     cached.staleUntilMs > nowMs
   ) {
     if (!cached.inFlight) {
-      cached.inFlight = loadAndStoreSnapshot(
+      let backgroundRefresh!: Promise<SnapshotEnvelope<T>>;
+      backgroundRefresh = loadAndStoreSnapshot(
+        options.namespace,
         cacheKey,
+        cacheVersion,
         options.loader,
         options.ttlMs,
         staleMs,
         options.persistence,
       ).finally(() => {
           const next = snapshotCache.get(cacheKey) as SnapshotCacheEntry<T> | undefined;
-          if (next) delete next.inFlight;
+          if (next?.inFlight === backgroundRefresh) delete next.inFlight;
         });
-      void cached.inFlight.catch((error) => {
+      cached.inFlight = backgroundRefresh;
+      void backgroundRefresh.catch((error) => {
         console.error(
           `[snapshotCache] background refresh failed for ${cacheKey}:`,
           error,
@@ -214,29 +254,38 @@ export async function readSnapshotCache<T>(
 
   const shared = getSnapshotCacheEntry<T>(cacheKey);
   if (shared?.inFlight) {
-    const result = await shared.inFlight;
-    return {
-      ...result,
-      cacheStatus:
-        options.forceRefresh || shared.payload !== undefined
-          ? "refresh"
-          : result.cacheStatus,
-    };
+    if (options.forceRefresh) {
+      await shared.inFlight;
+      cached = getSnapshotCacheEntry<T>(cacheKey);
+      cacheVersion = getSnapshotCacheVersion(options.namespace);
+    } else {
+      const result = await shared.inFlight;
+      return {
+        ...result,
+        cacheStatus: shared.payload !== undefined ? "refresh" : result.cacheStatus,
+      };
+    }
   }
 
   if (cached?.inFlight) {
-    const result = await cached.inFlight;
-    return {
-      ...result,
-      cacheStatus:
-        options.forceRefresh || cached.payload !== undefined
-          ? "refresh"
-          : result.cacheStatus,
-    };
+    if (options.forceRefresh) {
+      await cached.inFlight;
+      cached = getSnapshotCacheEntry<T>(cacheKey);
+      cacheVersion = getSnapshotCacheVersion(options.namespace);
+    } else {
+      const result = await cached.inFlight;
+      return {
+        ...result,
+        cacheStatus: cached.payload !== undefined ? "refresh" : result.cacheStatus,
+      };
+    }
   }
 
-  const inFlight = loadAndStoreSnapshot(
+  let inFlight!: Promise<SnapshotEnvelope<T>>;
+  inFlight = loadAndStoreSnapshot(
+    options.namespace,
     cacheKey,
+    cacheVersion,
     options.loader,
     options.ttlMs,
     staleMs,
@@ -245,7 +294,7 @@ export async function readSnapshotCache<T>(
     const next = snapshotCache.get(cacheKey) as
       | SnapshotCacheEntry<T>
       | undefined;
-    if (next) delete next.inFlight;
+    if (next?.inFlight === inFlight) delete next.inFlight;
   });
 
   setSnapshotCacheEntry(cacheKey, {
@@ -269,10 +318,26 @@ export async function readSnapshotCache<T>(
 
 export function clearSnapshotCache(namespace?: string) {
   if (!namespace) {
+    globalInvalidationVersion += 1;
+    namespaceInvalidationVersions.clear();
     snapshotCache.clear();
     return;
   }
+  namespaceInvalidationVersions.set(
+    namespace,
+    (namespaceInvalidationVersions.get(namespace) || 0) + 1,
+  );
   for (const key of snapshotCache.keys()) {
     if (key.startsWith(`${namespace}:`)) snapshotCache.delete(key);
   }
+}
+
+export async function invalidateSnapshotCache(namespace?: string): Promise<void> {
+  const inFlight = Array.from(snapshotCache.entries())
+    .filter(([key]) => !namespace || key.startsWith(`${namespace}:`))
+    .map(([, entry]) => entry.inFlight)
+    .filter((request): request is Promise<SnapshotEnvelope<unknown>> => Boolean(request));
+
+  clearSnapshotCache(namespace);
+  await Promise.allSettled(inFlight);
 }

@@ -313,7 +313,12 @@ export default function Accounts() {
     }
   };
   useEffect(() => {
-    void load();
+    const params = new URLSearchParams(location.search);
+    const hasCreateIntent =
+      activeSegment !== "tokens" &&
+      isTruthyFlag(params.get("create")) &&
+      Boolean(parsePositiveInt(params.get("siteId")));
+    void load(hasCreateIntent);
   }, []);
 
   const selectedTokenSite = useMemo(
@@ -451,7 +456,10 @@ export default function Accounts() {
     setApplyCreatePresetModels(
       Boolean(initializationPreset?.recommendedModels?.length),
     );
-    setLoginForm(createLoginForm());
+    setLoginForm({
+      ...createLoginForm(),
+      siteId: requestedSiteId,
+    });
     setTokenForm({
       ...createTokenForm(credentialMode),
       siteId: requestedSiteId,

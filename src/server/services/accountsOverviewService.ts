@@ -11,11 +11,15 @@ import {
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
 import { getLocalDayRangeUtc } from "./localTimeService.js";
 import {
+  invalidateSnapshotCache,
   readSnapshotCache,
   type SnapshotEnvelope,
 } from "./snapshotCacheService.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
-import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import {
+  createAdminSnapshotPersistence,
+  deleteAdminSnapshot,
+} from "./adminSnapshotStore.js";
 
 export type AccountCapabilities = {
   canCheckin: boolean;
@@ -38,10 +42,13 @@ export type AccountsSnapshotPayload = {
 };
 
 const ACCOUNTS_SNAPSHOT_TTL_MS = 15_000;
+const ACCOUNTS_SNAPSHOT_IDENTITY = {
+  namespace: "accounts-snapshot",
+  key: "all",
+} as const;
 const accountsSnapshotPersistence =
   createAdminSnapshotPersistence<AccountsSnapshotPayload>({
-    namespace: "accounts-snapshot",
-    key: "all",
+    ...ACCOUNTS_SNAPSHOT_IDENTITY,
   });
 
 function hasSessionTokenValue(value: string | null | undefined): boolean {
@@ -204,11 +211,20 @@ export async function getAccountsSnapshot(options?: {
   forceRefresh?: boolean;
 }): Promise<SnapshotEnvelope<AccountsSnapshotPayload>> {
   return readSnapshotCache({
-    namespace: "accounts-snapshot",
-    key: "all",
+    ...ACCOUNTS_SNAPSHOT_IDENTITY,
     ttlMs: ACCOUNTS_SNAPSHOT_TTL_MS,
     forceRefresh: options?.forceRefresh,
     persistence: accountsSnapshotPersistence,
     loader: loadAccountsSnapshotPayload,
   });
+}
+
+export async function invalidateAccountsSnapshot(): Promise<void> {
+  await invalidateSnapshotCache(ACCOUNTS_SNAPSHOT_IDENTITY.namespace);
+  try {
+    await deleteAdminSnapshot(ACCOUNTS_SNAPSHOT_IDENTITY);
+  } catch (error) {
+    console.warn("[accountsSnapshot] persistence invalidation failed; rebuilding snapshot:", error);
+    await getAccountsSnapshot({ forceRefresh: true });
+  }
 }
