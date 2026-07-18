@@ -190,8 +190,8 @@ function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boole
   return normalizeTokenValue(account.accessToken) === null;
 }
 
-export async function getPreferredAccountToken(accountId: number) {
-  const tokens = await db.select()
+export async function getPreferredAccountToken(accountId: number, client: DbClient = db) {
+  const tokens = await client.select()
     .from(schema.accountTokens)
     .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.enabled, true)))
     .all();

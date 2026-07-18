@@ -1423,6 +1423,13 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
       },
+      {
+        id: 13, modelPattern: 'team-fast', displayName: 'team-fast',
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', routeKind: 'site_alias', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
     ]);
 
     let root!: WebTestRenderer;
@@ -1456,6 +1463,18 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       expect(findInputByPlaceholder(root.root, '搜索来源模型')).toBeTruthy();
+      expect(root.root.findAll((node) => (
+        node.type === 'button'
+        && String(node.props.className || '').includes('source-route-picker-card')
+      )).map(collectText)).toEqual(expect.arrayContaining([
+        expect.stringContaining('claude-opus-4-5'),
+        expect.stringContaining('claude-sonnet-4-5'),
+      ]));
+      expect(root.root.findAll((node) => (
+        node.type === 'button'
+        && String(node.props.className || '').includes('source-route-picker-card')
+        && collectText(node).includes('team-fast')
+      ))).toHaveLength(0);
 
       await act(async () => {
         findButtonByText(root.root, 'claude-opus-4-5').props.onClick();

@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { SitePricingView } from '../../api.js';
-import { MobileCard, MobileField } from '../../components/MobileCard.js';
+import { MobileField } from '../../components/MobileCard.js';
 
 type Props = {
   view: SitePricingView;
@@ -76,20 +76,21 @@ export default function SiteModelPricingList({ view, isMobile, busyModel, onRest
     : '全部缺失';
 
   return (
-    <div style={{ display: 'grid', gap: 10 }}>
+    <div className="site-editor-pricing-list">
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-        <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-          筛选模型
+        <label className="site-editor-field">
+          <span className="site-editor-field-label">筛选模型</span>
           <input
             aria-label="筛选模型"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            style={{ minHeight: 44, padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
+            placeholder="输入模型名称"
+            className="site-editor-control"
           />
         </label>
-        <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-          映射状态
-          <select aria-label="筛选映射状态" value={mappingFilter} onChange={(event) => setMappingFilter(event.target.value)} style={{ minHeight: 44, padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}>
+        <label className="site-editor-field">
+          <span className="site-editor-field-label">映射状态</span>
+          <select aria-label="筛选映射状态" value={mappingFilter} onChange={(event) => setMappingFilter(event.target.value)} className="site-editor-control">
             <option value="all">全部映射状态</option>
             <option value="manual">手动映射</option>
             <option value="exact">精确映射</option>
@@ -98,9 +99,9 @@ export default function SiteModelPricingList({ view, isMobile, busyModel, onRest
             <option value="unmapped">未映射</option>
           </select>
         </label>
-        <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-          输入价格来源
-          <select aria-label="筛选价格来源" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} style={{ minHeight: 44, padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}>
+        <label className="site-editor-field">
+          <span className="site-editor-field-label">输入价格来源</span>
+          <select aria-label="筛选价格来源" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="site-editor-control">
             <option value="all">全部来源</option>
             <option value="manual">手动</option>
             <option value="site">站点</option>
@@ -109,22 +110,32 @@ export default function SiteModelPricingList({ view, isMobile, busyModel, onRest
           </select>
         </label>
       </div>
+      <div className="site-editor-meta">显示 {rows.length} / {view.models.length} 个模型</div>
       {rows.length === 0 ? (
-        <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>暂无匹配模型价格</div>
-      ) : isMobile ? rows.map(({ model, effective }) => (
-        <MobileCard key={model.upstreamModelId} title={model.upstreamModelId}>
-          <MobileField label="映射" value={mappingLabel(effective?.mappingSource)} />
-          <MobileField label="有效价格" value={renderPriceSummary(effective)} />
-          <MobileField label="逐字段来源" value={renderSourceSummary(effective)} />
-          <MobileField label="有效倍率" value={effective ? `${effective.groupRatio}${effective.groupRatioApplied ? '' : '（价格已含倍率）'}` : '—'} />
-          <button className="btn btn-ghost" style={{ minHeight: 44, marginTop: 8 }} disabled={busyModel === model.upstreamModelId} onClick={() => onRestore(model.upstreamModelId)}>
-            恢复继承
-          </button>
-          <button className="btn btn-ghost" style={{ minHeight: 44, marginTop: 8 }} disabled={busyModel === model.upstreamModelId} onClick={() => onEdit(model.upstreamModelId)}>编辑规则</button>
-        </MobileCard>
-      )) : (
+        <div className="site-editor-empty">暂无匹配模型价格</div>
+      ) : isMobile ? (
+        <div className="site-editor-model-list">
+          {rows.map(({ model, effective }) => (
+            <div className="site-editor-model-row" key={model.upstreamModelId}>
+              <div className="site-editor-model-title">{model.upstreamModelId}</div>
+              <MobileField label="映射" value={mappingLabel(effective?.mappingSource)} />
+              <MobileField label="有效价格" value={renderPriceSummary(effective)} />
+              <MobileField label="逐字段来源" value={renderSourceSummary(effective)} />
+              <MobileField label="有效倍率" value={effective ? `${effective.groupRatio}${effective.groupRatioApplied ? '' : '（价格已含倍率）'}` : '—'} />
+              <div className="site-editor-row-actions">
+                <button className="btn btn-ghost" disabled={busyModel === model.upstreamModelId} onClick={() => onEdit(model.upstreamModelId)}>
+                  编辑规则
+                </button>
+                <button className="btn btn-ghost" disabled={busyModel === model.upstreamModelId} onClick={() => onRestore(model.upstreamModelId)}>
+                  恢复继承
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', tableLayout: 'fixed', fontSize: 12 }}>
+          <table className="site-editor-pricing-table">
             <thead><tr><th style={{ width: '24%' }}>站点模型</th><th style={{ width: '16%' }}>映射</th><th>有效价格与逐字段来源</th><th style={{ width: 110 }}>操作</th></tr></thead>
             <tbody>{rows.map(({ model, effective }) => (
               <tr key={model.upstreamModelId}>
@@ -134,7 +145,12 @@ export default function SiteModelPricingList({ view, isMobile, busyModel, onRest
                   <div>{renderPriceSummary(effective)}</div>
                   <div style={{ color: 'var(--color-text-muted)' }}>{renderSourceSummary(effective)}</div>
                 </td>
-                <td><button className="btn btn-link" style={{ minHeight: 44 }} disabled={busyModel === model.upstreamModelId} onClick={() => onEdit(model.upstreamModelId)}>编辑</button><button className="btn btn-link" style={{ minHeight: 44 }} disabled={busyModel === model.upstreamModelId} onClick={() => onRestore(model.upstreamModelId)}>恢复</button></td>
+                <td>
+                  <div className="site-editor-table-actions">
+                    <button className="btn btn-link" disabled={busyModel === model.upstreamModelId} onClick={() => onEdit(model.upstreamModelId)}>编辑</button>
+                    <button className="btn btn-link" disabled={busyModel === model.upstreamModelId} onClick={() => onRestore(model.upstreamModelId)}>恢复</button>
+                  </div>
+                </td>
               </tr>
             ))}</tbody>
           </table>

@@ -33,6 +33,7 @@ type BackupSnapshot = {
     siteApiEndpoints: Array<Record<string, unknown>>;
     siteAnnouncements: Array<Record<string, unknown>>;
     siteDisabledModels: Array<Record<string, unknown>>;
+    siteModelAliases: Array<Record<string, unknown>>;
     accounts: Array<Record<string, unknown>>;
     accountGroupRates: Array<Record<string, unknown>>;
     accountTokens: Array<Record<string, unknown>>;
@@ -64,6 +65,7 @@ export interface DatabaseMigrationSummary {
     siteApiEndpoints: number;
     siteAnnouncements: number;
     siteDisabledModels: number;
+    siteModelAliases: number;
     accounts: number;
     accountGroupRates: number;
     accountTokens: number;
@@ -259,6 +261,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       siteApiEndpoints: await db.select().from(schema.siteApiEndpoints).all() as Array<Record<string, unknown>>,
       siteAnnouncements: await db.select().from(schema.siteAnnouncements).all() as Array<Record<string, unknown>>,
       siteDisabledModels: await db.select().from(schema.siteDisabledModels).all() as Array<Record<string, unknown>>,
+      siteModelAliases: await db.select().from(schema.siteModelAliases).all() as Array<Record<string, unknown>>,
       accounts: await db.select().from(schema.accounts).all() as Array<Record<string, unknown>>,
       accountGroupRates: await db.select().from(schema.accountGroupRates).all() as Array<Record<string, unknown>>,
       accountTokens: await db.select().from(schema.accountTokens).all() as Array<Record<string, unknown>>,
@@ -307,6 +310,7 @@ async function clearTargetData(client: SqlClient): Promise<void> {
     'accounts',
     'site_announcements',
     'site_disabled_models',
+    'site_model_aliases',
     'site_api_endpoints',
     'token_routes',
     'sites',
@@ -390,6 +394,32 @@ function buildStatements(
         asNumber(row.siteId, 0),
         asNullableString(row.modelName),
         asNullableString(row.createdAt),
+      ],
+    });
+  }
+
+  for (const row of snapshot.accounts.siteModelAliases || []) {
+    statements.push({
+      table: 'site_model_aliases',
+      columns: [
+        'id',
+        'site_id',
+        'source_model',
+        'alias_model',
+        'alias_key',
+        'enabled',
+        'created_at',
+        'updated_at',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNullableString(row.sourceModel),
+        asNullableString(row.aliasModel),
+        asNullableString(row.aliasKey),
+        asBoolean(row.enabled, true),
+        asNullableString(row.createdAt),
+        asNullableString(row.updatedAt),
       ],
     });
   }
@@ -567,7 +597,7 @@ function buildStatements(
   for (const row of snapshot.accounts.tokenRoutes) {
     statements.push({
       table: 'token_routes',
-      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'route_mode', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
+      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'route_mode', 'route_kind', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.modelPattern),
@@ -575,6 +605,7 @@ function buildStatements(
         asNullableString(row.displayIcon),
         serializeColumnValue('token_routes', 'model_mapping', row.modelMapping, contract),
         asNullableString(row.routeMode) ?? 'pattern',
+        asNullableString(row.routeKind),
         serializeColumnValue('token_routes', 'decision_snapshot', row.decisionSnapshot, contract),
         asNullableString(row.decisionRefreshedAt),
         asNullableString(row.routingStrategy),
@@ -787,6 +818,7 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'site_api_endpoints',
     'site_announcements',
     'site_disabled_models',
+    'site_model_aliases',
     'accounts',
     'account_group_rates',
     'account_tokens',
@@ -857,6 +889,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       siteApiEndpoints: snapshot.accounts.siteApiEndpoints.length,
       siteAnnouncements: snapshot.accounts.siteAnnouncements.length,
       siteDisabledModels: snapshot.accounts.siteDisabledModels.length,
+      siteModelAliases: snapshot.accounts.siteModelAliases.length,
       accounts: snapshot.accounts.accounts.length,
       accountGroupRates: snapshot.accounts.accountGroupRates.length,
       accountTokens: snapshot.accounts.accountTokens.length,

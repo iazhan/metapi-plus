@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
@@ -21,6 +21,8 @@ import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
+import { runRouteProjectionExclusive } from './routeProjectionCoordinator.js';
+import { normalizeModelIdentityKey } from './modelIdentity.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
@@ -949,8 +951,13 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   return results;
 }
 
-export async function rebuildTokenRoutesFromAvailability() {
-  const tokenRows = await db.select().from(schema.tokenModelAvailability)
+/**
+ * Rebuilds the managed route/channel projection with the caller's transaction.
+ * The caller must hold the route-projection coordinator and invalidate the
+ * token-router cache only after the surrounding transaction commits.
+ */
+export async function rebuildTokenRoutesProjection(client: typeof db) {
+  const tokenRows = await client.select().from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -969,7 +976,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     && requiresManagedAccountTokens(row.accounts)
   ));
 
-  const accountRows = await db.select().from(schema.modelAvailability)
+  const accountRows = await client.select().from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(
@@ -982,7 +989,17 @@ export async function rebuildTokenRoutesFromAvailability() {
     .all();
 
   // Load site-level disabled models
-  const disabledModelRows = await db.select().from(schema.siteDisabledModels).all();
+  const disabledModelRows = await client.select().from(schema.siteDisabledModels).all();
+  const siteAliasRows = await client.select().from(schema.siteModelAliases)
+    .where(eq(schema.siteModelAliases.enabled, true))
+    .all();
+  const aliasesBySiteAndSource = new Map<string, typeof siteAliasRows>();
+  for (const alias of siteAliasRows) {
+    const key = `${alias.siteId}:${normalizeModelIdentityKey(alias.sourceModel)}`;
+    const aliases = aliasesBySiteAndSource.get(key) ?? [];
+    aliases.push(alias);
+    aliasesBySiteAndSource.set(key, aliases);
+  }
   const disabledModelsBySite = new Map<number, Set<string>>();
   for (const row of disabledModelRows) {
     if (!disabledModelsBySite.has(row.siteId)) disabledModelsBySite.set(row.siteId, new Set());
@@ -1009,17 +1026,48 @@ export async function rebuildTokenRoutesFromAvailability() {
     return globalAllowedModels.has(modelName.toLowerCase().trim());
   }
 
-  const modelCandidates = new Map<string, Map<string, {
+  type ProjectedRouteKind = 'site_alias' | null;
+  type ModelCandidate = {
     accountId: number;
     tokenId: number | null;
-  }>>();
-  const buildCandidateKey = (input: {
-    accountId: number;
-    tokenId: number | null;
-  }) => `${input.accountId}:${input.tokenId ?? 'account'}`;
-  const buildChannelKey = (channel: typeof schema.routeChannels.$inferSelect) => (
-    `${channel.accountId}:${channel.tokenId ?? 'account'}`
+    sourceModel: string | null;
+  };
+  type ModelProjection = {
+    modelName: string;
+    routeKind: ProjectedRouteKind;
+    candidates: Map<string, ModelCandidate>;
+  };
+  const modelProjections = new Map<string, ModelProjection>();
+  const canonicalModelKeys = new Set<string>();
+  const buildProjectionKey = (modelName: string, routeKind: ProjectedRouteKind) => (
+    `${routeKind ?? 'canonical'}:${normalizeModelIdentityKey(modelName)}`
   );
+  const buildCandidateKey = (input: ModelCandidate, routeKind: ProjectedRouteKind) => (
+    routeKind === 'site_alias'
+      ? `${input.accountId}:${input.tokenId ?? 'account'}:${normalizeModelIdentityKey(input.sourceModel || '')}`
+      : `${input.accountId}:${input.tokenId ?? 'account'}`
+  );
+  const buildChannelKey = (
+    channel: typeof schema.routeChannels.$inferSelect,
+    routeKind: ProjectedRouteKind,
+  ) => (
+    routeKind === 'site_alias'
+      ? `${channel.accountId}:${channel.tokenId ?? 'account'}:${normalizeModelIdentityKey(channel.sourceModel || '')}`
+      : `${channel.accountId}:${channel.tokenId ?? 'account'}`
+  );
+  const addCandidateToRoute = (
+    exposedModel: string,
+    routeKind: ProjectedRouteKind,
+    candidate: ModelCandidate,
+  ) => {
+    const projectionKey = buildProjectionKey(exposedModel, routeKind);
+    let projection = modelProjections.get(projectionKey);
+    if (!projection) {
+      projection = { modelName: exposedModel, routeKind, candidates: new Map() };
+      modelProjections.set(projectionKey, projection);
+    }
+    projection.candidates.set(buildCandidateKey(candidate, routeKind), candidate);
+  };
   const addModelCandidate = (
     modelNameRaw: string | null | undefined,
     accountId: number,
@@ -1031,9 +1079,23 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (!isModelAllowedByWhitelist(modelName)) return;
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
-    if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidate = { accountId, tokenId };
-    modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
+    canonicalModelKeys.add(normalizeModelIdentityKey(modelName));
+    addCandidateToRoute(modelName, null, {
+      accountId,
+      tokenId,
+      sourceModel: null,
+    });
+    const aliases = aliasesBySiteAndSource.get(`${siteId}:${modelName.toLowerCase()}`) ?? [];
+    for (const alias of aliases) {
+      if (!isModelAllowedByWhitelist(alias.aliasModel)) continue;
+      if (isModelDisabledForSite(siteId, alias.aliasModel)) continue;
+      if (blockedBrandRules.length > 0 && isModelBlockedByBrand(alias.aliasModel, blockedBrandRules)) continue;
+      addCandidateToRoute(alias.aliasModel, 'site_alias', {
+        accountId,
+        tokenId,
+        sourceModel: modelName,
+      });
+    }
   };
 
   for (const row of usableTokenRows) {
@@ -1045,41 +1107,126 @@ export async function rebuildTokenRoutesFromAvailability() {
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 
-  const routes = await db.select().from(schema.tokenRoutes).all();
-  const channels = await db.select().from(schema.routeChannels).all();
+  const routes = await client.select().from(schema.tokenRoutes).all();
+  const channels = await client.select().from(schema.routeChannels).all();
+
+  const reservedRouteModelKeys = new Set(
+    routes
+      .filter((route) => (
+        (route.routeKind || null) !== 'site_alias'
+        && (route.routeMode || 'pattern') !== 'explicit_group'
+        && isExactModelPattern(route.modelPattern)
+      ))
+      .map((route) => normalizeModelIdentityKey(route.modelPattern)),
+  );
+  for (const [projectionKey, projection] of modelProjections.entries()) {
+    if (projection.routeKind !== 'site_alias') continue;
+    const aliasKey = normalizeModelIdentityKey(projection.modelName);
+    if (canonicalModelKeys.has(aliasKey) || reservedRouteModelKeys.has(aliasKey)) {
+      modelProjections.delete(projectionKey);
+    }
+  }
 
   let createdRoutes = 0;
   let createdChannels = 0;
   let removedChannels = 0;
   let removedRoutes = 0;
+  let projectionMetadataUpdated = false;
 
-  for (const [modelName, candidateMap] of modelCandidates.entries()) {
-    let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
+  for (const projection of modelProjections.values()) {
+    const { modelName, routeKind, candidates: candidateMap } = projection;
+    let route = routes.find((r) => (
+      (r.routeMode || 'pattern') !== 'explicit_group'
+      && (r.routeKind || null) === routeKind
+      && r.modelPattern.toLowerCase() === modelName.toLowerCase()
+    ));
     if (!route) {
-      const inserted = await db.insert(schema.tokenRoutes).values({
+      const inserted = await client.insert(schema.tokenRoutes).values({
         modelPattern: modelName,
+        displayName: routeKind === 'site_alias' ? modelName : null,
+        routeKind,
         enabled: true,
       }).run();
       const insertedId = getInsertedRowId(inserted);
       route = insertedId != null
-        ? await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get()
+        ? await client.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get()
         : undefined;
       if (!route) continue;
       routes.push(route);
       createdRoutes++;
+    } else if (routeKind === 'site_alias') {
+      const needsAliasMetadataRepair = (
+        route.modelPattern !== modelName
+        || route.displayName !== modelName
+        || route.displayIcon !== null
+        || route.routeMode !== 'pattern'
+        || route.modelMapping !== null
+        || route.routingStrategy !== 'weighted'
+        || route.enabled !== true
+      );
+      if (needsAliasMetadataRepair) {
+        await client.update(schema.tokenRoutes)
+          .set({
+            modelPattern: modelName,
+            displayName: modelName,
+            displayIcon: null,
+            routeMode: 'pattern',
+            modelMapping: null,
+            routingStrategy: 'weighted',
+            enabled: true,
+          })
+          .where(eq(schema.tokenRoutes.id, route.id))
+          .run();
+        route.modelPattern = modelName;
+        route.displayName = modelName;
+        route.displayIcon = null;
+        route.routeMode = 'pattern';
+        route.modelMapping = null;
+        route.routingStrategy = 'weighted';
+        route.enabled = true;
+        projectionMetadataUpdated = true;
+      }
+      const removedGroupSources = await client.delete(schema.routeGroupSources)
+        .where(or(
+          eq(schema.routeGroupSources.groupRouteId, route.id),
+          eq(schema.routeGroupSources.sourceRouteId, route.id),
+        ))
+        .run();
+      if (Number(removedGroupSources?.changes || 0) > 0) {
+        projectionMetadataUpdated = true;
+      }
     }
 
     const routeChannels = channels.filter((channel) => channel.routeId === route.id);
-    const desiredKeys = new Set(Array.from(candidateMap.keys()));
+    const desiredKeys = new Set(candidateMap.keys());
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const exists = routeChannels.some((channel) => buildChannelKey(channel) === candidateKey);
-      if (exists) continue;
+      const existing = routeChannels.find((channel) => buildChannelKey(channel, routeKind) === candidateKey);
+      if (existing) {
+        const updates: Record<string, unknown> = {};
+        if (routeKind === 'site_alias' && existing.sourceModel !== candidate.sourceModel) {
+          updates.sourceModel = candidate.sourceModel;
+          existing.sourceModel = candidate.sourceModel;
+        }
+        if (routeKind === 'site_alias' && existing.manualOverride) {
+          updates.manualOverride = false;
+          existing.manualOverride = false;
+        }
+        if (Object.keys(updates).length > 0) {
+          await client.update(schema.routeChannels)
+            .set(updates)
+            .where(eq(schema.routeChannels.id, existing.id))
+            .run();
+          projectionMetadataUpdated = true;
+        }
+        continue;
+      }
 
-      const inserted = await db.insert(schema.routeChannels).values({
+      const inserted = await client.insert(schema.routeChannels).values({
         routeId: route.id,
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
+        sourceModel: candidate.sourceModel,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -1087,7 +1234,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       }).run();
       const insertedId = getInsertedRowId(inserted);
       if (insertedId == null) continue;
-      const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
+      const created = await client.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
       if (!created) continue;
       channels.push(created);
       createdChannels++;
@@ -1095,15 +1242,22 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
 
     for (const channel of routeChannels) {
-      const channelKey = buildChannelKey(channel);
+      const channelKey = buildChannelKey(channel, routeKind);
       if (desiredKeys.has(channelKey)) {
         continue;
       }
 
       if (!channel.tokenId) {
-        const preferred = await getPreferredAccountToken(channel.accountId);
-        if (preferred && desiredKeys.has(`${channel.accountId}:${preferred.id}`)) {
-          await db.update(schema.routeChannels)
+        const preferred = await getPreferredAccountToken(channel.accountId, client);
+        const preferredKey = preferred
+          ? buildCandidateKey({
+              accountId: channel.accountId,
+              tokenId: preferred.id,
+              sourceModel: channel.sourceModel,
+            }, routeKind)
+          : null;
+        if (preferred && preferredKey && desiredKeys.has(preferredKey)) {
+          await client.update(schema.routeChannels)
             .set({ tokenId: preferred.id })
             .where(eq(schema.routeChannels.id, channel.id))
             .run();
@@ -1111,20 +1265,23 @@ export async function rebuildTokenRoutesFromAvailability() {
         }
       }
 
-      if (!channel.manualOverride) {
-        await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
+      if (routeKind === 'site_alias' || !channel.manualOverride) {
+        await client.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
         removedChannels++;
       }
     }
   }
 
-  const latestModelNames = new Set<string>(Array.from(modelCandidates.keys()));
   for (const route of routes) {
     if ((route.routeMode || 'pattern') === 'explicit_group') {
       continue;
     }
     const modelPattern = (route.modelPattern || '').trim();
-    if (!modelPattern || !isExactModelPattern(modelPattern) || latestModelNames.has(modelPattern)) {
+    const isCurrentModel = modelProjections.has(buildProjectionKey(
+      modelPattern,
+      (route.routeKind || null) === 'site_alias' ? 'site_alias' : null,
+    ));
+    if (!modelPattern || !isExactModelPattern(modelPattern) || isCurrentModel) {
       continue;
     }
 
@@ -1133,25 +1290,37 @@ export async function rebuildTokenRoutesFromAvailability() {
       removedChannels += routeChannelCount;
     }
 
-    const deleted = (await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run()).changes;
+    const deleted = (await client.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run()).changes;
     if (deleted > 0) {
       removedRoutes += deleted;
     }
   }
 
-  if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
-    await clearAllRouteDecisionSnapshots();
+  if (
+    projectionMetadataUpdated
+    || createdRoutes > 0
+    || createdChannels > 0
+    || removedChannels > 0
+    || removedRoutes > 0
+  ) {
+    await clearAllRouteDecisionSnapshots(client);
   }
 
-  invalidateTokenRouterCache();
-
   return {
-    models: modelCandidates.size,
+    models: modelProjections.size,
     createdRoutes,
     createdChannels,
     removedChannels,
     removedRoutes,
   };
+}
+
+export async function rebuildTokenRoutesFromAvailability() {
+  return runRouteProjectionExclusive(async () => {
+    const result = await db.transaction((tx: typeof db) => rebuildTokenRoutesProjection(tx));
+    invalidateTokenRouterCache();
+    return result;
+  });
 }
 
 async function runRefreshModelsAndRebuildRoutes() {

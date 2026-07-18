@@ -165,6 +165,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `url` | `string` | 是 | 待识别的站点地址。通用平台通常传根地址；如果你想命中官方预设，则直接传预设对应的完整地址 |
+| `proxyUrl` | `string \| null` | 否 | 本次探测使用的 HTTP(S) / SOCKS 代理；传空值表示不使用站点代理 |
+| `useSystemProxy` | `boolean` | 否 | 本次探测是否使用系统代理；显式 `false` 可强制直连 |
 
 示例：
 
@@ -176,6 +178,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites/detect" \
     "url": "https://api.example.com"
   }'
 ```
+
+探测只使用请求中提供的代理上下文，不会修改已经保存的站点配置。整条探测链共享超时，错误响应不会回显代理 URL 中的用户名或密码。
 
 成功响应：
 
@@ -287,6 +291,30 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 
 这样响应里也会保留该预设信息，便于脚本按预设类型做后续分流。
 
+### 5. 管理站点模型别名
+
+`GET /api/sites/:id/model-aliases`
+
+`PUT /api/sites/:id/model-aliases`
+
+模型别名是站点级的额外对外模型名。原始模型不会被替换；别名请求选中通道后，系统仍将真实来源模型发送给上游，并按真实模型计算价格和记录日志。
+
+PUT 会完整替换该站点的别名列表并同步重建路由：
+
+```json
+{
+  "aliases": [
+    {
+      "sourceModel": "gpt-4o",
+      "aliasModel": "team-fast",
+      "enabled": true
+    }
+  ]
+}
+```
+
+来源模型和对外别名都必须是精确模型名，不接受通配符或正则表达式。同一站点的别名不区分大小写且不能重复；同一别名跨站点聚合时，所有站点必须使用完全一致的大小写和拼写。别名不能与已发现的原模型、人工精确路由或路由显示名冲突，也不支持别名链、自映射和循环。生成的别名路由由系统维护，不能通过 `/api/routes/*` 单独修改。
+
 ## 价格与成本接口
 
 | 方法 | 路径 | 用途 |
@@ -294,6 +322,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 | `GET` | `/api/pricing/settings` | 读取刷新开关、Cron、系统时区和最近刷新状态 |
 | `PUT` | `/api/pricing/settings` | 保存 `{ "enabled": true, "cronExpr": "0 0 * * *" }` |
 | `POST` | `/api/pricing/refresh` | 立即执行一轮官方目录和站点价格刷新 |
+| `POST` | `/api/settings/account-group-rates/refresh` | 立即执行一轮账号倍率刷新并返回扫描、成功、跳过、延后、失败和恢复统计 |
 | `GET` | `/api/sites/:siteId/pricing` | 读取站点换算、报价、规则、官方目录和有效价格 |
 | `PUT` | `/api/sites/:siteId/pricing/profile` | 保存 `{ "paidCny": 1, "creditedUsd": 10 }` |
 | `PUT` | `/api/sites/:siteId/pricing/models/:upstreamModelId/rule` | 保存手动映射、自定义模式和部分字段覆盖 |
@@ -302,6 +331,8 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites" \
 | `DELETE` | `/api/accounts/:accountId/group-rates/:groupKey/rule` | 删除手动倍率并恢复同步倍率或默认 `1` |
 
 模型规则的 `mappingMode` 只能是 `manual` 或 `custom`。`manual` 必须同时提供 `mappedProviderId` 和 `mappedModelId`；价格覆盖字段为 `null` 或省略时继承，`0` 表示免费。充值换算两个数字必须是有限正数，分组倍率必须是有限非负数。
+
+手动账号倍率刷新不受自动刷新开关限制。响应的 `result` 包含 `scanned`、`candidates`、`synced`、`skipped`、`deferred`、`failed`、`recovered` 和 `durationMs`；单个账号失败会计入 `failed`，详细原因记录在程序日志中。
 
 `upstreamModelId` 和 `groupKey` 可能包含 `/`、空格或其他保留字符，脚本必须逐段使用 URL 编码，不能直接拼接原始值。例如：
 

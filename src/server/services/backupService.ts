@@ -21,8 +21,14 @@ import {
 } from './accountRateRefreshScheduler.js';
 import { runRuntimeMaintenance } from './runtimeMaintenanceOwner.js';
 import { reconcileRuntimeSettingsFromPersistedSnapshot } from './runtimeSettingsReconciliation.js';
+import { validateSiteModelAliases } from './siteModelAliasService.js';
+import { normalizeModelIdentityKey } from './modelIdentity.js';
+import { invalidateTokenRouterCache } from './tokenRouter.js';
+import { runRouteProjectionExclusive } from './routeProjectionCoordinator.js';
+import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
+import { migrateLegacyDownstreamRoutePermissions } from './downstreamApiKeyService.js';
 
-const BACKUP_VERSION = '2.2';
+const BACKUP_VERSION = '2.3';
 
 export type BackupExportType = 'all' | 'accounts' | 'preferences';
 
@@ -61,6 +67,7 @@ type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
 type SiteDisabledModelRow = typeof schema.siteDisabledModels.$inferSelect;
+type SiteModelAliasRow = typeof schema.siteModelAliases.$inferSelect;
 type ModelAvailabilityRow = typeof schema.modelAvailability.$inferSelect;
 type TokenModelAvailabilityRow = typeof schema.tokenModelAvailability.$inferSelect;
 type ProxyLogRow = typeof schema.proxyLogs.$inferSelect;
@@ -110,6 +117,7 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
 >>;
 
 type BackupSiteDisabledModelRow = Pick<SiteDisabledModelRow, 'siteId' | 'modelName'>;
+type BackupSiteModelAliasRow = Pick<SiteModelAliasRow, 'siteId' | 'sourceModel' | 'aliasModel' | 'enabled'>;
 type BackupManualModelRow = {
   accountId: number;
   modelName: string;
@@ -141,6 +149,7 @@ interface AccountsBackupSection {
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
   siteDisabledModels?: BackupSiteDisabledModelRow[];
+  siteModelAliases?: BackupSiteModelAliasRow[];
   manualModels?: BackupManualModelRow[];
   downstreamApiKeys?: BackupDownstreamApiKeyRow[];
   sitePricingProfiles?: SitePricingProfileRow[];
@@ -407,10 +416,11 @@ function buildTokenIdentityKey(row: Pick<AccountTokenRow, 'name' | 'token' | 'to
   ].join('::');
 }
 
-function buildRouteIdentityKey(row: Pick<TokenRouteRow, 'modelPattern' | 'routeMode'>): string {
+function buildRouteIdentityKey(row: Pick<TokenRouteRow, 'modelPattern' | 'routeMode' | 'routeKind'>): string {
   return [
     asString(row.modelPattern),
     asString(row.routeMode),
+    asString(row.routeKind),
   ].join('::');
 }
 
@@ -1335,7 +1345,7 @@ function isSettingValueAcceptable(key: string, value: unknown): boolean {
   return true;
 }
 
-async function exportAccountsSection(): Promise<AccountsBackupSection> {
+async function readAccountsBackupSection(): Promise<AccountsBackupSection> {
   const [
     sites,
     siteApiEndpoints,
@@ -1346,6 +1356,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    siteModelAliases,
     manualModels,
     downstreamApiKeys,
     sitePricingProfiles,
@@ -1371,6 +1382,9 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all(),
     db.select().from(schema.siteDisabledModels)
       .orderBy(asc(schema.siteDisabledModels.siteId), asc(schema.siteDisabledModels.modelName))
+      .all(),
+    db.select().from(schema.siteModelAliases)
+      .orderBy(asc(schema.siteModelAliases.siteId), asc(schema.siteModelAliases.id))
       .all(),
     db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.isManual, true))
@@ -1419,6 +1433,13 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       siteId: row.siteId,
       modelName: row.modelName,
     })),
+    siteModelAliases: siteModelAliases.map(({
+      id: _id,
+      aliasKey: _aliasKey,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      ...row
+    }) => row),
     manualModels: manualModels.map((row) => ({
       accountId: row.accountId,
       modelName: row.modelName,
@@ -1439,6 +1460,10 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     accountGroupRateRules,
     pricingRefreshStates,
   };
+}
+
+async function exportAccountsSection(): Promise<AccountsBackupSection> {
+  return runRouteProjectionExclusive(readAccountsBackupSection);
 }
 
 async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
@@ -1500,6 +1525,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const siteDisabledModels = Array.isArray(input.siteDisabledModels)
     ? input.siteDisabledModels as BackupSiteDisabledModelRow[]
     : undefined;
+  const siteModelAliases = Array.isArray(input.siteModelAliases)
+    ? input.siteModelAliases as BackupSiteModelAliasRow[]
+    : undefined;
   const manualModels = Array.isArray(input.manualModels)
     ? input.manualModels as BackupManualModelRow[]
     : undefined;
@@ -1525,6 +1553,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    siteModelAliases,
     manualModels,
     downstreamApiKeys,
     sitePricingProfiles,
@@ -1646,6 +1675,7 @@ async function importAccountsSection(
     await tx.delete(schema.accountGroupRates).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
+    await tx.delete(schema.siteModelAliases).run();
     await tx.delete(schema.sites).run();
 
     for (const row of section.sites) {
@@ -1686,6 +1716,16 @@ async function importAccountsSection(
         lastFailureReason: row.lastFailureReason ?? null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+      }).run();
+    }
+
+    for (const row of section.siteModelAliases || []) {
+      await tx.insert(schema.siteModelAliases).values({
+        siteId: row.siteId,
+        sourceModel: row.sourceModel,
+        aliasModel: row.aliasModel,
+        aliasKey: normalizeModelIdentityKey(row.aliasModel),
+        enabled: row.enabled ?? true,
       }).run();
     }
 
@@ -1761,6 +1801,7 @@ async function importAccountsSection(
         displayIcon: row.displayIcon ?? null,
         modelMapping: row.modelMapping,
         routeMode: row.routeMode ?? 'pattern',
+        routeKind: row.routeKind ?? null,
         decisionSnapshot: row.decisionSnapshot ?? null,
         decisionRefreshedAt: row.decisionRefreshedAt ?? null,
         routingStrategy: row.routingStrategy ?? 'weighted',
@@ -1988,6 +2029,48 @@ async function importPreferencesSection(
   return applied;
 }
 
+function normalizeImportedDownstreamRoutePermissions(
+  accountsSection: AccountsBackupSection | null,
+): void {
+  if (!accountsSection?.downstreamApiKeys) return;
+
+  const routeById = new Map(accountsSection.tokenRoutes.map((route) => [route.id, route]));
+  const parseList = (raw: unknown, label: string): unknown[] => {
+    if (raw == null || raw === '') return [];
+    const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(value)) throw new Error(`导入数据格式错误：${label}无效`);
+    return value;
+  };
+
+  for (const [index, row] of accountsSection.downstreamApiKeys.entries()) {
+    const supportedModels = parseList(
+      row.supportedModels,
+      `downstreamApiKeys[${index}].supportedModels`,
+    )
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const allowedRouteIds: number[] = [];
+    for (const rawId of parseList(
+      row.allowedRouteIds,
+      `downstreamApiKeys[${index}].allowedRouteIds`,
+    )) {
+      const routeId = Math.trunc(Number(rawId));
+      if (!Number.isInteger(routeId) || routeId <= 0) {
+        throw new Error(`导入数据格式错误：downstreamApiKeys[${index}].allowedRouteIds无效`);
+      }
+      allowedRouteIds.push(routeId);
+    }
+
+    const migrated = migrateLegacyDownstreamRoutePermissions({
+      supportedModels,
+      allowedRouteIds,
+      routes: Array.from(routeById.values()),
+    });
+    row.supportedModels = JSON.stringify(migrated.supportedModels);
+    row.allowedRouteIds = JSON.stringify(migrated.allowedRouteIds);
+  }
+}
+
 function validateImportSections(
   accountsSection: AccountsBackupSection | null,
   preferencesSection: PreferencesBackupSection | null,
@@ -2077,7 +2160,11 @@ function validateImportSections(
       requireText(value, `accountTokens[${index}]`, 'name'); requireText(value, `accountTokens[${index}]`, 'token');
       if (!accountIds.has(row.accountId)) throw new Error(`导入数据格式错误：令牌 ${row.id} 引用了不存在的账号`);
     }
-    accountsSection.tokenRoutes.forEach((row, index) => requireText(requireRecord(row, `tokenRoutes[${index}]`), `tokenRoutes[${index}]`, 'modelPattern'));
+    const routeRowsById = new Map<number, TokenRouteRow>();
+    accountsSection.tokenRoutes.forEach((row, index) => {
+      requireText(requireRecord(row, `tokenRoutes[${index}]`), `tokenRoutes[${index}]`, 'modelPattern');
+      routeRowsById.set(row.id, row);
+    });
     for (const row of accountsSection.routeChannels) {
       if (!accountIds.has(row.accountId) || !routeIds.has(row.routeId) || (row.tokenId != null && !tokenIds.has(row.tokenId))) {
         throw new Error(`导入数据格式错误：通道 ${row.id} 的引用不完整`);
@@ -2100,6 +2187,91 @@ function validateImportSections(
         `${row.siteId}::${row.modelName}`,
         'siteDisabledModels',
       );
+    }
+    if (accountsSection.siteModelAliases) {
+      const reservedModelNames = new Set<string>();
+      for (const row of accountsSection.tokenRoutes) {
+        if (row.routeKind === 'site_alias') continue;
+        if (typeof row.modelPattern === 'string') reservedModelNames.add(row.modelPattern);
+        if (typeof row.displayName === 'string') reservedModelNames.add(row.displayName);
+      }
+      for (const row of accountsSection.manualModels || []) {
+        if (typeof row.modelName === 'string') reservedModelNames.add(row.modelName);
+      }
+
+      const aliasesBySite = new Map<number, unknown[]>();
+      const sharedAliasSpellings = new Map<string, string>();
+      for (const [index, row] of accountsSection.siteModelAliases.entries()) {
+        const value = requireRecord(row, `siteModelAliases[${index}]`);
+        const siteId = requireId(value, `siteModelAliases[${index}]`, 'siteId');
+        if (!siteIds.has(siteId)) throw new Error(`导入数据格式错误：站点模型别名 ${index} 引用了不存在的站点`);
+        requireText(value, `siteModelAliases[${index}]`, 'sourceModel');
+        const aliasModel = requireText(value, `siteModelAliases[${index}]`, 'aliasModel').trim();
+        const aliasKey = normalizeModelIdentityKey(aliasModel);
+        const sharedSpelling = sharedAliasSpellings.get(aliasKey);
+        if (sharedSpelling !== undefined && sharedSpelling !== aliasModel) {
+          throw new Error(`导入数据格式错误：共享模型别名拼写不一致：${sharedSpelling} / ${aliasModel}`);
+        }
+        sharedAliasSpellings.set(aliasKey, aliasModel);
+        if (value.enabled !== undefined && typeof value.enabled !== 'boolean') {
+          throw new Error(`导入数据格式错误：siteModelAliases[${index}].enabled无效`);
+        }
+        const siteAliases = aliasesBySite.get(siteId) ?? [];
+        siteAliases.push(value);
+        aliasesBySite.set(siteId, siteAliases);
+      }
+
+      for (const [siteId, siteAliases] of aliasesBySite.entries()) {
+        const validation = validateSiteModelAliases(siteAliases, { reservedModelNames });
+        if (!validation.success) {
+          throw new Error(`导入数据格式错误：站点 ${siteId} 的模型别名无效：${validation.error.message}`);
+        }
+      }
+    }
+
+    const enabledAliasesByKey = new Map<string, BackupSiteModelAliasRow[]>();
+    for (const alias of accountsSection.siteModelAliases || []) {
+      if (alias.enabled === false) continue;
+      const aliasKey = normalizeModelIdentityKey(alias.aliasModel);
+      const aliases = enabledAliasesByKey.get(aliasKey) ?? [];
+      aliases.push(alias);
+      enabledAliasesByKey.set(aliasKey, aliases);
+    }
+    const accountSiteById = new Map(accountsSection.accounts.map((account) => [account.id, account.siteId]));
+    const channelsByRouteId = new Map<number, BackupRouteChannelRow[]>();
+    for (const channel of accountsSection.routeChannels) {
+      const channels = channelsByRouteId.get(channel.routeId) ?? [];
+      channels.push(channel);
+      channelsByRouteId.set(channel.routeId, channels);
+    }
+    const projectedAliasKeys = new Set<string>();
+    for (const route of accountsSection.tokenRoutes) {
+      if (route.routeKind !== 'site_alias') continue;
+      const aliasKey = normalizeModelIdentityKey(route.modelPattern);
+      const aliases = enabledAliasesByKey.get(aliasKey) ?? [];
+      const channels = channelsByRouteId.get(route.id) ?? [];
+      const metadataMatches = (
+        route.displayName === route.modelPattern
+        && (route.routeMode == null || route.routeMode === 'pattern')
+        && route.modelMapping == null
+        && route.enabled === true
+      );
+      if (projectedAliasKeys.has(aliasKey) || aliases.length === 0 || channels.length === 0 || !metadataMatches) {
+        throw new Error(`导入数据格式错误：站点模型别名投影不一致: ${route.modelPattern}`);
+      }
+      projectedAliasKeys.add(aliasKey);
+
+      for (const channel of channels) {
+        const siteId = accountSiteById.get(channel.accountId);
+        const sourceKey = normalizeModelIdentityKey(channel.sourceModel || '');
+        const sourceMatches = aliases.some((alias) => (
+          alias.siteId === siteId
+          && normalizeModelIdentityKey(alias.sourceModel) === sourceKey
+        ));
+        if (!sourceMatches || channel.manualOverride === true) {
+          throw new Error(`导入数据格式错误：站点模型别名投影不一致: ${route.modelPattern}`);
+        }
+      }
     }
     const manualModelIdentityKeys = new Set<string>();
     for (const [index, row] of (accountsSection.manualModels || []).entries()) {
@@ -2212,7 +2384,16 @@ function validateImportSections(
       const key = requireText(row, `downstreamApiKeys[${index}]`, 'key');
       if (downstreamKeys.has(key)) throw new Error(`导入数据格式错误：下游密钥重复`);
       downstreamKeys.add(key);
-      for (const id of parseIdList(row.allowedRouteIds, `downstreamApiKeys[${index}].allowedRouteIds`)) if (!routeIds.has(id)) throw new Error(`导入数据格式错误：下游密钥引用了不存在的路由`);
+      for (const id of parseIdList(row.allowedRouteIds, `downstreamApiKeys[${index}].allowedRouteIds`)) {
+        const route = routeRowsById.get(id);
+        if (!route) throw new Error('导入数据格式错误：下游密钥引用了不存在的路由');
+        if (
+          route.routeKind === 'site_alias'
+          || (route.routeMode !== 'explicit_group' && isExactTokenRouteModelPattern(route.modelPattern))
+        ) {
+          throw new Error('导入数据格式错误：下游密钥的 allowedRouteIds 只能引用路由群组');
+        }
+      }
       for (const id of parseIdList(row.excludedSiteIds, `downstreamApiKeys[${index}].excludedSiteIds`)) if (!siteIds.has(id)) throw new Error(`导入数据格式错误：下游密钥引用了不存在的站点`);
     }
   }
@@ -2261,6 +2442,7 @@ export async function importBackup(
       throw new Error('导入数据格式错误：设置数据结构不正确');
     }
   }
+  normalizeImportedDownstreamRoutePermissions(accountsSection);
   validateImportSections(accountsSection, preferencesSection);
 
   const stopScheduler = deps.stopAccountRateRefreshScheduler ?? stopAccountRateRefreshScheduler;
@@ -2277,22 +2459,28 @@ export async function importBackup(
 
   return runRuntimeMaintenance('restore', async ({ markCommitted }) => {
     priorRuntime = captureRuntimeSettingsSnapshot();
-    const runtimeState = accountsSection
-      ? await collectCurrentRuntimeStateSnapshot()
-      : null;
     let appliedSettings: Array<{ key: string; value: unknown }> = [];
 
-    await db.transaction(async (tx) => {
-      if (accountsSection && runtimeState) {
-        await importAccountsSection(accountsSection, tx as typeof db, runtimeState);
+    const importSections = async () => {
+      const runtimeState = accountsSection
+        ? await collectCurrentRuntimeStateSnapshot()
+        : null;
+      await db.transaction(async (tx) => {
+        if (accountsSection && runtimeState) {
+          await importAccountsSection(accountsSection, tx as typeof db, runtimeState);
+        }
+        if (preferencesSection) {
+          appliedSettings = await importPreferencesSection(preferencesSection, tx as typeof db);
+        }
+      });
+      markCommitted();
+      if (accountsSection) {
+        invalidateTokenRouterCache();
       }
-      if (preferencesSection) {
-        appliedSettings = await importPreferencesSection(preferencesSection, tx as typeof db);
-      }
-    });
-    markCommitted();
+      await reconcilePersistedRuntime();
+    };
 
-    await reconcilePersistedRuntime();
+    await importSections();
     for (const row of accountsSection?.accounts || []) {
       clearFailure(row.id);
     }
@@ -2315,6 +2503,7 @@ export async function importBackup(
       await reloadBackupWebdavScheduler();
     }),
     reconcileCommittedRuntime: reconcilePersistedRuntime,
+    runExclusive: runRouteProjectionExclusive,
   });
 }
 

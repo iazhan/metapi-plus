@@ -77,6 +77,7 @@ async function clearAllBusinessData(tx: typeof db): Promise<void> {
   await tx.delete(schema.checkinLogs).run();
   await tx.delete(schema.siteAnnouncements).run();
   await tx.delete(schema.siteDisabledModels).run();
+  await tx.delete(schema.siteModelAliases).run();
   await tx.delete(schema.accountGroupRates).run();
   await tx.delete(schema.accountTokens).run();
   await tx.delete(schema.accounts).run();

@@ -1077,7 +1077,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const searchInput = root!.root.find((node) => (
-        node.type === 'input' && node.props.placeholder === '搜索模型、下游 Key、主分组、标签...'
+        node.type === 'input' && node.props.placeholder === '搜索模型、下游 Key、归属分组、标签...'
       ));
       await act(async () => {
         searchInput.props.onChange({ target: { value: 'mini' } });

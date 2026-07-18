@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
+import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
   type DownstreamExcludedCredentialRef,
@@ -78,6 +79,186 @@ function maskSecret(value: string): string {
 
 function getExposedRouteName(route: { modelPattern: string; displayName: string | null }): string {
   return (route.displayName || '').trim() || route.modelPattern.trim();
+}
+
+type DownstreamPermissionRoute = {
+  id: number;
+  modelPattern: string;
+  displayName: string | null;
+  routeMode: string | null;
+  routeKind: string | null;
+};
+
+/** 将旧精确路由 ID 迁移为稳定的对外模型名，并保留群组路由 ID。 */
+export function migrateLegacyDownstreamRoutePermissions(input: {
+  supportedModels: unknown;
+  allowedRouteIds: unknown;
+  routes: DownstreamPermissionRoute[];
+}): { supportedModels: string[]; allowedRouteIds: number[] } {
+  const supportedModels = new Set(normalizeSupportedModelsInput(input.supportedModels));
+  const routeById = new Map(input.routes.map((route) => [Number(route.id), route]));
+  const allowedRouteIds: number[] = [];
+
+  for (const routeId of normalizeAllowedRouteIdsInput(input.allowedRouteIds)) {
+    const route = routeById.get(routeId);
+    const usesStableModelName = route && (
+      route.routeKind === 'site_alias'
+      || (route.routeMode !== 'explicit_group' && isExactTokenRouteModelPattern(route.modelPattern))
+    );
+    if (route && usesStableModelName) {
+      supportedModels.add(getExposedRouteName(route));
+    } else {
+      allowedRouteIds.push(routeId);
+    }
+  }
+
+  return { supportedModels: Array.from(supportedModels), allowedRouteIds };
+}
+
+/** 读取被引用的路由，并将已存下游策略迁移为稳定模型名。 */
+export async function migrateStoredDownstreamRoutePermissions(input: {
+  supportedModels: unknown;
+  allowedRouteIds: unknown;
+}): Promise<{ supportedModels: string[]; allowedRouteIds: number[] }> {
+  const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
+  const routes = allowedRouteIds.length === 0
+    ? []
+    : await db.select({
+      id: schema.tokenRoutes.id,
+      modelPattern: schema.tokenRoutes.modelPattern,
+      displayName: schema.tokenRoutes.displayName,
+      routeMode: schema.tokenRoutes.routeMode,
+      routeKind: schema.tokenRoutes.routeKind,
+    })
+      .from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, allowedRouteIds))
+      .all();
+
+  return migrateLegacyDownstreamRoutePermissions({
+    supportedModels: input.supportedModels,
+    allowedRouteIds,
+    routes,
+  });
+}
+
+/** 校验下游路由策略引用的路由、站点和凭证实体是否合法。 */
+export async function validateDownstreamPolicyReferences(input: {
+  allowedRouteIds: number[];
+  siteWeightMultipliers: Record<number, number>;
+  excludedSiteIds: number[];
+  excludedCredentialRefs: DownstreamExcludedCredentialRef[];
+}): Promise<string | null> {
+  const routeIds = input.allowedRouteIds || [];
+  if (routeIds.length > 0) {
+    const rows = await db.select({
+      id: schema.tokenRoutes.id,
+      modelPattern: schema.tokenRoutes.modelPattern,
+      routeMode: schema.tokenRoutes.routeMode,
+      routeKind: schema.tokenRoutes.routeKind,
+    })
+      .from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, routeIds))
+      .all();
+    const existingIds = new Set(rows.map((row) => Number(row.id)));
+    const missingIds = routeIds.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) {
+      return `allowedRouteIds 包含不存在的路由: ${missingIds.join(', ')}`;
+    }
+    const nonGroupIds = rows
+      .filter((row) => (
+        row.routeKind === 'site_alias'
+        || (row.routeMode !== 'explicit_group' && isExactTokenRouteModelPattern(row.modelPattern))
+      ))
+      .map((row) => Number(row.id));
+    if (nonGroupIds.length > 0) {
+      return `allowedRouteIds 只能包含路由群组；精确模型或站点模型别名请使用 supportedModels: ${nonGroupIds.join(', ')}`;
+    }
+  }
+
+  const weightedSiteIds = Object.keys(input.siteWeightMultipliers || {})
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.trunc(value));
+  const excludedSiteIds = (input.excludedSiteIds || [])
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.trunc(value));
+  const siteIds = Array.from(new Set([...weightedSiteIds, ...excludedSiteIds]));
+  if (siteIds.length > 0) {
+    const rows = await db.select({ id: schema.sites.id })
+      .from(schema.sites)
+      .where(inArray(schema.sites.id, siteIds))
+      .all();
+    const existingIds = new Set(rows.map((row) => Number(row.id)));
+    const missingIds = siteIds.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) {
+      return `策略中包含不存在的站点: ${missingIds.join(', ')}`;
+    }
+  }
+
+  const credentialRefs = input.excludedCredentialRefs || [];
+  const accountTokenRefs = credentialRefs.filter((ref): ref is Extract<DownstreamExcludedCredentialRef, { kind: 'account_token' }> => ref.kind === 'account_token');
+  if (accountTokenRefs.length > 0) {
+    const tokenIds = Array.from(new Set(accountTokenRefs.map((ref) => ref.tokenId)));
+    const rows = await db.select({
+      tokenId: schema.accountTokens.id,
+      accountId: schema.accounts.id,
+      siteId: schema.accounts.siteId,
+    })
+      .from(schema.accountTokens)
+      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+      .where(inArray(schema.accountTokens.id, tokenIds))
+      .all();
+    const tokenById = new Map<number, { tokenId: number; accountId: number; siteId: number }>(
+      rows.map((row) => [Number(row.tokenId), {
+        tokenId: Number(row.tokenId),
+        accountId: Number(row.accountId),
+        siteId: Number(row.siteId),
+      }]),
+    );
+    for (const ref of accountTokenRefs) {
+      const matched = tokenById.get(ref.tokenId);
+      if (!matched) {
+        return `excludedCredentialRefs 包含不存在的令牌: ${ref.tokenId}`;
+      }
+      if (Number(matched.accountId) !== ref.accountId || Number(matched.siteId) !== ref.siteId) {
+        return `excludedCredentialRefs 中的 account_token 引用与账号/站点不匹配: ${ref.tokenId}`;
+      }
+    }
+  }
+
+  const defaultApiKeyRefs = credentialRefs.filter((ref): ref is Extract<DownstreamExcludedCredentialRef, { kind: 'default_api_key' }> => ref.kind === 'default_api_key');
+  if (defaultApiKeyRefs.length > 0) {
+    const accountIds = Array.from(new Set(defaultApiKeyRefs.map((ref) => ref.accountId)));
+    const rows = await db.select({
+      accountId: schema.accounts.id,
+      siteId: schema.accounts.siteId,
+      apiToken: schema.accounts.apiToken,
+    })
+      .from(schema.accounts)
+      .where(inArray(schema.accounts.id, accountIds))
+      .all();
+    const accountById = new Map<number, { accountId: number; siteId: number; apiToken: string | null }>(
+      rows.map((row) => [Number(row.accountId), {
+        accountId: Number(row.accountId),
+        siteId: Number(row.siteId),
+        apiToken: row.apiToken,
+      }]),
+    );
+    for (const ref of defaultApiKeyRefs) {
+      const matched = accountById.get(ref.accountId);
+      if (!matched) {
+        return `excludedCredentialRefs 包含不存在的账号: ${ref.accountId}`;
+      }
+      if (Number(matched.siteId) !== ref.siteId) {
+        return `excludedCredentialRefs 中的 default_api_key 引用与站点不匹配: ${ref.accountId}`;
+      }
+      if (!(matched.apiToken || '').trim()) {
+        return `excludedCredentialRefs 中的 default_api_key 账号缺少默认 API Key: ${ref.accountId}`;
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizePositiveNumberOrNull(value: unknown): number | null {

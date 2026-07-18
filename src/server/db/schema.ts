@@ -55,6 +55,20 @@ export const siteDisabledModels = sqliteTable('site_disabled_models', {
   siteIdIdx: index('site_disabled_models_site_id_idx').on(table.siteId),
 }));
 
+export const siteModelAliases = sqliteTable('site_model_aliases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  sourceModel: text('source_model').notNull(),
+  aliasModel: text('alias_model').notNull(),
+  aliasKey: text('alias_key').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteAliasKeyUnique: uniqueIndex('site_model_aliases_site_alias_key_unique').on(table.siteId, table.aliasKey),
+  siteIdIdx: index('site_model_aliases_site_id_idx').on(table.siteId),
+}));
+
 export const sitePricingProfiles = sqliteTable('site_pricing_profiles', {
   siteId: integer('site_id').primaryKey().references(() => sites.id, { onDelete: 'cascade' }),
   paidCny: real('paid_cny').notNull().default(1),
@@ -290,6 +304,7 @@ export const tokenRoutes = sqliteTable('token_routes', {
   displayName: text('display_name'),
   displayIcon: text('display_icon'),
   routeMode: text('route_mode').default('pattern'),
+  routeKind: text('route_kind'),
   modelMapping: text('model_mapping'), // JSON
   decisionSnapshot: text('decision_snapshot'), // JSON
   decisionRefreshedAt: text('decision_refreshed_at'),

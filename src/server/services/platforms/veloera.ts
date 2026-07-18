@@ -1,11 +1,16 @@
-import { BasePlatformAdapter, CheckinResult, BalanceInfo } from './base.js';
+import {
+  BasePlatformAdapter,
+  CheckinResult,
+  BalanceInfo,
+  type PlatformDetectionContext,
+} from './base.js';
 
 export class VeloeraAdapter extends BasePlatformAdapter {
   readonly platformName = 'veloera';
 
-  async detect(url: string): Promise<boolean> {
+  async detect(url: string, context?: PlatformDetectionContext): Promise<boolean> {
     try {
-      const res = await this.fetchJson<any>(`${url}/api/status`);
+      const res = await this.fetchDetectionJson<any>(`${url}/api/status`, context);
       return res?.success === true && (
         res?.data?.system_name?.toLowerCase().includes('veloera') ||
         res?.data?.version?.includes('veloera')

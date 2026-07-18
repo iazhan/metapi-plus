@@ -53,6 +53,7 @@ export type RouteRow = {
   displayName?: string | null;
   displayIcon?: string | null;
   routeMode?: RouteMode | null;
+  routeKind?: 'site_alias' | null;
   sourceRouteIds?: number[];
   modelMapping?: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
@@ -68,6 +69,7 @@ export type RouteSummaryRow = {
   displayName: string | null;
   displayIcon: string | null;
   routeMode?: RouteMode | null;
+  routeKind?: 'site_alias' | null;
   sourceRouteIds?: number[];
   modelMapping: string | null;
   routingStrategy?: RouteRoutingStrategy | null;

@@ -14,6 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
+    refreshAccountGroupRates: vi.fn(),
     triggerCheckinAll: vi.fn(),
     getModelTokenCandidates: vi.fn(),
   },
@@ -73,6 +74,19 @@ describe('Settings log cleanup schedule', () => {
       restartRequired: false,
     });
     apiMock.updateRuntimeSettings.mockResolvedValue({ success: true });
+    apiMock.refreshAccountGroupRates.mockResolvedValue({
+      success: true,
+      result: {
+        scanned: 0,
+        candidates: 0,
+        synced: 0,
+        skipped: 0,
+        deferred: 0,
+        failed: 0,
+        recovered: 0,
+        durationMs: 0,
+      },
+    });
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
   });
 
@@ -392,6 +406,88 @@ describe('Settings log cleanup schedule', () => {
       await flushMicrotasks();
 
       expect(apiMock.triggerCheckinAll).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('runs a one-off account rate refresh even when automatic refresh is disabled', async () => {
+    let resolveRefresh!: (value: {
+      success: true;
+      result: {
+        scanned: number;
+        candidates: number;
+        synced: number;
+        skipped: number;
+        deferred: number;
+        failed: number;
+        recovered: number;
+        durationMs: number;
+      };
+    }) => void;
+    const refreshPromise = new Promise<Parameters<typeof resolveRefresh>[0]>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    apiMock.refreshAccountGroupRates.mockReturnValue(refreshPromise);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-enabled',
+      });
+      await act(async () => {
+        toggle.props.onChange({ target: { checked: false } });
+      });
+
+      const refreshButton = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-now',
+      });
+      expect(refreshButton.props.disabled).toBe(false);
+
+      let action!: Promise<void>;
+      await act(async () => {
+        action = refreshButton.props.onClick();
+        await Promise.resolve();
+      });
+
+      const refreshingButton = root.root.findByProps({
+        'data-testid': 'account-group-rate-refresh-now',
+      });
+      expect(refreshingButton.props.disabled).toBe(true);
+      expect(collectText(refreshingButton)).toContain('刷新中...');
+
+      await act(async () => {
+        resolveRefresh({
+          success: true,
+          result: {
+            scanned: 8,
+            candidates: 6,
+            synced: 3,
+            skipped: 2,
+            deferred: 1,
+            failed: 2,
+            recovered: 1,
+            durationMs: 125,
+          },
+        });
+        await action;
+      });
+
+      expect(apiMock.refreshAccountGroupRates).toHaveBeenCalledTimes(1);
+      expect(collectText(root.root)).toContain(
+        '倍率刷新完成：扫描 8，符合条件 6，成功 3，跳过 2，延后 1，失败 2，恢复 1。部分账号失败，请查看程序日志。',
+      );
     } finally {
       root?.unmount();
     }

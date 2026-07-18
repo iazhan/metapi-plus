@@ -61,7 +61,7 @@ describe('downstream api keys routes', () => {
       platform: 'openai',
     }).returning().get();
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
+      modelPattern: 'gpt-*',
       displayName: 'portal-route',
       enabled: true,
     }).returning().get();
@@ -224,6 +224,43 @@ describe('downstream api keys routes', () => {
     });
   });
 
+  it('migrates legacy exact route ids when an unrelated field is updated', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-source-model',
+      displayName: 'gpt-public-model',
+      enabled: true,
+    }).returning().get();
+    const key = await db.insert(schema.downstreamApiKeys).values({
+      name: 'legacy-route-key',
+      key: 'sk-legacy-route-key',
+      enabled: true,
+      supportedModels: '[]',
+      allowedRouteIds: JSON.stringify([route.id]),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${key.id}`,
+      payload: { enabled: false },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      item: {
+        enabled: false,
+        supportedModels: ['gpt-public-model'],
+        allowedRouteIds: [],
+      },
+    });
+
+    const stored = await db.select().from(schema.downstreamApiKeys)
+      .where(eq(schema.downstreamApiKeys.id, key.id))
+      .get();
+    expect(JSON.parse(stored?.supportedModels || '[]')).toEqual(['gpt-public-model']);
+    expect(JSON.parse(stored?.allowedRouteIds || '[]')).toEqual([]);
+  });
+
   it('roundtrips excluded sites and excluded credentials through create, update, and list', async () => {
     const siteA = await db.insert(schema.sites).values({
       name: 'site-a',
@@ -263,7 +300,7 @@ describe('downstream api keys routes', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
+      modelPattern: 'gpt-*',
       displayName: 'portal-route',
       enabled: true,
     }).returning().get();
@@ -875,7 +912,7 @@ describe('downstream api keys routes', () => {
       platform: 'openai',
     }).returning().get();
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
+      modelPattern: 'gpt-*',
       enabled: true,
     }).returning().get();
     const created = await app.inject({
@@ -916,6 +953,35 @@ describe('downstream api keys routes', () => {
       tags: ['foo', 'bar'],
       tagMatch: 'all',
       items: [],
+    });
+  });
+
+  it('rejects exact and site-alias route ids in group permissions', async () => {
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o',
+      enabled: true,
+    }).returning().get();
+    const aliasRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'team-fast',
+      displayName: 'team-fast',
+      routeKind: 'site_alias',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'invalid-route-kind-policy',
+        key: 'sk-invalid-route-kind-policy',
+        allowedRouteIds: [exactRoute.id, aliasRoute.id],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: `allowedRouteIds 只能包含路由群组；精确模型或站点模型别名请使用 supportedModels: ${exactRoute.id}, ${aliasRoute.id}`,
     });
   });
 });

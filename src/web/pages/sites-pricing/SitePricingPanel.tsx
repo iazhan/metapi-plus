@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type SitePricingView } from '../../api.js';
 import ResponsiveFormGrid from '../../components/ResponsiveFormGrid.js';
 import SiteModelPricingList from './SiteModelPricingList.js';
@@ -57,34 +57,65 @@ export default function SitePricingPanel({ siteId, isMobile }: Props) {
   };
 
   return (
-    <section style={{ marginTop: 16, padding: 14, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>价格与成本</div>
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6, marginBottom: 12 }}>
-        充值换算只属于站点；价格来源按手动覆盖、站点报价、models.dev 逐字段继承。
-      </div>
-      {view?.referenceAccountId ? (
-        <div className="info-tip" style={{ marginBottom: 12 }}>
-          列表中的分组倍率按参考账号 #{view.referenceAccountId} 的当前分组计算；账号或令牌分组不同，倍率可能不同。
+    <section aria-label="站点价格与成本" className="site-editor-section">
+      <div className="site-editor-section-header">
+        <div>
+          <h3 className="site-editor-section-title">价格与成本</h3>
+          <p className="site-editor-section-description">
+            维护站点充值汇率和单模型价格覆盖；未覆盖字段继续继承站点报价或 models.dev。
+          </p>
         </div>
-      ) : null}
-      <ResponsiveFormGrid>
-        <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-          实际支付 CNY
-          <input aria-label="实际支付 CNY" type="number" min={0} step="any" value={paidCny} onChange={(event) => setPaidCny(event.target.value)} style={{ minHeight: 44, padding: '10px 12px' }} />
-        </label>
-        <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-          站点到账 USD
-          <input aria-label="站点到账 USD" type="number" min={0} step="any" value={creditedUsd} onChange={(event) => setCreditedUsd(event.target.value)} style={{ minHeight: 44, padding: '10px 12px' }} />
-        </label>
-      </ResponsiveFormGrid>
-      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-        {conversion === null ? '请输入两个正数' : `1 USD = ${conversion} CNY`}
       </div>
-      {error && <div role="alert" style={{ marginTop: 8, fontSize: 12, color: 'var(--color-error)' }}>{error}</div>}
-      <button className="btn btn-primary" style={{ minHeight: 44, marginTop: 10 }} disabled={saving || !profileValid} onClick={saveProfile}>
-        {saving ? '保存中…' : '保存充值换算'}
-      </button>
-      <div style={{ marginTop: 16 }}>
+      {error && <div role="alert" style={{ fontSize: 12, color: 'var(--color-error)' }}>{error}</div>}
+
+      <div className="site-editor-subsection">
+        <div className="site-editor-subsection-title">充值换算</div>
+        <ResponsiveFormGrid>
+          <label className="site-editor-field">
+            <span className="site-editor-field-label">实际支付 CNY</span>
+            <input
+              aria-label="实际支付 CNY"
+              type="number"
+              min={0}
+              step="any"
+              value={paidCny}
+              onChange={(event) => setPaidCny(event.target.value)}
+              className="site-editor-control"
+            />
+          </label>
+          <label className="site-editor-field">
+            <span className="site-editor-field-label">站点到账 USD</span>
+            <input
+              aria-label="站点到账 USD"
+              type="number"
+              min={0}
+              step="any"
+              value={creditedUsd}
+              onChange={(event) => setCreditedUsd(event.target.value)}
+              className="site-editor-control"
+            />
+          </label>
+        </ResponsiveFormGrid>
+        <div className="site-editor-save-row">
+          <button className="btn btn-primary" disabled={saving || !profileValid} onClick={saveProfile}>
+            {saving ? '保存中…' : '保存充值换算'}
+          </button>
+          <span className="site-editor-meta">
+            {conversion === null ? '请输入两个正数' : `当前换算：1 USD = ${conversion} CNY`}
+          </span>
+        </div>
+      </div>
+
+      <div className="site-editor-subsection">
+        <div className="site-editor-subsection-header">
+          <div className="site-editor-subsection-title">模型价格规则</div>
+          {view ? <span className="site-editor-meta">共 {view.models.length} 个站点模型</span> : null}
+        </div>
+        {view?.referenceAccountId ? (
+          <div className="info-tip">
+            列表中的分组倍率按参考账号 #{view.referenceAccountId} 的当前分组计算；账号或令牌分组不同，倍率可能不同。
+          </div>
+        ) : null}
         {view ? <>
           <SiteModelPricingList view={view} isMobile={isMobile} busyModel={busyModel} onRestore={restore} onEdit={setEditingModel} />
           {editingModel && <SiteModelPriceRuleEditor

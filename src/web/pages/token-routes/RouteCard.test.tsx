@@ -241,6 +241,65 @@ describe('RouteCard', () => {
     expect(onClearCooldown).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps managed site alias routes read-only while showing their generated channels', () => {
+    const onCreateTokenForMissing = vi.fn();
+    const root = create(
+      <RouteCard
+        route={buildRoute({
+          modelPattern: 'team-fast',
+          displayName: 'team-fast',
+          routeKind: 'site_alias',
+          channelCount: 1,
+          enabledChannelCount: 1,
+        })}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[buildChannel({ sourceModel: 'gpt-4o' })]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[{
+          key: 'missing-site',
+          siteName: 'site-a',
+          accountId: 101,
+          accountLabel: 'user_a',
+        }]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={onCreateTokenForMissing}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const text = collectText(root.root);
+    expect(text.match(/站点别名/g)).toHaveLength(1);
+    expect(text).toContain('1 通道');
+    expect(text).toContain('gpt-4o');
+    expect(text).not.toContain('待注册站点');
+    expect(text).not.toContain('清除冷却');
+    expect(text).not.toContain('添加通道');
+    expect(onCreateTokenForMissing).not.toHaveBeenCalled();
+  });
+
   it('lets keyboard users toggle the collapsed summary card', () => {
     const onToggleExpand = vi.fn();
     const root = create(

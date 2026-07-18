@@ -3,11 +3,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { eq } from 'drizzle-orm';
 import { createTestDataDir, type TestDataDir } from '../../test-fixtures/testDataDir.js';
 
-const { updateAccountRateRefreshSchedulerMock } = vi.hoisted(() => ({
+const {
+  executeAccountRateRefreshPassMock,
+  updateAccountRateRefreshSchedulerMock,
+} = vi.hoisted(() => ({
+  executeAccountRateRefreshPassMock: vi.fn(),
   updateAccountRateRefreshSchedulerMock: vi.fn(),
 }));
 
 vi.mock('../../services/accountRateRefreshScheduler.js', () => ({
+  executeAccountRateRefreshPass: executeAccountRateRefreshPassMock,
   updateAccountRateRefreshScheduler: updateAccountRateRefreshSchedulerMock,
 }));
 
@@ -43,6 +48,7 @@ describe('settings account group rate refresh runtime settings', () => {
     await db.delete(schema.settings).run();
     config.accountGroupRateRefreshEnabled = true;
     config.accountGroupRateRefreshIntervalMinutes = 30;
+    executeAccountRateRefreshPassMock.mockReset();
     updateAccountRateRefreshSchedulerMock.mockReset();
   });
 
@@ -59,6 +65,43 @@ describe('settings account group rate refresh runtime settings', () => {
       accountGroupRateRefreshEnabled: true,
       accountGroupRateRefreshIntervalMinutes: 30,
     });
+  });
+
+  it('runs one account group rate refresh pass and returns its summary', async () => {
+    executeAccountRateRefreshPassMock.mockResolvedValue({
+      scanned: 8,
+      candidates: 6,
+      synced: 3,
+      skipped: 2,
+      deferred: 1,
+      failed: 2,
+      recovered: 1,
+      durationMs: 125,
+      syncedAccountIds: [11, 12, 13],
+      failedAccountIds: [14, 15],
+      deferredAccountIds: [16],
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/account-group-rates/refresh',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      success: true,
+      result: {
+        scanned: 8,
+        candidates: 6,
+        synced: 3,
+        skipped: 2,
+        deferred: 1,
+        failed: 2,
+        recovered: 1,
+        durationMs: 125,
+      },
+    });
+    expect(executeAccountRateRefreshPassMock).toHaveBeenCalledTimes(1);
   });
 
   it('persists a valid setting pair before updating the live scheduler', async () => {

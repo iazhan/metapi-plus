@@ -18,6 +18,7 @@ type RuntimeMaintenanceDependencies = {
   start: () => unknown;
   restorePriorRuntime?: () => Promise<void>;
   reconcileCommittedRuntime?: () => Promise<void>;
+  runExclusive?: <T>(task: () => Promise<T>) => Promise<T>;
 };
 
 let activeOperation: RuntimeMaintenanceOperation | null = null;
@@ -37,28 +38,42 @@ export async function runRuntimeMaintenance<T>(
     await deps.stop();
     stopped = true;
     let committed = false;
-    try {
-      const result = await work({ markCommitted: () => { committed = true; } });
-      deps.start();
-      return result;
-    } catch (operationError) {
-      const recoverRuntime = committed
-        ? deps.reconcileCommittedRuntime
-        : deps.restorePriorRuntime;
-      if (recoverRuntime) {
-        try {
-          await recoverRuntime();
-        } catch (restoreError) {
-          throw new Error(
-            `failed to reconcile runtime after ${committed ? 'committed' : 'uncommitted'} ${operation}: ${(restoreError as Error).message}`,
-            { cause: new AggregateError([operationError, restoreError]) },
-          );
+    let restartAllowed = false;
+    const executeWork = async (): Promise<T> => {
+      try {
+        const result = await work({ markCommitted: () => { committed = true; } });
+        restartAllowed = true;
+        return result;
+      } catch (operationError) {
+        const recoverRuntime = committed
+          ? deps.reconcileCommittedRuntime
+          : deps.restorePriorRuntime;
+        if (recoverRuntime) {
+          try {
+            await recoverRuntime();
+          } catch (restoreError) {
+            throw new Error(
+              `failed to reconcile runtime after ${committed ? 'committed' : 'uncommitted'} ${operation}: ${(restoreError as Error).message}`,
+              { cause: new AggregateError([operationError, restoreError]) },
+            );
+          }
         }
+        if (committed && !recoverRuntime) throw operationError;
+        restartAllowed = true;
+        throw operationError;
       }
-      if (committed && !recoverRuntime) throw operationError;
-      deps.start();
-      throw operationError;
-    }
+    };
+
+    const operationPromise = deps.runExclusive
+      ? deps.runExclusive(executeWork)
+      : executeWork();
+    const outcome = await operationPromise.then(
+      (value) => ({ success: true as const, value }),
+      (error: unknown) => ({ success: false as const, error }),
+    );
+    if (restartAllowed) await deps.start();
+    if (!outcome.success) throw outcome.error;
+    return outcome.value;
   } finally {
     if (!stopped) {
       // A failed exclusive stop leaves scheduler ownership unknown; do not start it.

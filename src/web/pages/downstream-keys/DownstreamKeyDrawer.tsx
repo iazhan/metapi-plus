@@ -136,7 +136,7 @@ export default function DownstreamKeyDrawer({
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
               <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
+                {item?.groupName ? `归属 · ${item.groupName}` : '未归类'}
               </span>
               <TagChips tags={item?.tags || []} accent maxVisible={4} />
             </div>
@@ -186,8 +186,8 @@ export default function DownstreamKeyDrawer({
                   <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.expiresAt)}</div>
                 </div>
                 <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>主分组</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.groupName || '未分组'}</div>
+                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>归属分组</div>
+                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.groupName || '未归类'}</div>
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ color: 'var(--color-text-muted)', marginBottom: 6 }}>标签</div>

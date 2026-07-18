@@ -85,6 +85,16 @@ describe('PUT /api/routes/:id route rebuild', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('keeps deletion of a missing manual route idempotent', async () => {
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/api/routes/999999',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true });
+  });
+
   it('rebuilds only automatic channels when modelPattern changes', async () => {
     const oldCandidate = await seedAccountWithToken('claude-opus-4-5');
     const newCandidate = await seedAccountWithToken('gemini-2.0-flash');
@@ -608,6 +618,41 @@ describe('PUT /api/routes/:id route rebuild', () => {
       success: false,
       message: 'Invalid channels[].accountId. Expected positive number.',
     });
+  });
+
+  it('keeps successful batch channel inserts when another item fails', async () => {
+    const first = await seedAccountWithToken('gpt-4o-mini');
+    const second = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels/batch`,
+      payload: {
+        channels: [
+          { accountId: first.account.id, tokenId: first.token.id },
+          { accountId: 999999, sourceModel: 'gpt-4o-mini' },
+          { accountId: second.account.id, tokenId: second.token.id },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      created: 2,
+      skipped: 0,
+    });
+    expect(response.json().errors).toHaveLength(1);
+
+    const channels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, route.id))
+      .all();
+    expect(channels.map((channel) => channel.accountId).sort((a, b) => a - b))
+      .toEqual([first.account.id, second.account.id].sort((a, b) => a - b));
   });
 
   it('accepts null tokenId when updating a channel and falls back to the account default token', async () => {

@@ -18,6 +18,12 @@ import DownstreamKeyEditorModal, {
 } from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
 import {
+  isExactModelOption,
+  isGroupRouteOption,
+  normalizeExistingRoutePermissions,
+  type RouteSelectorItem,
+} from './downstream-keys/routePermissions.js';
+import {
   formatCompactTokens,
   formatIso,
   formatMoney,
@@ -56,13 +62,6 @@ type ManagedItem = SummaryItem & {
   key?: string;
 };
 
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  enabled: boolean;
-};
-
 type DeleteConfirmState =
   | null
   | { mode: 'single'; item: ManagedItem }
@@ -77,7 +76,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
+type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds' | 'legacyModelRules'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -91,20 +90,9 @@ function toDateTimeLocal(isoString: string | null | undefined): string {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
 function routeTitle(route: RouteSelectorItem): string {
   const displayName = (route.displayName || '').trim();
   return displayName || route.modelPattern;
-}
-
-function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return !isExactModelPattern(route.modelPattern);
 }
 
 function uniqStrings(values: string[]): string[] {
@@ -170,14 +158,15 @@ function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): Default
   return {
     selectedModels: uniqStrings(
       routeOptions
-        .filter((item) => isExactModelPattern(item.modelPattern))
-        .map((item) => item.modelPattern),
+        .filter((item) => item.enabled && isExactModelOption(item))
+        .map((item) => item.displayName?.trim() || item.modelPattern.trim()),
     ).sort((a, b) => a.localeCompare(b)),
     selectedGroupRouteIds: uniqIds(
       routeOptions
-        .filter(isGroupRouteOption)
+        .filter((item) => item.enabled && isGroupRouteOption(item))
         .map((item) => item.id),
-    ),
+      ),
+    legacyModelRules: [],
   };
 }
 
@@ -329,13 +318,14 @@ function buildEditorForm(
 ): DownstreamKeyEditorForm {
   const defaultSelections = selectAllByDefault
     ? buildDefaultRouteSelections(routeOptions)
-    : { selectedModels: [], selectedGroupRouteIds: [] };
-  const selectedModels = Array.isArray(item?.supportedModels)
-    ? item.supportedModels
-    : defaultSelections.selectedModels;
-  const selectedGroupRouteIds = Array.isArray(item?.allowedRouteIds)
-    ? item.allowedRouteIds
-    : defaultSelections.selectedGroupRouteIds;
+    : { selectedModels: [], selectedGroupRouteIds: [], legacyModelRules: [] };
+  const existingSelections = item
+    ? normalizeExistingRoutePermissions({
+      supportedModels: Array.isArray(item.supportedModels) ? item.supportedModels : [],
+      allowedRouteIds: Array.isArray(item.allowedRouteIds) ? item.allowedRouteIds : [],
+      routeOptions,
+    })
+    : defaultSelections;
 
   return {
     name: item?.name || '',
@@ -347,8 +337,9 @@ function buildEditorForm(
     maxRequests: item?.maxRequests === null || item?.maxRequests === undefined ? '' : String(item.maxRequests),
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
-    selectedModels: uniqStrings(selectedModels),
-    selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
+    selectedModels: existingSelections.selectedModels,
+    selectedGroupRouteIds: existingSelections.selectedGroupRouteIds,
+    legacyModelRules: existingSelections.legacyModelRules,
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
     excludedSiteIds: normalizeExcludedSiteIds(Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : []),
     excludedCredentialRefs: normalizeExcludedCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
@@ -362,12 +353,12 @@ function summarizeModelLimit(models: string[]): string {
 }
 
 function summarizeRouteLimit(routeIds: number[], routeMap: Map<number, RouteSelectorItem>): string {
-  if (!Array.isArray(routeIds) || routeIds.length === 0) return '未授权群组';
+  if (!Array.isArray(routeIds) || routeIds.length === 0) return '未授权路由群组';
   const names = routeIds
     .map((id) => routeMap.get(id))
     .filter(Boolean)
     .map((item) => routeTitle(item!));
-  if (names.length === 0) return `${routeIds.length} 个群组`;
+  if (names.length === 0) return `${routeIds.length} 个路由群组`;
   if (names.length === 1) return names[0];
   return `${names[0]} +${names.length - 1}`;
 }
@@ -505,6 +496,8 @@ export default function DownstreamKeys() {
         id: Number(row.id),
         modelPattern: String(row.modelPattern || ''),
         displayName: row.displayName,
+        routeMode: row.routeMode === 'explicit_group' ? 'explicit_group' : 'pattern',
+        routeKind: row.routeKind === 'site_alias' ? 'site_alias' : null,
         enabled: !!row.enabled,
       })));
     } catch (err: any) {
@@ -645,8 +638,8 @@ export default function DownstreamKeys() {
 
   const groupFilterOptions = useMemo(
     () => [
-      { value: '__all__', label: '全部主分组' },
-      { value: '__ungrouped__', label: '未分组' },
+      { value: '__all__', label: '全部归属分组' },
+      { value: '__ungrouped__', label: '未归类' },
       ...groupSuggestions.map((group) => ({ value: group, label: group })),
     ],
     [groupSuggestions],
@@ -765,7 +758,7 @@ export default function DownstreamKeys() {
   const openEdit = (item: ManagedItem) => {
     setEditingId(item.id);
     setCreateDefaultsPending(false);
-    setEditorForm(buildEditorForm(rawItemMap.get(item.id) || item));
+    setEditorForm(buildEditorForm(rawItemMap.get(item.id) || item, routeOptions));
     setEditorOpen(true);
   };
 
@@ -833,7 +826,7 @@ export default function DownstreamKeys() {
         expiresAt: editorForm.expiresAt ? new Date(editorForm.expiresAt).toISOString() : null,
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
-        supportedModels: uniqStrings(editorForm.selectedModels),
+        supportedModels: uniqStrings([...editorForm.selectedModels, ...editorForm.legacyModelRules]),
         allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
         siteWeightMultipliers,
         excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
@@ -960,7 +953,7 @@ export default function DownstreamKeys() {
 
   const runBatchMetadata = async () => {
     if (batchMetadataForm.groupOperation === 'set' && !batchMetadataForm.groupName.trim()) {
-      toast.info('请填写批量主分组');
+      toast.info('请填写批量归属分组');
       return;
     }
     if (batchMetadataForm.tagOperation === 'append' && normalizeTags(batchMetadataForm.tags).length === 0) {
@@ -981,7 +974,7 @@ export default function DownstreamKeys() {
             <input
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="搜索名称、备注、模型、主分组或标签"
+              placeholder="搜索名称、备注、模型、归属分组或标签"
             />
           </div>
           <InlineToggle value={tagMatchMode} onChange={setTagMatchMode} />
@@ -1040,7 +1033,7 @@ export default function DownstreamKeys() {
       <div className="page-header" style={{ marginBottom: 0 }}>
         <div>
           <h2 className="page-title">下游密钥</h2>
-          <div className="page-subtitle">统一管理分发给下游项目的密钥、主分组、标签、额度、模型白名单、群组范围与历史用量。</div>
+          <div className="page-subtitle">统一管理下游项目密钥的归类、路由权限、额度与历史用量。</div>
         </div>
         <div className="page-actions">
           <RangeToggle range={range} onChange={setRange} />
@@ -1098,7 +1091,7 @@ export default function DownstreamKeys() {
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>筛选与列表</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按名称、状态、主分组和标签快速定位下游密钥。</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按名称、状态、归属分组和标签快速定位下游密钥。</div>
             </div>
             {isMobile && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -1175,11 +1168,11 @@ export default function DownstreamKeys() {
                     stacked
                   />
                   {row.description ? <MobileField label="备注" value={row.description} stacked /> : null}
-                  <MobileField label="主分组" value={row.groupName || '未分组'} />
+                  <MobileField label="归属分组" value={row.groupName || '未归类'} />
                   <MobileField label="标签" value={summarizeTags(row.tags || [])} stacked />
-                  <MobileField label="模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
-                  <MobileField label="群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
-                  <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
+                  <MobileField label="精确模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
+                  <MobileField label="路由群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
+                  <MobileField label="站点倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
                   <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
                   <MobileField label="用量" value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
                   <MobileField label="最近使用" value={formatIso(row.lastUsedAt)} stacked />
@@ -1226,17 +1219,16 @@ export default function DownstreamKeys() {
                         {row.description ? <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 320 }}>{row.description}</div> : null}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                           <span className={`badge ${row.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                            {row.groupName ? `主分组 · ${row.groupName}` : '未分组'}
+                            {row.groupName ? `归属 · ${row.groupName}` : '未归类'}
                           </span>
                           <TagChips tags={row.tags || []} maxVisible={3} />
                         </div>
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeTags(row.tags || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>精确模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>路由群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>站点倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
                       </td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -1300,18 +1292,18 @@ export default function DownstreamKeys() {
         )}
       >
         <div className="info-tip" style={{ marginBottom: 0 }}>
-          本次会对已选中的 {selectedIds.length} 个密钥批量设置主分组，并追加标签。不会改动模型白名单、群组范围、额度和倍率。
+          本次会对已选中的 {selectedIds.length} 个密钥批量设置归属分组，并追加标签。不会改动路由权限、额度和站点倍率。
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>主分组操作</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>归属分组操作</div>
             <ModernSelect
               value={batchMetadataForm.groupOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, groupOperation: String(value) as BatchMetadataForm['groupOperation'] }))}
               options={[
-                { value: 'keep', label: '不改动主分组' },
-                { value: 'set', label: '统一设为主分组' },
-                { value: 'clear', label: '清空主分组' },
+                { value: 'keep', label: '不改动归属分组' },
+                { value: 'set', label: '统一设置归属分组' },
+                { value: 'clear', label: '清空归属分组' },
               ]}
             />
             <input

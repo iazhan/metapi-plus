@@ -10,6 +10,7 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
     getSites: vi.fn(),
     getSiteDisabledModels: vi.fn(),
     getSiteAvailableModels: vi.fn(),
+    getSiteModelAliases: vi.fn(),
     updateSiteDisabledModels: vi.fn(),
     rebuildRoutes: vi.fn(),
   },
@@ -62,6 +63,7 @@ describe('Sites disabled models save', () => {
     ]);
     apiMock.getSiteDisabledModels.mockResolvedValue({ models: [] });
     apiMock.getSiteAvailableModels.mockResolvedValue({ models: [] });
+    apiMock.getSiteModelAliases.mockResolvedValue({ aliases: [] });
     apiMock.updateSiteDisabledModels.mockResolvedValue({ success: true });
   });
 

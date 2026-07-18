@@ -1,16 +1,29 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { type AddressInfo } from 'node:net';
+import { connect as connectSocket, type AddressInfo } from 'node:net';
+import { type Duplex } from 'node:stream';
+import { SocksClient } from 'socks';
 import { detectPlatform, getAdapter } from './index.js';
+import { detectSite } from '../siteDetector.js';
 
 async function withHttpServer(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
   run: (baseUrl: string) => Promise<void>,
+  connectHandler?: (req: IncomingMessage, socket: Duplex) => void,
 ) {
   // Avoid flakiness: CPA uses port 8317 by convention, and our platform detection
   // includes a fast-path for localhost:8317. Random ephemeral ports can collide.
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const server = createServer(handler);
+    const sockets = new Set<Duplex>();
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+    });
+    if (connectHandler) {
+      server.on('connect', (req, socket) => connectHandler(req, socket));
+    }
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => resolve());
     });
@@ -28,6 +41,7 @@ async function withHttpServer(
       await run(baseUrl);
       return;
     } finally {
+      for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve, reject) => {
         server.close((err?: Error) => (err ? reject(err) : resolve()));
       });
@@ -156,5 +170,307 @@ describe('getAdapter platform aliases', () => {
       const adapter = await detectPlatform(baseUrl);
       expect(adapter?.platformName).toBe('new-api');
     });
+  });
+
+  it('keeps API status fallback available when the site root probe times out', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/api/status') {
+        const body = JSON.stringify({
+          success: true,
+          data: { system_name: 'New API with a slow root page' },
+        });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+        });
+        res.end(body);
+        return;
+      }
+      // Simulate an API-only deployment whose frontend root never completes.
+      if (req.url === '/') return;
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const startedAt = Date.now();
+      const adapter = await detectPlatform(baseUrl);
+
+      expect(adapter?.platformName).toBe('new-api');
+      expect(Date.now() - startedAt).toBeLessThan(15_000);
+    });
+  }, 17_000);
+
+  it('detects a title-only platform through an explicit proxy context', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const adapter = await detectPlatform('http://unreachable-title.example', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter?.platformName).toBe('one-hub');
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', () => {
+        const body = '<html><head><title>One-Hub Console</title></head></html>';
+        socket.end([
+          'HTTP/1.1 200 OK',
+          'Content-Type: text/html; charset=utf-8',
+          `Content-Length: ${Buffer.byteLength(body)}`,
+          'Connection: close',
+          '',
+          body,
+        ].join('\r\n'));
+      });
+    });
+  });
+
+  it('threads an explicit proxy context through site detection', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const result = await detectSite('http://unreachable-detect.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(result).toMatchObject({
+        url: 'http://unreachable-detect.invalid',
+        platform: 'one-hub',
+      });
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', () => {
+        const body = '<html><head><title>One-Hub Console</title></head></html>';
+        socket.end([
+          'HTTP/1.1 200 OK',
+          'Content-Type: text/html; charset=utf-8',
+          `Content-Length: ${Buffer.byteLength(body)}`,
+          'Connection: close',
+          '',
+          body,
+        ].join('\r\n'));
+      });
+    });
+  });
+
+  it('routes CLIProxyAPI management probes through the detection proxy', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const adapter = await detectPlatform('http://unreachable-cpa.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter?.platformName).toBe('cliproxyapi');
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', (chunk) => {
+        const request = chunk.toString('utf8');
+        if (request.includes('/v0/management/openai-compatibility')) {
+          socket.end([
+            'HTTP/1.1 401 Unauthorized',
+            'X-CPA-Version: test-version',
+            'Content-Length: 0',
+            'Connection: close',
+            '',
+            '',
+          ].join('\r\n'));
+          return;
+        }
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      });
+    });
+  });
+
+  it('routes Sub2API authentication probes through the detection proxy', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const adapter = await detectPlatform('http://unreachable-sub2.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter?.platformName).toBe('sub2api');
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', (chunk) => {
+        const request = chunk.toString('utf8');
+        if (request.includes('/api/v1/auth/me')) {
+          const body = JSON.stringify({
+            code: 'UNAUTHORIZED',
+            message: 'Authorization header is required',
+          });
+          socket.end([
+            'HTTP/1.1 401 Unauthorized',
+            'Content-Type: application/json',
+            `Content-Length: ${Buffer.byteLength(body)}`,
+            'Connection: close',
+            '',
+            body,
+          ].join('\r\n'));
+          return;
+        }
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      });
+    });
+  });
+
+  it('routes Veloera status probes through the detection proxy before generic New API detection', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const adapter = await detectPlatform('http://unreachable-status-probe.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter?.platformName).toBe('veloera');
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', (chunk) => {
+        const request = chunk.toString('utf8');
+        if (request.includes('/api/status')) {
+          const body = JSON.stringify({
+            success: true,
+            data: { system_name: 'Veloera' },
+          });
+          socket.end([
+            'HTTP/1.1 200 OK',
+            'Content-Type: application/json',
+            `Content-Length: ${Buffer.byteLength(body)}`,
+            'Connection: close',
+            '',
+            body,
+          ].join('\r\n'));
+          return;
+        }
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      });
+    });
+  });
+
+  it('routes One API status probes through the detection proxy', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const adapter = await detectPlatform('http://unreachable-one-api-probe.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter?.platformName).toBe('one-api');
+    }, (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', (chunk) => {
+        const request = chunk.toString('utf8');
+        if (request.includes('/api/status')) {
+          const body = JSON.stringify({ success: true, data: {} });
+          socket.end([
+            'HTTP/1.1 200 OK',
+            'Content-Type: application/json',
+            `Content-Length: ${Buffer.byteLength(body)}`,
+            'Connection: close',
+            '',
+            body,
+          ].join('\r\n'));
+          return;
+        }
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      });
+    });
+  });
+
+  it('bounds the complete proxied detection flow with one shared deadline', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(502).end();
+    }, async (proxyUrl) => {
+      const startedAt = Date.now();
+      const adapter = await detectPlatform('http://unreachable-timeout.invalid', {
+        siteProxy: { proxyUrl },
+      });
+
+      expect(adapter).toBeUndefined();
+      expect(Date.now() - startedAt).toBeLessThan(12_000);
+    }, () => {
+      // Intentionally never complete the CONNECT handshake.
+    });
+  }, 12_000);
+
+  it('keeps the internal detection deadline when the caller supplies a cancellation signal', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/api/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          data: { system_name: 'New API' },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+        .mockReturnValue(AbortSignal.abort(new DOMException('deadline', 'TimeoutError')));
+      try {
+        const callerController = new AbortController();
+        const adapter = await detectPlatform(baseUrl, {
+          signal: callerController.signal,
+        });
+
+        expect(adapter).toBeUndefined();
+      } finally {
+        timeoutSpy.mockRestore();
+      }
+    });
+  });
+
+  it('detects a platform through a SOCKS proxy dispatcher', async () => {
+    const upstreamServer = createServer((request, response) => {
+      response.setHeader('Connection', 'close');
+      if (request.url === '/api/status') {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({
+          success: true,
+          data: { system_name: 'New API through SOCKS' },
+        }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    upstreamServer.listen(0, '127.0.0.1');
+    await once(upstreamServer, 'listening');
+    const address = upstreamServer.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Failed to determine SOCKS detection upstream address');
+    }
+
+    const createConnectionSpy = vi.spyOn(SocksClient, 'createConnection').mockImplementation(async () => {
+      const socket = connectSocket(address.port, '127.0.0.1');
+      await once(socket, 'connect');
+      return { socket } as Awaited<ReturnType<typeof SocksClient.createConnection>>;
+    });
+
+    try {
+      const adapter = await detectPlatform(`http://socks-detect.example:${address.port}`, {
+        siteProxy: {
+          proxyUrl: 'socks5h://proxy-user:proxy-secret@127.0.0.1:1080',
+        },
+      });
+
+      expect(adapter?.platformName).toBe('new-api');
+      expect(createConnectionSpy).toHaveBeenCalledWith(expect.objectContaining({
+        proxy: expect.objectContaining({
+          host: '127.0.0.1',
+          port: 1080,
+          type: 5,
+          userId: 'proxy-user',
+          password: 'proxy-secret',
+        }),
+        destination: expect.objectContaining({
+          host: 'socks-detect.example',
+          port: address.port,
+        }),
+      }));
+    } finally {
+      createConnectionSpy.mockRestore();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 });

@@ -480,7 +480,9 @@ export default function TokenRoutes() {
   }, [showManual, modelCandidates, routeSummaries]);
 
   const exactSourceRouteOptions = useMemo(
-    () => routeSummaries.filter((route) => isRouteExactModel(route)),
+    () => routeSummaries.filter((route) => (
+      isRouteExactModel(route) && route.routeKind !== 'site_alias'
+    )),
     [routeSummaries],
   );
 
@@ -853,7 +855,7 @@ export default function TokenRoutes() {
     let enabled = 0;
     let disabled = 0;
     for (const route of baseFilteredRoutes) {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) continue;
+      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true || route.routeKind === 'site_alias') continue;
       if (route.enabled) enabled++;
       else disabled++;
     }
@@ -863,7 +865,7 @@ export default function TokenRoutes() {
   const filteredRoutes = useMemo(() => {
     if (enabledFilter === 'all') return baseFilteredRoutes;
     return baseFilteredRoutes.filter((route) => {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) return false;
+      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true || route.routeKind === 'site_alias') return false;
       return enabledFilter === 'enabled' ? route.enabled : !route.enabled;
     });
   }, [baseFilteredRoutes, enabledFilter]);
@@ -871,7 +873,7 @@ export default function TokenRoutes() {
   const selectableRouteIds = useMemo(() => {
     return new Set(
       filteredRoutes
-        .filter((route) => route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true)
+        .filter((route) => route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true && route.routeKind !== 'site_alias')
         .map((route) => route.id),
     );
   }, [filteredRoutes]);
@@ -1326,8 +1328,8 @@ export default function TokenRoutes() {
       setExpandedRouteIds((prev) => [...prev, routeId]);
       // Load channels on demand
       const route = routeById.get(routeId) || null;
-      const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
-      if (!channelsByRouteId[routeId] && !isReadOnlyRoute) {
+      const hasNoChannelPlaceholder = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
+      if (!channelsByRouteId[routeId] && !hasNoChannelPlaceholder) {
         try {
           await loadChannels(routeId);
         } catch {
@@ -1743,10 +1745,11 @@ export default function TokenRoutes() {
         {visibleRoutes.map((route) => {
           const isExpanded = expandedRouteIds.includes(route.id);
           const isDesktopDetailClosing = closingDesktopDetailRouteIds.includes(route.id);
-          const isReadOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
+          const isManagedAliasRoute = route.routeKind === 'site_alias';
+          const isReadOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true || isManagedAliasRoute;
           const exactRoute = isRouteExactModel(route);
           const explicitGroupRoute = isExplicitGroupRoute(route);
-          const channelManagementDisabled = explicitGroupRoute;
+          const channelManagementDisabled = explicitGroupRoute || isManagedAliasRoute;
           const routeTitle = resolveRouteTitle(route);
 
           const isSelectable = selectableRouteIds.has(route.id);
@@ -1775,7 +1778,7 @@ export default function TokenRoutes() {
                         </label>
                       )}
                       <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
-                        {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
+                        {isManagedAliasRoute ? tr('站点别名') : (isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用')))}
                       </span>
                     </div>
                   )}
@@ -1820,8 +1823,8 @@ export default function TokenRoutes() {
                 >
                   <MobileField label="模型" value={route.modelPattern} stacked />
                   <MobileField label="通道" value={route.channelCount} />
-                  <MobileField label="策略" value={isReadOnlyRoute ? tr('未生成') : getRouteRoutingStrategyLabel(route.routingStrategy)} />
-                  <MobileField label="状态" value={isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))} />
+                   <MobileField label="策略" value={isManagedAliasRoute ? tr('站点别名') : (isReadOnlyRoute ? tr('未生成') : getRouteRoutingStrategyLabel(route.routingStrategy))} />
+                   <MobileField label="状态" value={isManagedAliasRoute ? tr('站点别名') : (isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用')))} />
                   {explicitGroupRoute && (
                     <MobileField label="模式" value={tr('群组聚合')} />
                   )}

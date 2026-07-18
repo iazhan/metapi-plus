@@ -37,16 +37,16 @@ describe('database schema parity', () => {
     }
   });
 
-  it('keeps account group-rate rule upgrades in the external-dialect artifacts', () => {
-    const mysqlUpgrade = readFileSync(resolve(generatedDir, 'mysql.upgrade.sql'), 'utf8');
-    const postgresUpgrade = readFileSync(resolve(generatedDir, 'postgres.upgrade.sql'), 'utf8');
+  it('keeps account group-rate rules in the external-dialect bootstrap artifacts', () => {
+    const mysqlBootstrap = readFileSync(resolve(generatedDir, 'mysql.bootstrap.sql'), 'utf8');
+    const postgresBootstrap = readFileSync(resolve(generatedDir, 'postgres.bootstrap.sql'), 'utf8');
 
-    expect(mysqlUpgrade).toContain('CREATE TABLE IF NOT EXISTS `account_group_rate_rules`');
-    expect(mysqlUpgrade).toContain('CREATE UNIQUE INDEX `account_group_rate_rules_account_group_unique`');
-    expect(mysqlUpgrade).toContain('CREATE INDEX `account_group_rate_rules_account_id_idx`');
-    expect(postgresUpgrade).toContain('CREATE TABLE IF NOT EXISTS "account_group_rate_rules"');
-    expect(postgresUpgrade).toContain('CREATE UNIQUE INDEX "account_group_rate_rules_account_group_unique"');
-    expect(postgresUpgrade).toContain('CREATE INDEX "account_group_rate_rules_account_id_idx"');
+    expect(mysqlBootstrap).toContain('CREATE TABLE IF NOT EXISTS `account_group_rate_rules`');
+    expect(mysqlBootstrap).toContain('CREATE UNIQUE INDEX `account_group_rate_rules_account_group_unique`');
+    expect(mysqlBootstrap).toContain('CREATE INDEX `account_group_rate_rules_account_id_idx`');
+    expect(postgresBootstrap).toContain('CREATE TABLE IF NOT EXISTS "account_group_rate_rules"');
+    expect(postgresBootstrap).toContain('CREATE UNIQUE INDEX "account_group_rate_rules_account_group_unique"');
+    expect(postgresBootstrap).toContain('CREATE INDEX "account_group_rate_rules_account_id_idx"');
   });
 
   it('keeps pricing-domain tables and account unit-cost removal in generated artifacts', () => {

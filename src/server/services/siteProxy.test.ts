@@ -269,6 +269,26 @@ describe('siteProxy', () => {
     expect('dispatcher' in result).toBe(false);
   });
 
+  it('fails closed with a redacted error when a configured proxy dispatcher cannot be created', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const malformedProxyUrl = 'socks5://proxy-user:%E0%A4%A@127.0.0.1:1080';
+    let thrownError: unknown;
+
+    try {
+      withSiteRecordProxyRequestInit(
+        { proxyUrl: malformedProxyUrl, useSystemProxy: false },
+        { method: 'GET' },
+      );
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toBeInstanceOf(Error);
+    expect((thrownError as Error).message).toBe('Failed to initialize proxy dispatcher');
+    expect((thrownError as Error).message).not.toContain('proxy-user');
+    expect((thrownError as Error).message).not.toContain(malformedProxyUrl);
+  });
+
   it('withAccountProxyOverride sets ALS context for nested proxy calls', async () => {
     const { withAccountProxyOverride, withSiteProxyRequestInit } = await import('./siteProxy.js');
 

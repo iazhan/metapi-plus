@@ -34,11 +34,17 @@ export async function saveRouteDecisionSnapshots(entries: Array<{ routeId: numbe
   }
 }
 
-export async function clearRouteDecisionSnapshot(routeId: number): Promise<void> {
-  await clearRouteDecisionSnapshots([routeId]);
+export async function clearRouteDecisionSnapshot(
+  routeId: number,
+  client: typeof db = db,
+): Promise<void> {
+  await clearRouteDecisionSnapshots([routeId], client);
 }
 
-export async function clearRouteDecisionSnapshots(routeIds: number[]): Promise<void> {
+export async function clearRouteDecisionSnapshots(
+  routeIds: number[],
+  client: typeof db = db,
+): Promise<void> {
   const normalizedRouteIds = Array.from(new Set(
     routeIds
       .map((routeId) => Math.trunc(routeId))
@@ -46,7 +52,7 @@ export async function clearRouteDecisionSnapshots(routeIds: number[]): Promise<v
   ));
   if (normalizedRouteIds.length === 0) return;
 
-  await db.update(schema.tokenRoutes)
+  await client.update(schema.tokenRoutes)
     .set({
       decisionSnapshot: null,
       decisionRefreshedAt: null,
@@ -55,8 +61,8 @@ export async function clearRouteDecisionSnapshots(routeIds: number[]): Promise<v
     .run();
 }
 
-export async function clearAllRouteDecisionSnapshots(): Promise<void> {
-  await db.update(schema.tokenRoutes)
+export async function clearAllRouteDecisionSnapshots(client: typeof db = db): Promise<void> {
+  await client.update(schema.tokenRoutes)
     .set({
       decisionSnapshot: null,
       decisionRefreshedAt: null,

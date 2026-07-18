@@ -35,6 +35,7 @@ describe('factoryResetService', () => {
     await db.delete(schema.proxyVideoTasks).run();
     await db.delete(schema.proxyFiles).run();
     await db.delete(schema.checkinLogs).run();
+    await db.delete(schema.siteModelAliases).run();
     await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -162,6 +163,29 @@ describe('factoryResetService', () => {
       price_refresh_enabled: true,
       price_refresh_cron: '0 0 * * *',
     });
+  });
+
+  it('clears site model aliases with the rest of site-owned configuration', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'alias-site', url: 'https://alias.example.com', platform: 'new-api',
+    }).returning().get();
+    await db.insert(schema.siteModelAliases).values({
+      siteId: site.id,
+      sourceModel: 'gpt-4.1',
+      aliasModel: 'gpt-best',
+      aliasKey: 'gpt-best',
+      enabled: true,
+    }).run();
+
+    await performFactoryReset({
+      ensureDefaultSitesSeeded: async () => ({ seeded: 0, alreadyMarked: false, hadExistingSites: false }),
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      stopPriceRefreshScheduler: async () => undefined,
+      startPriceRefreshScheduler: async () => undefined,
+    });
+
+    expect(await db.select().from(schema.siteModelAliases).all()).toHaveLength(0);
   });
 
   it('rolls back persistent reset and restores prior runtime without clearing backoff on failure', async () => {

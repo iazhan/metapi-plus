@@ -45,6 +45,8 @@ const siteDisabledModelsPayloadSchema = z.object({
 
 const siteDetectPayloadSchema = z.object({
   url: requiredTrimmedString,
+  proxyUrl: unknownField,
+  useSystemProxy: unknownField,
 }).passthrough();
 
 export type SiteBatchPayload = z.output<typeof siteBatchPayloadSchema>;

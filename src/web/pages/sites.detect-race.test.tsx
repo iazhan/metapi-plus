@@ -66,6 +66,22 @@ function findPlatformSelect(root: ReactTestRenderer) {
   return root.root.findByProps({ 'data-testid': 'site-platform-select' });
 }
 
+function findProxyUrlInput(root: ReactTestRenderer) {
+  return root.root.find((node) => (
+    node.type === 'input'
+    && typeof node.props.placeholder === 'string'
+    && node.props.placeholder.includes('站点代理')
+  ));
+}
+
+function findSystemProxyCheckbox(root: ReactTestRenderer) {
+  const label = root.root.find((node) => (
+    node.type === 'label'
+    && collectText(node).includes('使用系统代理')
+  ));
+  return label.findByType('input');
+}
+
 describe('Sites detect race handling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -129,7 +145,10 @@ describe('Sites detect race handling', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.detectSite).toHaveBeenCalledWith('https://stale.example.com/v1');
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://stale.example.com/v1', {
+        proxyUrl: null,
+        useSystemProxy: false,
+      });
 
       const latestUrlInput = findPrimarySiteUrlInput(root);
       await act(async () => {
@@ -201,7 +220,10 @@ describe('Sites detect race handling', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.detectSite).toHaveBeenCalledWith('https://blur.example.com/v1');
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://blur.example.com/v1', {
+        proxyUrl: null,
+        useSystemProxy: false,
+      });
 
       const platformSelect = findPlatformSelect(root);
       await act(async () => {
@@ -221,6 +243,147 @@ describe('Sites detect race handling', () => {
 
       expect(findPlatformSelect(root).props.value).toBe('claude');
       expect(toastMock.info).not.toHaveBeenCalledWith(expect.stringContaining('https://blur.example.com'));
+      expect(toastMock.success).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('passes the current proxy settings into manual detection', async () => {
+    apiMock.detectSite.mockResolvedValueOnce({
+      platform: 'new-api',
+      url: 'https://proxied.example.com',
+      initializationPresetId: null,
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/sites']}>
+            <ToastProvider>
+              <Sites />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const openAddButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-primary')
+        && JSON.stringify(node.props.children).includes('添加站点')
+      ));
+      await act(async () => {
+        openAddButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findPrimarySiteUrlInput(root).props.onChange({
+          target: { value: 'https://proxied.example.com' },
+        });
+        findProxyUrlInput(root).props.onChange({
+          target: { value: 'http://127.0.0.1:7890' },
+        });
+        findSystemProxyCheckbox(root).props.onChange({ target: { checked: true } });
+      });
+      await flushMicrotasks();
+
+      const detectButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-ghost')
+        && collectText(node).trim() === '自动检测'
+      )).at(-1);
+      await act(async () => {
+        await detectButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://proxied.example.com', {
+        proxyUrl: 'http://127.0.0.1:7890',
+        useSystemProxy: true,
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('ignores detect results after the operator changes proxy settings', async () => {
+    const pendingDetect = deferred<{
+      platform: string;
+      url: string;
+      initializationPresetId: string | null;
+    }>();
+    apiMock.detectSite.mockReturnValueOnce(pendingDetect.promise);
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/sites']}>
+            <ToastProvider>
+              <Sites />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const openAddButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-primary')
+        && JSON.stringify(node.props.children).includes('添加站点')
+      ));
+      await act(async () => openAddButton.props.onClick());
+      await flushMicrotasks();
+
+      await act(async () => {
+        findPrimarySiteUrlInput(root).props.onChange({
+          target: { value: 'https://proxy-race.example.com' },
+        });
+        findProxyUrlInput(root).props.onChange({
+          target: { value: 'http://127.0.0.1:7890' },
+        });
+      });
+      await flushMicrotasks();
+
+      const detectButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-ghost')
+        && collectText(node).trim() === '自动检测'
+      )).at(-1);
+      await act(async () => {
+        void detectButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findProxyUrlInput(root).props.onChange({
+          target: { value: 'http://127.0.0.1:7891' },
+        });
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        pendingDetect.resolve({
+          platform: 'new-api',
+          url: 'https://proxy-race.example.com',
+          initializationPresetId: null,
+        });
+        await pendingDetect.promise;
+      });
+      await flushMicrotasks();
+
+      expect(findPlatformSelect(root).props.value).toBe('');
       expect(toastMock.success).not.toHaveBeenCalled();
     } finally {
       root?.unmount();

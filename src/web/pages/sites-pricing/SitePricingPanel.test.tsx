@@ -55,6 +55,19 @@ describe('SitePricingPanel', () => {
     expect(text(renderer.root)).toContain('参考账号 #7');
   });
 
+  it('uses the shared site editor hierarchy and field controls', async () => {
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<SitePricingPanel siteId={1} isMobile={false} />); });
+    await flush();
+
+    const section = renderer.root.findByProps({ 'aria-label': '站点价格与成本' });
+    expect(String(section.props.className || '')).toContain('site-editor-section');
+    expect(text(section)).toContain('充值换算');
+    expect(text(section)).toContain('模型价格规则');
+    const paidInput = renderer.root.findByProps({ 'aria-label': '实际支付 CNY' });
+    expect(String(paidInput.props.className || '')).toContain('site-editor-control');
+  });
+
   it('saves profile values and restores model inheritance', async () => {
     let renderer!: ReturnType<typeof create>;
     await act(async () => { renderer = create(<SitePricingPanel siteId={1} isMobile />); });

@@ -17,6 +17,7 @@ function createDbSchemaMock() {
     siteApiEndpoints: { __table: 'siteApiEndpoints' },
     siteAnnouncements: { __table: 'siteAnnouncements' },
     siteDisabledModels: { __table: 'siteDisabledModels' },
+    siteModelAliases: { __table: 'siteModelAliases' },
     accounts: { __table: 'accounts' },
     accountTokens: { __table: 'accountTokens' },
     accountGroupRates: { __table: 'accountGroupRates' },
@@ -772,7 +773,7 @@ describe('databaseMigrationService', () => {
     expect(downstreamKeysStatement?.values[downstreamKeysStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":2}');
   });
 
-  it('includes disabled models, proxy video tasks, and proxy files in migration statements', () => {
+  it('includes site aliases, disabled models, proxy video tasks, and proxy files in migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',
       timestamp: Date.now(),
@@ -784,6 +785,16 @@ describe('databaseMigrationService', () => {
           siteId: 12,
           modelName: 'claude-opus-4-6',
           createdAt: '2026-03-14T00:00:00.000Z',
+        }],
+        siteModelAliases: [{
+          id: 4,
+          siteId: 12,
+          sourceModel: 'claude-opus-4-6',
+          aliasModel: 'claude-best',
+          aliasKey: 'claude-best',
+          enabled: true,
+          createdAt: '2026-03-14T00:00:00.000Z',
+          updatedAt: '2026-03-14T01:00:00.000Z',
         }],
         accounts: [],
         accountTokens: [],
@@ -797,6 +808,7 @@ describe('databaseMigrationService', () => {
           displayIcon: 'icon-claude',
           modelMapping: null,
           routeMode: 'explicit_group',
+          routeKind: 'site_alias',
           decisionSnapshot: '{"channels":[1]}',
           decisionRefreshedAt: '2026-03-14T01:30:00.000Z',
           routingStrategy: 'round_robin',
@@ -852,6 +864,16 @@ describe('databaseMigrationService', () => {
     } as any);
 
     expect(statements.some((statement) => statement.table === 'site_disabled_models')).toBe(true);
+    expect(statements.find((statement) => statement.table === 'site_model_aliases')).toEqual({
+      table: 'site_model_aliases',
+      columns: [
+        'id', 'site_id', 'source_model', 'alias_model', 'alias_key', 'enabled', 'created_at', 'updated_at',
+      ],
+      values: [
+        4, 12, 'claude-opus-4-6', 'claude-best', 'claude-best', true,
+        '2026-03-14T00:00:00.000Z', '2026-03-14T01:00:00.000Z',
+      ],
+    });
     expect(statements.some((statement) => statement.table === 'proxy_video_tasks')).toBe(true);
     expect(statements.some((statement) => statement.table === 'proxy_files')).toBe(true);
     expect(statements.some((statement) => statement.table === 'route_group_sources')).toBe(true);
@@ -859,6 +881,9 @@ describe('databaseMigrationService', () => {
     const routeModeIndex = tokenRouteStatement?.columns.indexOf('route_mode') ?? -1;
     expect(routeModeIndex).toBeGreaterThanOrEqual(0);
     expect(tokenRouteStatement?.values[routeModeIndex]).toBe('explicit_group');
+    const routeKindIndex = tokenRouteStatement?.columns.indexOf('route_kind') ?? -1;
+    expect(routeKindIndex).toBeGreaterThanOrEqual(0);
+    expect(tokenRouteStatement?.values[routeKindIndex]).toBe('site_alias');
   });
 
   it('includes site announcements in migration statements', () => {
@@ -1044,6 +1069,14 @@ describe('databaseMigrationService', () => {
         rawPayload: '{"id":"notice-1"}',
       }],
       siteDisabledModels: [],
+      siteModelAliases: [{
+        id: 13,
+        siteId: 3,
+        sourceModel: 'gpt-4.1',
+        aliasModel: 'gpt-best',
+        aliasKey: 'gpt-best',
+        enabled: true,
+      }],
       accounts: [],
       accountTokens: [],
       accountGroupRates: [{
@@ -1100,6 +1133,7 @@ describe('databaseMigrationService', () => {
       });
 
       expect(summary.rows.siteAnnouncements).toBe(1);
+      expect(summary.rows.siteModelAliases).toBe(1);
       expect(summary.rows.accountGroupRates).toBe(1);
       expect(client.begin).toHaveBeenCalledTimes(1);
       expect(client.commit).toHaveBeenCalledTimes(1);

@@ -142,7 +142,7 @@ base_url = "https://your-domain.com/v1"
 
 ## 下游 API Key 策略
 
-除了全局 `PROXY_TOKEN`，你还可以创建多个项目级下游 Key，每个 Key 可独立配置过期时间、费用/请求上限、模型白名单、路由白名单和站点倍率，适用于多团队/多项目共用一个 Metapi 实例的场景。
+除了全局 `PROXY_TOKEN`，你还可以创建多个项目级下游 Key，每个 Key 可独立配置归属分组、标签、过期时间、费用/请求上限、精确模型权限、路由群组权限和站点倍率，适用于多团队/多项目共用一个 Metapi 实例的场景。
 
 详细字段说明见 [配置说明 → 下游 API Key 策略](./configuration.md#下游-api-key-策略)。
 

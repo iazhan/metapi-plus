@@ -43,6 +43,7 @@ import {
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
 import SitePricingPanel from './sites-pricing/SitePricingPanel.js';
+import SiteModelAliasesPanel from './sites-model-aliases/SiteModelAliasesPanel.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -333,6 +334,8 @@ export default function Sites() {
   const primarySiteUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.url), [form.url]);
   const latestPrimarySiteUrlRef = useRef(form.url);
   const latestPlatformRef = useRef(form.platform);
+  const latestProxyUrlRef = useRef(form.proxyUrl);
+  const latestUseSystemProxyRef = useRef(form.useSystemProxy);
   const latestInitializationPresetIdRef = useRef(selectedInitializationPresetId);
 
   useEffect(() => {
@@ -342,6 +345,14 @@ export default function Sites() {
   useEffect(() => {
     latestPlatformRef.current = form.platform;
   }, [form.platform]);
+
+  useEffect(() => {
+    latestProxyUrlRef.current = form.proxyUrl;
+  }, [form.proxyUrl]);
+
+  useEffect(() => {
+    latestUseSystemProxyRef.current = form.useSystemProxy;
+  }, [form.useSystemProxy]);
 
   useEffect(() => {
     latestInitializationPresetIdRef.current = selectedInitializationPresetId;
@@ -940,6 +951,8 @@ export default function Sites() {
     const requestedUrl = form.url.trim();
     const requestedPlatform = form.platform.trim();
     const requestedInitializationPresetId = selectedInitializationPresetId;
+    const requestedProxyUrl = form.proxyUrl.trim();
+    const requestedUseSystemProxy = !!form.useSystemProxy;
     if (!requestedUrl) {
       toast.error('请先输入 URL');
       return;
@@ -947,10 +960,15 @@ export default function Sites() {
     const requestedPrimarySiteUrl = analyzePrimarySiteUrl(requestedUrl);
     setDetecting(true);
     try {
-      const result = await api.detectSite(requestedUrl);
+      const result = await api.detectSite(requestedUrl, {
+        proxyUrl: requestedProxyUrl || null,
+        useSystemProxy: requestedUseSystemProxy,
+      });
       if (
         latestPrimarySiteUrlRef.current.trim() !== requestedUrl
         || latestPlatformRef.current.trim() !== requestedPlatform
+        || latestProxyUrlRef.current.trim() !== requestedProxyUrl
+        || !!latestUseSystemProxyRef.current !== requestedUseSystemProxy
         || latestInitializationPresetIdRef.current !== requestedInitializationPresetId
       ) {
         return;
@@ -1577,7 +1595,9 @@ export default function Sites() {
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
               按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
             </div>
-            {isEditing && (
+          </div>
+
+          {isEditing && (
               <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>禁用模型管理</div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
@@ -1717,8 +1737,15 @@ export default function Sites() {
                   </>
                 )}
               </div>
-            )}
-          </div>
+          )}
+
+          {isEditing && (
+            <SiteModelAliasesPanel
+              siteId={activeEditor.editingSiteId}
+              availableModels={availableModels}
+              isMobile={isMobile}
+            />
+          )}
 
           {isEditing && (
             <SitePricingPanel siteId={activeEditor.editingSiteId} isMobile={isMobile} />

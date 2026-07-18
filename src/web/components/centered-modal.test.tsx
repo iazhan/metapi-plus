@@ -56,6 +56,32 @@ describe('CenteredModal component', () => {
     expect(source).toContain('createPortal');
   });
 
+  it('uses maxWidth as the actual responsive dialog width', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <CenteredModal open onClose={() => {}} title="测试弹框" maxWidth={860}>
+            <div>content</div>
+          </CenteredModal>,
+        );
+      });
+
+      const content = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('modal-content')
+      ));
+
+      expect(content.props.style).toMatchObject({
+        width: 'min(90vw, 860px)',
+        maxWidth: 860,
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('renders safely without touching document.body or listeners when no usable body exists', async () => {
     globalThis.document = {
       addEventListener: vi.fn(),

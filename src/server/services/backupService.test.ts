@@ -6,11 +6,21 @@ import { asc, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
+type TokenRouterModule = typeof import('./tokenRouter.js');
+type ConfigModule = typeof import('../config.js');
+type ModelServiceModule = typeof import('./modelService.js');
+type RouteProjectionCoordinatorModule = typeof import('./routeProjectionCoordinator.js');
 
 describe('backupService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let backupService: BackupServiceModule;
+  let TokenRouter: TokenRouterModule['TokenRouter'];
+  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let config: ConfigModule['config'];
+  let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let runRouteProjectionExclusive: RouteProjectionCoordinatorModule['runRouteProjectionExclusive'];
+  let originalTokenRouterCacheTtlMs = 0;
   let dataDir = '';
 
   beforeAll(async () => {
@@ -20,10 +30,20 @@ describe('backupService', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const serviceModule = await import('./backupService.js');
+    const tokenRouterModule = await import('./tokenRouter.js');
+    const configModule = await import('../config.js');
+    const modelServiceModule = await import('./modelService.js');
+    const routeProjectionCoordinatorModule = await import('./routeProjectionCoordinator.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     backupService = serviceModule;
+    TokenRouter = tokenRouterModule.TokenRouter;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    config = configModule.config;
+    rebuildTokenRoutesFromAvailability = modelServiceModule.rebuildTokenRoutesFromAvailability;
+    runRouteProjectionExclusive = routeProjectionCoordinatorModule.runRouteProjectionExclusive;
+    originalTokenRouterCacheTtlMs = config.tokenRouterCacheTtlMs;
   });
 
   beforeEach(async () => {
@@ -42,6 +62,7 @@ describe('backupService', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.siteAnnouncements).run();
     await db.delete(schema.siteDisabledModels).run();
+    await db.delete(schema.siteModelAliases).run();
     await db.delete(schema.accountGroupRates).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -51,13 +72,17 @@ describe('backupService', () => {
     await db.delete(schema.proxyVideoTasks).run();
     await db.delete(schema.events).run();
     await db.delete(schema.settings).run();
+    config.tokenRouterCacheTtlMs = originalTokenRouterCacheTtlMs;
+    invalidateTokenRouterCache();
   });
 
   afterAll(() => {
+    config.tokenRouterCacheTtlMs = originalTokenRouterCacheTtlMs;
+    invalidateTokenRouterCache();
     delete process.env.DATA_DIR;
   });
 
-  it('exports backup-owned config in v2.2 backups without the removed account unit cost', async () => {
+  it('exports backup-owned config in v2.3 backups without the removed account unit cost', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({
       name: 'roundtrip-site',
@@ -159,6 +184,34 @@ describe('backupService', () => {
       createdAt: now,
     }).run();
 
+    await db.insert(schema.siteModelAliases).values({
+      siteId: site.id,
+      sourceModel: 'gpt-4o-mini',
+      aliasModel: 'gpt-friendly',
+      aliasKey: 'gpt-friendly',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
+    const aliasRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-friendly',
+      displayName: 'gpt-friendly',
+      routeKind: 'site_alias',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: aliasRoute.id,
+      accountId: account.id,
+      tokenId: accountToken.id,
+      sourceModel: 'gpt-4o-mini',
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
     await db.insert(schema.siteApiEndpoints).values({
       siteId: site.id,
       url: 'https://api-roundtrip.example.com',
@@ -216,11 +269,22 @@ describe('backupService', () => {
     }).run();
 
     const exported = await backupService.exportBackup('all') as any;
-    expect(exported.version).toBe('2.2');
+    expect(exported.version).toBe('2.3');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('unitCost');
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
     ]);
+    expect(exported.accounts.siteModelAliases).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        sourceModel: 'gpt-4o-mini',
+        aliasModel: 'gpt-friendly',
+        enabled: true,
+      }),
+    ]);
+    expect(exported.accounts.tokenRoutes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: aliasRoute.id, routeKind: 'site_alias' }),
+    ]));
     expect(exported.accounts.siteApiEndpoints).toEqual([
       expect.objectContaining({
         siteId: site.id,
@@ -271,8 +335,10 @@ describe('backupService', () => {
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
+    const restoredAliasRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, aliasRoute.id)).get();
     const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, route.id)).get();
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
+    const restoredAliases = await db.select().from(schema.siteModelAliases).all();
     const restoredModelAvailability = await db.select().from(schema.modelAvailability).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
 
@@ -293,6 +359,8 @@ describe('backupService', () => {
     expect(restoredRoute?.displayName).toBe('gpt-route');
     expect(restoredRoute?.displayIcon).toBe('icon-gpt');
     expect(restoredRoute?.routeMode).toBe('explicit_group');
+    expect(restoredRoute?.routeKind).toBeNull();
+    expect(restoredAliasRoute?.routeKind).toBe('site_alias');
     expect(restoredRoute?.decisionSnapshot).toBe('{"channelIds":[1,2]}');
     expect(restoredRoute?.decisionRefreshedAt).toBe(now);
     expect(restoredRoute?.routingStrategy).toBe('round_robin');
@@ -302,6 +370,14 @@ describe('backupService', () => {
     expect(restoredChannel?.sourceModel).toBe('gpt-4o');
     expect(restoredDisabledModels).toEqual([
       expect.objectContaining({ siteId: site.id, modelName: 'gpt-hidden' }),
+    ]);
+    expect(restoredAliases).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        sourceModel: 'gpt-4o-mini',
+        aliasModel: 'gpt-friendly',
+        enabled: true,
+      }),
     ]);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);
@@ -325,6 +401,181 @@ describe('backupService', () => {
         lastUsedAt: now,
       }),
     ]);
+  });
+
+  it('uses restored route credentials immediately after an accounts backup import', async () => {
+    config.tokenRouterCacheTtlMs = 60_000;
+    const site = await db.insert(schema.sites).values({
+      name: 'cache-restore-site',
+      url: 'https://cache-restore.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'cache-restore-user',
+      accessToken: 'cache-restore-session',
+      apiToken: 'cache-restore-api-token',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-before-restore',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'cache-restore-model',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      enabled: true,
+    }).run();
+
+    const backup = await backupService.exportBackup('accounts') as any;
+    backup.accounts.accountTokens[0].token = 'sk-after-restore';
+
+    const router = new TokenRouter();
+    expect((await router.selectChannel('cache-restore-model'))?.tokenValue).toBe('sk-before-restore');
+
+    await backupService.importBackup(backup, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      reconcileCommittedRuntime: async () => undefined,
+    });
+
+    expect((await router.selectChannel('cache-restore-model'))?.tokenValue).toBe('sk-after-restore');
+  });
+
+  it('waits for an in-flight route rebuild before importing accounts', async () => {
+    let releaseRebuild!: () => void;
+    const rebuildGate = new Promise<void>((resolve) => {
+      releaseRebuild = resolve;
+    });
+    let rebuildProjectionFinished!: () => void;
+    const projectionFinished = new Promise<void>((resolve) => {
+      rebuildProjectionFinished = resolve;
+    });
+
+    const rebuild = runRouteProjectionExclusive(async () => {
+      await rebuildTokenRoutesFromAvailability();
+      rebuildProjectionFinished();
+      await rebuildGate;
+    });
+    await projectionFinished;
+
+    let importMaintenanceStarted!: () => void;
+    const maintenanceStarted = new Promise<void>((resolve) => {
+      importMaintenanceStarted = resolve;
+    });
+
+    const importing = backupService.importBackup({
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [],
+        accounts: [],
+        accountTokens: [],
+        tokenRoutes: [],
+        routeChannels: [],
+      },
+    }, {
+      stopAccountRateRefreshScheduler: async () => {
+        importMaintenanceStarted();
+      },
+      startAccountRateRefreshScheduler: () => undefined,
+      reconcileCommittedRuntime: async () => undefined,
+    });
+    await maintenanceStarted;
+
+    const importCompletedWhileRebuildLocked = await Promise.race([
+      importing.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    try {
+      expect(importCompletedWhileRebuildLocked).toBe(false);
+    } finally {
+      releaseRebuild();
+      await Promise.all([rebuild, importing]);
+    }
+  });
+
+  it('waits for an in-flight route projection before exporting accounts', async () => {
+    let releaseProjection!: () => void;
+    const projectionGate = new Promise<void>((resolve) => {
+      releaseProjection = resolve;
+    });
+    let projectionStartedResolve!: () => void;
+    const projectionStarted = new Promise<void>((resolve) => {
+      projectionStartedResolve = resolve;
+    });
+
+    const projection = runRouteProjectionExclusive(async () => {
+      projectionStartedResolve();
+      await projectionGate;
+    });
+    await projectionStarted;
+
+    let exportCompleted = false;
+    const exporting = backupService.exportBackup('accounts').then((result) => {
+      exportCompleted = true;
+      return result;
+    });
+    const completedWhileProjectionLocked = await Promise.race([
+      exporting.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    expect(exportCompleted).toBe(false);
+    expect(completedWhileProjectionLocked).toBe(false);
+
+    releaseProjection();
+    await Promise.all([projection, exporting]);
+    expect(exportCompleted).toBe(true);
+  });
+
+  it('keeps route rebuilds queued until imported preferences are reconciled', async () => {
+    let releaseReconciliation!: () => void;
+    const reconciliationGate = new Promise<void>((resolve) => {
+      releaseReconciliation = resolve;
+    });
+    let reconciliationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reconciliationStarted = resolve;
+    });
+
+    const importing = backupService.importBackup({
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [{ key: 'global_allowed_models', value: ['gpt-5.4'] }],
+      },
+    }, {
+      stopAccountRateRefreshScheduler: async () => undefined,
+      startAccountRateRefreshScheduler: () => undefined,
+      reconcileCommittedRuntime: async () => {
+        reconciliationStarted();
+        await reconciliationGate;
+      },
+    });
+    await started;
+
+    const rebuild = rebuildTokenRoutesFromAvailability();
+    const rebuildCompletedBeforeReconciliation = await Promise.race([
+      rebuild.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    try {
+      expect(rebuildCompletedBeforeReconciliation).toBe(false);
+    } finally {
+      releaseReconciliation();
+      await Promise.all([importing, rebuild]);
+    }
   });
 
   it('roundtrips account group-rate snapshots with their owning account ids', async () => {
@@ -412,7 +663,7 @@ describe('backupService', () => {
     }).run();
 
     const exported = await backupService.exportBackup('accounts') as any;
-    expect(exported.version).toBe('2.2');
+    expect(exported.version).toBe('2.3');
     expect(exported.accounts.sitePricingProfiles).toHaveLength(1);
     expect(exported.accounts.officialModelPrices).toHaveLength(1);
     expect(exported.accounts.siteModelPrices).toHaveLength(1);
@@ -552,6 +803,32 @@ describe('backupService', () => {
     const savedInterval = await db.select().from(schema.settings)
       .where(eq(schema.settings.key, 'account_group_rate_refresh_interval_minutes')).get();
     expect(savedInterval?.value).toBe(JSON.stringify(45));
+  });
+
+  it('keeps importing v2.2 account backups without site model aliases', async () => {
+    const result = await backupService.importBackup({
+      version: '2.2',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'v2.2-site',
+          url: 'https://v2-2.example.com',
+          platform: 'new-api',
+        }],
+        accounts: [],
+        accountTokens: [],
+        tokenRoutes: [],
+        routeChannels: [],
+      },
+    });
+
+    expect(result.sections.accounts).toBe(true);
+    expect(await db.select().from(schema.sites).all()).toEqual([
+      expect.objectContaining({ id: 1, name: 'v2.2-site' }),
+    ]);
+    expect(await db.select().from(schema.siteModelAliases).all()).toHaveLength(0);
   });
 
   it('ignores imported runtime database config settings', async () => {
@@ -919,7 +1196,7 @@ describe('backupService', () => {
     }).returning().get();
 
     const exported = await backupService.exportBackup('accounts') as any;
-    expect(exported.version).toBe('2.2');
+    expect(exported.version).toBe('2.3');
 
     await db.insert(schema.events).values({
       type: 'status',
@@ -1244,7 +1521,7 @@ describe('backupService', () => {
     expect(restoredProxyFiles).toHaveLength(1);
   });
 
-  it('keeps importing native v2.0 backups without the new v2.1 config arrays', async () => {
+  it('keeps importing native v2.0 backups without newer config arrays such as site model aliases', async () => {
     const localDownstreamKey = await db.insert(schema.downstreamApiKeys).values({
       name: 'Local downstream',
       key: 'local-downstream-key',
@@ -1312,6 +1589,7 @@ describe('backupService', () => {
     const restoredSites = await db.select().from(schema.sites).all();
     const restoredAccounts = await db.select().from(schema.accounts).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
+    const restoredAliases = await db.select().from(schema.siteModelAliases).all();
 
     expect(restoredSites).toHaveLength(1);
     expect(restoredAccounts).toHaveLength(1);
@@ -1319,6 +1597,7 @@ describe('backupService', () => {
     expect(restoredDownstreamKeys).toHaveLength(1);
     expect(restoredDownstreamKeys[0]?.id).toBe(localDownstreamKey.id);
     expect(restoredDownstreamKeys[0]?.key).toBe('local-downstream-key');
+    expect(restoredAliases).toEqual([]);
   });
 
   it('imports ALL-API-Hub style payload with accounts and preferences', async () => {
@@ -2048,6 +2327,7 @@ describe('backupService', () => {
     ['orphan endpoint', { siteApiEndpoints: [{ id: 1, siteId: 99, url: 'https://endpoint.example' }] }],
     ['orphan route group source', { tokenRoutes: [{ id: 1, modelPattern: 'gpt-*' }], routeGroupSources: [{ id: 1, groupRouteId: 1, sourceRouteId: 99 }] }],
     ['orphan disabled model', { siteDisabledModels: [{ siteId: 99, modelName: 'gpt-x' }] }],
+    ['orphan site model alias', { siteModelAliases: [{ id: 1, siteId: 99, sourceModel: 'gpt-x', aliasModel: 'gpt-friendly', aliasKey: 'gpt-friendly' }] }],
     ['orphan manual model', { manualModels: [{ accountId: 99, modelName: 'gpt-x' }] }],
     ['orphan downstream route', { downstreamApiKeys: [{ name: 'client', key: 'client-key', allowedRouteIds: JSON.stringify([99]) }] }],
   ])('rejects %s before maintenance or database writes', async (_, overrides) => {
@@ -2063,12 +2343,78 @@ describe('backupService', () => {
     expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([77]);
   });
 
+  it('rejects a site-alias projection that does not match its configured source', async () => {
+    await db.insert(schema.sites).values({ id: 77, name: 'local', url: 'https://local.example', platform: 'new-api' }).run();
+    const stop = vi.fn(async () => undefined);
+    const payload = {
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }],
+        accounts: [{ id: 1, siteId: 1, username: 'user', accessToken: 'session', status: 'active' }],
+        accountTokens: [{ id: 1, accountId: 1, name: 'default', token: 'sk-token', enabled: true, isDefault: true }],
+        siteModelAliases: [{ siteId: 1, sourceModel: 'gpt-source', aliasModel: 'team-fast', enabled: true }],
+        tokenRoutes: [{ id: 1, modelPattern: 'team-fast', displayName: 'team-fast', routeKind: 'site_alias', routeMode: 'pattern', enabled: true }],
+        routeChannels: [{ id: 1, routeId: 1, accountId: 1, tokenId: 1, sourceModel: 'evil-source', enabled: true, manualOverride: false }],
+      },
+    } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, { stopAccountRateRefreshScheduler: stop }))
+      .rejects.toThrow('站点模型别名投影不一致');
+
+    expect(stop).not.toHaveBeenCalled();
+    expect((await db.select().from(schema.sites).all()).map((row) => row.id)).toEqual([77]);
+  });
+
+  it('migrates imported exact and site-alias route ids to stable model names', async () => {
+    const stop = vi.fn(async () => undefined);
+    const payload = {
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [{ id: 1, name: 'site', url: 'https://site.example', platform: 'new-api' }],
+        accounts: [{ id: 1, siteId: 1, username: 'user', accessToken: 'session', status: 'active' }],
+        accountTokens: [{ id: 1, accountId: 1, name: 'default', token: 'sk-token', enabled: true, isDefault: true }],
+        siteModelAliases: [{ siteId: 1, sourceModel: 'gpt-source', aliasModel: 'team-fast', enabled: true }],
+        tokenRoutes: [
+          { id: 1, modelPattern: 'gpt-source', enabled: true },
+          { id: 2, modelPattern: 'team-fast', displayName: 'team-fast', routeKind: 'site_alias', routeMode: 'pattern', enabled: true },
+        ],
+        routeChannels: [{ id: 1, routeId: 2, accountId: 1, tokenId: 1, sourceModel: 'gpt-source', enabled: true, manualOverride: false }],
+        downstreamApiKeys: [{ name: 'client', key: 'sk-client-key', allowedRouteIds: '[1,2]' }],
+      },
+    } as unknown as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload, {
+      stopAccountRateRefreshScheduler: stop,
+      startAccountRateRefreshScheduler: () => undefined,
+      reconcileCommittedRuntime: async () => undefined,
+    })).resolves.toMatchObject({ allImported: true });
+
+    const [restored] = await db.select().from(schema.downstreamApiKeys).all();
+    expect(JSON.parse(restored.supportedModels || '[]')).toEqual(['gpt-source', 'team-fast']);
+    expect(JSON.parse(restored.allowedRouteIds || '[]')).toEqual([]);
+  });
+
   it.each([
     ['duplicate site identity', { sites: [{ id: 1, name: 'a', url: 'https://same.example', platform: 'new-api' }, { id: 2, name: 'b', url: 'https://same.example', platform: 'new-api' }] }],
     ['duplicate endpoint identity', { siteApiEndpoints: [{ id: 1, siteId: 1, url: 'https://api.example' }, { id: 2, siteId: 1, url: 'https://api.example' }] }],
     ['duplicate group rate identity', { accounts: [{ id: 1, siteId: 1, accessToken: 'session' }], accountGroupRates: [{ accountId: 1, groupKey: 'default', groupName: 'Default', ratio: 1, lastSyncedAt: '2026-01-01' }, { accountId: 1, groupKey: 'default', groupName: 'Default', ratio: 2, lastSyncedAt: '2026-01-01' }] }],
     ['duplicate route group identity', { tokenRoutes: [{ id: 1, modelPattern: 'group' }, { id: 2, modelPattern: 'source' }], routeGroupSources: [{ id: 1, groupRouteId: 1, sourceRouteId: 2 }, { id: 2, groupRouteId: 1, sourceRouteId: 2 }] }],
     ['duplicate disabled model identity', { siteDisabledModels: [{ siteId: 1, modelName: 'gpt-x' }, { siteId: 1, modelName: 'gpt-x' }] }],
+    ['duplicate site model alias identity', { siteModelAliases: [{ id: 1, siteId: 1, sourceModel: 'gpt-x', aliasModel: 'gpt-a', aliasKey: 'gpt-a' }, { id: 2, siteId: 1, sourceModel: 'gpt-y', aliasModel: 'GPT-A', aliasKey: 'gpt-a' }] }],
+    ['conflicting shared site model alias spelling', {
+      sites: [
+        { id: 1, name: 'a', url: 'https://a.example', platform: 'new-api' },
+        { id: 2, name: 'b', url: 'https://b.example', platform: 'new-api' },
+      ],
+      siteModelAliases: [
+        { id: 1, siteId: 1, sourceModel: 'gpt-x', aliasModel: 'gpt-friendly', aliasKey: 'gpt-friendly' },
+        { id: 2, siteId: 2, sourceModel: 'gpt-y', aliasModel: 'GPT-Friendly', aliasKey: 'gpt-friendly' },
+      ],
+    }],
     ['duplicate manual model identity', { accounts: [{ id: 1, siteId: 1, accessToken: 'session' }], manualModels: [{ accountId: 1, modelName: 'gpt-x' }, { accountId: 1, modelName: 'gpt-x' }] }],
   ])('rejects %s before maintenance or database writes', async (_, overrides) => {
     await db.insert(schema.sites).values({ id: 77, name: 'local', url: 'https://local.example', platform: 'new-api' }).run();
@@ -2120,9 +2466,32 @@ describe('backupService', () => {
 
   it('does not clear backoff and reconciles committed runtime when hydration fails after commit', async () => {
     const restoreRuntime = vi.fn(async () => undefined);
+    let releaseFirstReconcile!: () => void;
+    const firstReconcileGate = new Promise<void>((resolve) => {
+      releaseFirstReconcile = resolve;
+    });
+    let firstReconcileStartedResolve!: () => void;
+    const firstReconcileStarted = new Promise<void>((resolve) => {
+      firstReconcileStartedResolve = resolve;
+    });
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>((resolve) => {
+      releaseRecovery = resolve;
+    });
+    let recoveryStartedResolve!: () => void;
+    const recoveryStarted = new Promise<void>((resolve) => {
+      recoveryStartedResolve = resolve;
+    });
     const reconcileCommitted = vi.fn()
-      .mockRejectedValueOnce(new Error('hydrate failed'))
-      .mockResolvedValueOnce(undefined);
+      .mockImplementationOnce(async () => {
+        firstReconcileStartedResolve();
+        await firstReconcileGate;
+        throw new Error('hydrate failed');
+      })
+      .mockImplementationOnce(async () => {
+        recoveryStartedResolve();
+        await recoveryGate;
+      });
     const start = vi.fn(() => undefined);
     const clearFailure = vi.fn(() => undefined);
     const payload = {
@@ -2132,13 +2501,36 @@ describe('backupService', () => {
       },
     } as Record<string, unknown>;
 
-    await expect(backupService.importBackup(payload, {
+    const importing = backupService.importBackup(payload, {
       stopAccountRateRefreshScheduler: async () => undefined,
       startAccountRateRefreshScheduler: start,
       restorePriorRuntime: restoreRuntime,
       reconcileCommittedRuntime: reconcileCommitted,
       clearAccountRateRefreshFailureState: clearFailure,
-    })).rejects.toThrow('hydrate failed');
+    });
+    await firstReconcileStarted;
+
+    let rebuildCompleted = false;
+    const rebuild = rebuildTokenRoutesFromAvailability().then((result) => {
+      rebuildCompleted = true;
+      return result;
+    });
+    releaseFirstReconcile();
+    await recoveryStarted;
+
+    const rebuildCompletedDuringRecovery = await Promise.race([
+      rebuild.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    try {
+      expect(rebuildCompleted).toBe(false);
+      expect(rebuildCompletedDuringRecovery).toBe(false);
+    } finally {
+      releaseRecovery();
+    }
+
+    await expect(importing).rejects.toThrow('hydrate failed');
+    await rebuild;
 
     expect(restoreRuntime).not.toHaveBeenCalled();
     expect(reconcileCommitted).toHaveBeenCalledTimes(2);

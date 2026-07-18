@@ -423,6 +423,22 @@ export type RuntimeSettingsPayload = {
   globalAllowedModels?: string[];
 };
 
+export type AccountGroupRateRefreshSummary = {
+  scanned: number;
+  candidates: number;
+  synced: number;
+  skipped: number;
+  deferred: number;
+  failed: number;
+  recovered: number;
+  durationMs: number;
+};
+
+export type AccountGroupRateRefreshResponse = {
+  success: true;
+  result: AccountGroupRateRefreshSummary;
+};
+
 export type ProxyLogStatusFilter = "all" | "success" | "failed";
 export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
@@ -571,6 +587,11 @@ export type SitePricingView = {
     priceSources: Record<string, PricingSource>;
   }>;
   refreshState: Record<string, unknown> | null;
+};
+
+export type SiteDetectOptions = {
+  proxyUrl?: string | null;
+  useSystemProxy?: boolean;
 };
 export type PricingSettingsView = {
   enabled: boolean;
@@ -827,10 +848,10 @@ export const api = {
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: "DELETE" }),
   batchUpdateSites: (data: any) =>
     request("/api/sites/batch", { method: "POST", body: JSON.stringify(data) }),
-  detectSite: (url: string) =>
+  detectSite: (url: string, options?: SiteDetectOptions) =>
     request("/api/sites/detect", {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...options }),
     }),
   getSiteDisabledModels: (siteId: number) =>
     request(`/api/sites/${siteId}/disabled-models`),
@@ -841,6 +862,15 @@ export const api = {
     }),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
+  getSiteModelAliases: (siteId: number) =>
+    request(`/api/sites/${siteId}/model-aliases`),
+  updateSiteModelAliases: (
+    siteId: number,
+    aliases: Array<{ sourceModel: string; aliasModel: string; enabled?: boolean }>,
+  ) => request(`/api/sites/${siteId}/model-aliases`, {
+    method: 'PUT',
+    body: JSON.stringify({ aliases }),
+  }),
   probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
     request(`/api/sites/${siteId}/probe-now`, {
       method: 'POST',
@@ -1214,6 +1244,11 @@ export const api = {
       body: JSON.stringify({ oldToken, newToken }),
     }),
   getRuntimeSettings: () => request("/api/settings/runtime"),
+  refreshAccountGroupRates: () =>
+    request<AccountGroupRateRefreshResponse>(
+      "/api/settings/account-group-rates/refresh",
+      { method: "POST", timeoutMs: 150_000 },
+    ),
   getBrandList: () => request("/api/settings/brand-list"),
   updateRuntimeSettings: (data: RuntimeSettingsPayload) =>
     request("/api/settings/runtime", {

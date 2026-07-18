@@ -422,7 +422,7 @@ function formatProxyLogTokenValue(value: number | null | undefined): string {
 function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
   const parts = [
     log.downstreamKeyName ? `下游 Key: ${log.downstreamKeyName}` : null,
-    log.downstreamKeyGroupName ? `主分组: ${log.downstreamKeyGroupName}` : null,
+    log.downstreamKeyGroupName ? `归属分组: ${log.downstreamKeyGroupName}` : null,
     Array.isArray(log.downstreamKeyTags) && log.downstreamKeyTags.length > 0
       ? `标签: ${log.downstreamKeyTags.join(" / ")}`
       : null,
@@ -1821,7 +1821,7 @@ export default function ProxyLogs() {
             setSearchInput(e.target.value);
             setPage(1);
           }}
-          placeholder="搜索模型、下游 Key、主分组、标签..."
+          placeholder="搜索模型、下游 Key、归属分组、标签..."
         />
       </div>
       <button

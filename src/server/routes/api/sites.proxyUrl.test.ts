@@ -3,13 +3,18 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { type AddressInfo } from 'node:net';
+import { type Duplex } from 'node:stream';
 
 type DbModule = typeof import('../../db/index.js');
+type ConfigModule = typeof import('../../config.js');
 
 describe('sites proxy settings', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let config: ConfigModule['config'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -17,8 +22,10 @@ describe('sites proxy settings', () => {
     process.env.DATA_DIR = dataDir;
 
     await import('../../db/migrate.js');
+    const configModule = await import('../../config.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./sites.js');
+    config = configModule.config;
     db = dbModule.db;
     schema = dbModule.schema;
 
@@ -35,6 +42,46 @@ describe('sites proxy settings', () => {
     await app.close();
     delete process.env.DATA_DIR;
   });
+
+  async function withHttpProxy(run: (proxyUrl: string) => Promise<void>) {
+    const server = createServer((_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(502).end();
+    });
+    server.on('connect', (_req, socket) => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      socket.once('data', (chunk) => {
+        const request = chunk.toString('utf8');
+        if (request.includes('/api/status')) {
+          const body = JSON.stringify({
+            success: true,
+            data: { system_name: 'New API through proxy' },
+          });
+          socket.end([
+            'HTTP/1.1 200 OK',
+            'Content-Type: application/json',
+            `Content-Length: ${Buffer.byteLength(body)}`,
+            'Connection: close',
+            '',
+            body,
+          ].join('\r\n'));
+          return;
+        }
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const { port } = server.address() as AddressInfo;
+    try {
+      await run(`http://127.0.0.1:${port}`);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error?: Error) => (error ? reject(error) : resolve()));
+      });
+    }
+  }
 
   it('stores proxy settings, external checkin url, and custom headers when creating a site', async () => {
     const response = await app.inject({
@@ -548,6 +595,144 @@ describe('sites proxy settings', () => {
       platform: 'openai',
       initializationPresetId: 'codingplan-openai',
     });
+  });
+
+  it('runs detect probes through the submitted explicit proxy', async () => {
+    await withHttpProxy(async (proxyUrl) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/sites/detect',
+        payload: {
+          url: 'http://unreachable-explicit-proxy.invalid',
+          proxyUrl: proxyUrl.replace('://', '://proxy-user:proxy-secret@'),
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        platform: 'new-api',
+      });
+      expect(response.body).not.toContain('proxy-user');
+      expect(response.body).not.toContain('proxy-secret');
+    });
+  });
+
+  it.each([
+    { proxyUrl: 'ftp://proxy-user:proxy-secret@127.0.0.1:21' },
+    { useSystemProxy: 'yes' },
+  ])('rejects invalid detect proxy context without reflecting submitted values: %j', async (payload) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://invalid-detect-proxy.example.com',
+        ...payload,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.body).not.toContain('proxy-user');
+    expect(response.body).not.toContain('proxy-secret');
+  });
+
+  it('rejects malformed SOCKS credentials without attempting a direct detection request', async () => {
+    const malformedProxyUrl = 'socks5://proxy-user:%E0%A4%A@127.0.0.1:1080';
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://api.openai.com',
+        proxyUrl: malformedProxyUrl,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: 'Invalid proxyUrl. Expected a valid http(s)/socks proxy URL.',
+    });
+    expect(response.body).not.toContain('proxy-user');
+    expect(response.body).not.toContain(malformedProxyUrl);
+  });
+
+  it('supports SOCKS proxy URLs at the detection route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://api.openai.com',
+        proxyUrl: 'socks5h://proxy-user:proxy-secret@127.0.0.1:1080',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ platform: 'openai' });
+    expect(response.body).not.toContain('proxy-user');
+    expect(response.body).not.toContain('proxy-secret');
+  });
+
+  it('does not modify saved site proxy settings during an isolated detect request', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'saved-proxy-site',
+        url: 'https://saved-proxy.example.com',
+        platform: 'new-api',
+        proxyUrl: 'socks5://saved-user:saved-secret@127.0.0.1:1080',
+        useSystemProxy: true,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+
+    const detected = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://api.openai.com',
+        proxyUrl: 'http://temporary-user:temporary-secret@127.0.0.1:7890',
+        useSystemProxy: false,
+      },
+    });
+    expect(detected.statusCode).toBe(200);
+
+    const listed = await app.inject({ method: 'GET', url: '/api/sites' });
+    const savedSite = (listed.json() as Array<{
+      name: string;
+      proxyUrl: string | null;
+      useSystemProxy: boolean;
+    }>).find((site) => site.name === 'saved-proxy-site');
+    expect(savedSite).toMatchObject({
+      proxyUrl: 'socks5://saved-user:saved-secret@127.0.0.1:1080',
+      useSystemProxy: true,
+    });
+  });
+
+  it('uses the submitted system proxy choice during create auto-detection', async () => {
+    const previousSystemProxyUrl = config.systemProxyUrl;
+    try {
+      await withHttpProxy(async (proxyUrl) => {
+        config.systemProxyUrl = proxyUrl;
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/sites',
+          payload: {
+            name: 'system-proxy-auto-detect',
+            url: 'http://unreachable-system-proxy.invalid',
+            useSystemProxy: true,
+          },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          name: 'system-proxy-auto-detect',
+          platform: 'new-api',
+          proxyUrl: null,
+          useSystemProxy: true,
+        });
+      });
+    } finally {
+      config.systemProxyUrl = previousSystemProxyUrl;
+    }
   });
 
   it('creates CodingPlan sites without explicit platform by using preset-backed detection', async () => {

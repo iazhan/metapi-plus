@@ -436,6 +436,129 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
+  it('records an already-applied OAuth retirement migration instead of replaying it', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-retirement-record-loss-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+
+    for (const entry of journalEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSql(sqlite, sqlText);
+    }
+    recordAppliedMigrations(
+      sqlite,
+      journalEntries.filter((entry) => entry.tag !== '0030_remove_oauth_native_connections'),
+    );
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const appliedRows = verified
+      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
+      .all() as Array<{ created_at: number }>;
+    const accountColumns = verified.prepare('PRAGMA table_info("accounts")')
+      .all() as Array<{ name: string }>;
+    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
+      journalEntries.map((entry) => entry.when),
+    );
+    expect(accountColumns.some((column) => column.name === 'oauth_provider')).toBe(false);
+    verified.close();
+  });
+
+  it('fails closed when retired schema still contains an OAuth account in extra_config', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-inconsistent-retirement-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+
+    for (const entry of journalEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSql(sqlite, sqlText);
+    }
+    recordAppliedMigrations(
+      sqlite,
+      journalEntries.filter((entry) => entry.tag !== '0030_remove_oauth_native_connections'),
+    );
+    sqlite.exec(`
+      INSERT INTO sites (id, name, url, platform, status)
+      VALUES (501, 'Inconsistent OAuth Site', 'https://oauth-leftover.example.com', 'openai', 'active');
+      INSERT INTO accounts (id, site_id, username, access_token, status, checkin_enabled, extra_config)
+      VALUES (
+        601,
+        501,
+        'oauth-leftover@example.com',
+        'leftover-token',
+        'active',
+        0,
+        '{"oauth":{"provider":"codex"}}'
+      );
+    `);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).rejects.toThrow(
+      'inconsistent OAuth retirement state after missing 0030_remove_oauth_native_connections',
+    );
+
+    const verified = new Database(dbPath, { readonly: true });
+    const account = verified.prepare('SELECT id FROM accounts WHERE id = 601').get() as { id: number } | undefined;
+    expect(account?.id).toBe(601);
+    verified.close();
+  });
+
+  it.each([
+    ['later timestamp', 'later'],
+    ['same timestamp', 'same'],
+    ['non-finite timestamp', 'invalid'],
+  ] as const)('fails closed for an unknown migration with a %s after a missing OAuth retirement record', async (_, timestampKind) => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-unknown-post-retirement-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const appliedEntries = journalEntries.filter((entry) => (
+      entry.tag !== '0030_remove_oauth_native_connections'
+    ));
+
+    for (const entry of appliedEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSql(sqlite, sqlText);
+    }
+    recordAppliedMigrations(sqlite, appliedEntries);
+    const retirementCreatedAt = journalEntries.find((entry) => (
+      entry.tag === '0030_remove_oauth_native_connections'
+    ))!.when;
+    const unknownCreatedAt: number | string = timestampKind === 'later'
+      ? Math.max(...journalEntries.map((entry) => entry.when)) + 1_000
+      : (timestampKind === 'same' ? retirementCreatedAt : 'not-a-timestamp');
+    sqlite.prepare(
+      'INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)',
+    ).run('unknown-post-retirement-migration', unknownCreatedAt);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).rejects.toThrow(
+      'unknown migration record after missing 0030_remove_oauth_native_connections',
+    );
+
+    const verified = new Database(dbPath, { readonly: true });
+    const unknownRecord = verified.prepare(
+      'SELECT hash FROM "__drizzle_migrations" WHERE hash = ?',
+    ).get('unknown-post-retirement-migration') as { hash: string } | undefined;
+    expect(unknownRecord?.hash).toBe('unknown-post-retirement-migration');
+    verified.close();
+  });
+
   it('recovers sequential duplicate-column migrations when a legacy sqlite schema predates the drizzle journal', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-legacy-schema-'));
     const dbPath = join(dataDir, 'hub.db');

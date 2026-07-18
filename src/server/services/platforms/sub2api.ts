@@ -11,8 +11,10 @@ import {
   parseSafePositiveInteger,
   type GroupRateInfo,
   type LoginResult,
+  type PlatformDetectionContext,
   type SiteAnnouncement,
   UserInfo,
+  withPlatformDetectionRequestInit,
 } from './base.js';
 import { stripTrailingSlashes } from '../urlNormalization.js';
 import { matchesExplicitUsageLimitFailureText } from '../usageLimitFailure.js';
@@ -603,7 +605,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return Number.isFinite(days) ? Math.min(days, 3650) : undefined;
   }
 
-  async detect(url: string): Promise<boolean> {
+  async detect(url: string, context?: PlatformDetectionContext): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
     if (normalized.includes('sub2api')) return true;
 
@@ -611,10 +613,14 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     const { fetch } = await import('undici');
     const probeEndpoint = async (path: string) => {
       try {
-        return await fetch(`${base}${path}`, {
+        const requestInit = {
           method: 'GET',
-          signal: AbortSignal.timeout(5000),
-        });
+          signal: context?.signal ?? AbortSignal.timeout(5000),
+        };
+        return await fetch(
+          `${base}${path}`,
+          withPlatformDetectionRequestInit(context, requestInit),
+        );
       } catch {
         return null;
       }

@@ -62,7 +62,7 @@ export default function CenteredModal({
     >
       <div
         className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        style={{ maxWidth }}
+        style={{ width: `min(90vw, ${maxWidth}px)`, maxWidth }}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">

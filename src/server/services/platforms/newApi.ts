@@ -10,6 +10,7 @@ import {
   parseSafePositiveInteger,
   type GroupRateInfo,
   type LoginResult,
+  type PlatformDetectionContext,
   type SiteAnnouncement,
 } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
@@ -31,9 +32,9 @@ class NewApiShieldChallengeError extends Error {
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
 
-  async detect(url: string): Promise<boolean> {
+  async detect(url: string, context?: PlatformDetectionContext): Promise<boolean> {
     try {
-      const res = await this.fetchJson<any>(`${url}/api/status`);
+      const res = await this.fetchDetectionJson<any>(`${url}/api/status`, context);
       return res?.success === true && typeof res?.data?.system_name === 'string';
     } catch {
       return false;

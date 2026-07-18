@@ -3,6 +3,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import DownstreamKeys from './DownstreamKeys.js';
+import { TagInput } from './downstream-keys/DownstreamKeyEditorModal.js';
 import { installAccountsSnapshotCompat } from './testApiCompat.js';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -212,6 +213,23 @@ afterEach(() => {
   delete (globalThis as any).document;
 });
 
+describe('TagInput layout', () => {
+  it('does not reserve an empty chip row when there are no tags', () => {
+    let root!: WebTestRenderer;
+    act(() => {
+      root = create(<TagInput tags={[]} onChange={vi.fn()} placeholder="标签" />);
+    });
+
+    const controls = root.root.findAll((node) => (
+      node.type === 'div'
+      && node.props.style?.border === '1px solid var(--color-border)'
+    ));
+    expect(controls).toHaveLength(1);
+    expect(controls[0].children).toHaveLength(1);
+    root.unmount();
+  });
+});
+
 describe('DownstreamKeys page', () => {
   it('loads management data and renders merged row content', async () => {
     let root!: WebTestRenderer;
@@ -239,7 +257,7 @@ describe('DownstreamKeys page', () => {
       expect(text).toContain('sk-s****0315');
       expect(text).toContain('默认群组');
       expect(text).toContain('4.2K');
-      expect(text).toContain('主分组');
+      expect(text).toContain('归属分组');
       expect(text).toContain('移动端');
     } finally {
       root?.unmount();
@@ -275,7 +293,7 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const input = root!.root.findAllByType('input').find((node) => node.props.placeholder === '搜索名称、备注、模型、主分组或标签');
+      const input = root!.root.findAllByType('input').find((node) => node.props.placeholder === '搜索名称、备注、模型、归属分组或标签');
       await act(async () => {
         input!.props.onChange({ target: { value: 'batch' } });
       });
@@ -315,11 +333,11 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      expect(collectText(root!.root)).toContain('高级配置');
-      expect(collectText(root!.root)).not.toContain('站点倍率 JSON');
+      expect(collectText(root!.root)).toContain('路由权限与分发');
+      expect(collectText(root!.root)).not.toContain('站点路由倍率（JSON）');
 
       const inputs = root!.root.findAllByType('input');
-      const tagInput = inputs.find((node) => node.props.placeholder === '输入标签后按回车或逗号，例如：移动端、VIP、项目A');
+      const tagInput = inputs.find((node) => node.props.placeholder === '例如：移动端、VIP、生产环境');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
       const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
       expect(tagInput?.props.style?.fontSize).toBe(13);
@@ -520,20 +538,30 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      expect(collectText(root!.root)).toContain('归属分组和标签只用于管理归类');
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
+      expect(advancedBtn.props['aria-expanded']).toBe(false);
+      expect(advancedBtn.props['aria-controls']).toBe('downstream-key-editor-advanced-content');
+      const groupLabel = root!.root.findAllByType('label').find((node) => collectText(node) === '归属分组');
+      expect(groupLabel?.props.htmlFor).toBe('downstream-key-editor-group');
       await act(async () => {
         advancedBtn.props.onClick();
       });
       await flushMicrotasks();
 
+      const expandedAdvancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
+      expect(expandedAdvancedBtn.props['aria-expanded']).toBe(true);
+      expect(root!.root.findByProps({ id: 'downstream-key-editor-advanced-content' })).toBeTruthy();
+
       const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const modelPanel = panels.find((node) => collectText(node).includes('精确模型权限'));
+      const groupPanel = panels.find((node) => collectText(node).includes('路由群组权限'));
       const advancedGrid = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-grid')[0];
 
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
-      expect(collectText(modelPanel!)).toContain('gpt-4.1-mini');
+      expect(collectText(root!.root)).toContain('精确模型、兼容模型规则与路由群组按并集授权');
+      expect(collectText(modelPanel!)).toContain('GPT 4.1 Mini');
       expect(collectText(modelPanel!)).not.toContain('默认群组');
       expect(collectText(modelPanel!)).not.toContain('claude-*');
       expect(collectText(groupPanel!)).toContain('默认群组');
@@ -571,15 +599,15 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
       await act(async () => {
         advancedBtn.props.onClick();
       });
       await flushMicrotasks();
 
       const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const modelPanel = panels.find((node) => collectText(node).includes('精确模型权限'));
+      const groupPanel = panels.find((node) => collectText(node).includes('路由群组权限'));
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
 
@@ -610,7 +638,7 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
         name: 'select-all-key',
         key: 'sk-select-all-key-0319',
-        supportedModels: ['claude-opus-4-6', 'gpt-4.1-mini'],
+        supportedModels: ['Claude Opus 4.6', 'GPT 4.1 Mini'],
         allowedRouteIds: [11, 13],
       }));
     } finally {
@@ -618,12 +646,17 @@ describe('DownstreamKeys page', () => {
     }
   });
 
-  it('defaults new keys to all exact models and all group routes before saving', async () => {
+  it('defaults new keys to all enabled exact models and enabled group routes before saving', async () => {
     apiMock.getRoutesLite.mockResolvedValue([
       { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
       { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
       { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
       { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
+      { id: 15, modelPattern: 'team-reasoning', displayName: '推理群组', routeMode: 'explicit_group', enabled: true },
+      { id: 16, modelPattern: 'stable-fast', displayName: 'stable-fast', routeKind: 'site_alias', enabled: true },
+      { id: 17, modelPattern: 'disabled-model', displayName: 'Disabled Model', enabled: false },
+      { id: 18, modelPattern: 'disabled-*', displayName: 'Disabled Group', enabled: false },
+      { id: 19, modelPattern: 'disabled-explicit', displayName: 'Disabled Explicit Group', routeMode: 'explicit_group', enabled: false },
     ]);
 
     let root!: WebTestRenderer;
@@ -645,19 +678,19 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
       await act(async () => {
         advancedBtn.props.onClick();
       });
       await flushMicrotasks();
 
       const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const modelPanel = panels.find((node) => collectText(node).includes('精确模型权限'));
+      const groupPanel = panels.find((node) => collectText(node).includes('路由群组权限'));
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
-      expect(collectText(modelPanel!)).toContain('已选 2 个模型');
-      expect(collectText(groupPanel!)).toContain('已选 2 个群组');
+      expect(collectText(modelPanel!)).toContain('已选 3 个模型');
+      expect(collectText(groupPanel!)).toContain('已选 3 个路由群组');
 
       const inputs = root!.root.findAllByType('input');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
@@ -677,8 +710,57 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
         name: 'default-all-key',
         key: 'sk-default-all-key-0323',
-        supportedModels: ['claude-opus-4-6', 'gpt-4.1-mini'],
-        allowedRouteIds: [11, 13],
+        supportedModels: ['Claude Opus 4.6', 'GPT 4.1 Mini', 'stable-fast'],
+        allowedRouteIds: [11, 13, 15],
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('preserves visible legacy rules and route permissions when editing an existing key', async () => {
+    apiMock.getDownstreamApiKeys.mockResolvedValue({
+      success: true,
+      items: [buildRawItem({ supportedModels: ['gpt-4.1-mini', '*'], allowedRouteIds: [11] })],
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const editButton = root.root.findAll((node) => node.type === 'button' && collectText(node) === '编辑')[0];
+      await act(async () => {
+        editButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const advancedButton = root.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
+      await act(async () => {
+        advancedButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('兼容模型规则');
+      expect(collectText(root.root)).toContain('*');
+
+      const saveButton = root.root.findAll((node) => node.type === 'button' && collectText(node).includes('保存修改'))[0];
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateDownstreamApiKey).toHaveBeenCalledWith(1, expect.objectContaining({
+        supportedModels: ['GPT 4.1 Mini', '*'],
+        allowedRouteIds: [11],
       }));
     } finally {
       root?.unmount();
@@ -741,7 +823,7 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
       await act(async () => {
         advancedBtn.props.onClick();
       });
@@ -750,8 +832,8 @@ describe('DownstreamKeys page', () => {
       const inputs = root!.root.findAllByType('input');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
       const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
-      const groupInput = inputs.find((node) => node.props.placeholder === '例如：VIP / 内部项目 / A组');
-      const tagInput = inputs.find((node) => node.props.placeholder === '输入标签后按回车或逗号，例如：移动端、VIP、项目A');
+      const groupInput = inputs.find((node) => node.props.placeholder === '例如：内部项目 / 商务客户 / A组');
+      const tagInput = inputs.find((node) => node.props.placeholder === '例如：移动端、VIP、生产环境');
       await act(async () => {
         nameInput!.props.onChange({ target: { value: 'grouped-key' } });
         keyInput!.props.onChange({ target: { value: 'sk-grouped-key-0315' } });
@@ -787,7 +869,7 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const groupModeSelect = root!.root.findAllByType('select').find((node) => Array.isArray(node.props.children) && collectText(node).includes('统一设为主分组'));
+      const groupModeSelect = root!.root.findAllByType('select').find((node) => Array.isArray(node.props.children) && collectText(node).includes('统一设置归属分组'));
       const tagModeSelect = root!.root.findAllByType('select').find((node) => Array.isArray(node.props.children) && collectText(node).includes('追加标签'));
       await act(async () => {
         groupModeSelect!.props.onChange({ target: { value: 'set' } });
@@ -852,7 +934,7 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.getAccountsSnapshot).toHaveBeenCalledTimes(1);
       expect(apiMock.getAccountTokens).toHaveBeenCalledTimes(1);
 
-      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('路由权限与分发'))[0];
       await act(async () => {
         advancedBtn.props.onClick();
       });

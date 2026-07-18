@@ -20,6 +20,13 @@ import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointS
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
 import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
+import type { PlatformDetectionContext } from '../../services/platforms/base.js';
+import {
+  getSiteModelAliases,
+  SiteModelAliasInputError,
+  SiteModelAliasSiteNotFoundError,
+} from '../../services/siteModelAliasService.js';
+import { replaceSiteModelAliasesAndRebuildRoutes } from '../../services/routeRefreshWorkflow.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -47,6 +54,40 @@ function normalizePinnedFlag(input: unknown): boolean | null {
 
 function normalizeUseSystemProxyFlag(input: unknown): boolean | null {
   return normalizePinnedFlag(input);
+}
+
+function parsePlatformDetectionContext(input: {
+  proxyUrl?: unknown;
+  useSystemProxy?: unknown;
+}):
+  | { success: true; context?: PlatformDetectionContext }
+  | { success: false; error: string } {
+  const normalizedUseSystemProxy = normalizeUseSystemProxyFlag(input.useSystemProxy);
+  if (input.useSystemProxy !== undefined && normalizedUseSystemProxy === null) {
+    return { success: false, error: 'Invalid useSystemProxy value. Expected boolean.' };
+  }
+
+  const normalizedProxyUrl = parseSiteProxyUrlInput(input.proxyUrl);
+  if (!normalizedProxyUrl.valid) {
+    return {
+      success: false,
+      error: 'Invalid proxyUrl. Expected a valid http(s)/socks proxy URL.',
+    };
+  }
+
+  if (input.proxyUrl === undefined && input.useSystemProxy === undefined) {
+    return { success: true };
+  }
+
+  return {
+    success: true,
+    context: {
+      siteProxy: {
+        proxyUrl: normalizedProxyUrl.proxyUrl,
+        useSystemProxy: normalizedUseSystemProxy ?? false,
+      },
+    },
+  };
 }
 
 function normalizeSortOrder(input: unknown): number | null {
@@ -545,7 +586,17 @@ export async function sitesRoutes(app: FastifyInstance) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
-        const detected = await detectSite(detectionUrl);
+        const detectionContext: PlatformDetectionContext | undefined = (
+          proxyUrl !== undefined || useSystemProxy !== undefined
+        )
+          ? {
+              siteProxy: {
+                proxyUrl: normalizedProxyUrl.proxyUrl,
+                useSystemProxy: normalizedUseSystemProxy ?? false,
+              },
+            }
+          : undefined;
+        const detected = await detectSite(detectionUrl, detectionContext);
         detectedPlatform = detected?.platform ?? null;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }
@@ -882,6 +933,47 @@ export async function sitesRoutes(app: FastifyInstance) {
     return { siteId: id, models: uniqueModels };
   });
 
+  app.get<{ Params: { id: string } }>('/api/sites/:id/model-aliases', async (request, reply) => {
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    try {
+      return { siteId: id, aliases: await getSiteModelAliases(id) };
+    } catch (error) {
+      if (error instanceof SiteModelAliasSiteNotFoundError) {
+        return reply.code(404).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/sites/:id/model-aliases', async (request, reply) => {
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? request.body as { aliases?: unknown }
+      : null;
+    try {
+      return await replaceSiteModelAliasesAndRebuildRoutes(id, body?.aliases);
+    } catch (error) {
+      if (error instanceof SiteModelAliasInputError) {
+        const statusCode = error.issue.code === 'canonical_conflict' ? 409 : 400;
+        return reply.code(statusCode).send({
+          error: error.issue.message,
+          code: error.issue.code,
+          index: error.issue.index,
+        });
+      }
+      if (error instanceof SiteModelAliasSiteNotFoundError) {
+        return reply.code(404).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
   // Get all discovered models for a site (from model_availability and token_model_availability)
   app.get<{ Params: { id: string } }>('/api/sites/:id/available-models', async (request, reply) => {
     const id = parseInt(request.params.id);
@@ -993,7 +1085,12 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: parsedBody.error });
     }
 
-    const result = await detectSite(parsedBody.data.url);
+    const parsedContext = parsePlatformDetectionContext(parsedBody.data);
+    if (!parsedContext.success) {
+      return reply.code(400).send({ error: parsedContext.error });
+    }
+
+    const result = await detectSite(parsedBody.data.url, parsedContext.context);
     return result || { error: 'Could not detect platform' };
   });
 }

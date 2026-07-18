@@ -46,7 +46,10 @@ import {
   startModelAvailabilityProbeScheduler,
   stopModelAvailabilityProbeScheduler,
 } from '../../services/modelAvailabilityProbeService.js';
-import { updateAccountRateRefreshScheduler } from '../../services/accountRateRefreshScheduler.js';
+import {
+  executeAccountRateRefreshPass,
+  updateAccountRateRefreshScheduler,
+} from '../../services/accountRateRefreshScheduler.js';
 import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
 import { updatePriceRefreshScheduler } from '../../pricing/priceRefreshScheduler.js';
 
@@ -919,6 +922,23 @@ export async function settingsRoutes(app: FastifyInstance) {
   await app.get('/api/settings/runtime', async (request) => {
     const currentAdminIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
     return getRuntimeSettingsResponse(currentAdminIp);
+  });
+
+  app.post('/api/settings/account-group-rates/refresh', async () => {
+    const result = await executeAccountRateRefreshPass();
+    return {
+      success: true,
+      result: {
+        scanned: result.scanned,
+        candidates: result.candidates,
+        synced: result.synced,
+        skipped: result.skipped,
+        deferred: result.deferred,
+        failed: result.failed,
+        recovered: result.recovered,
+        durationMs: result.durationMs,
+      },
+    };
   });
 
   app.get('/api/settings/brand-list', async () => {

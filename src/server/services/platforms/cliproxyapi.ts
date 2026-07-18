@@ -3,13 +3,17 @@ import {
   normalizePlatformBaseUrl,
   resolveVersionedModelsUrl,
 } from './standardApiProvider.js';
+import {
+  withPlatformDetectionRequestInit,
+  type PlatformDetectionContext,
+} from './base.js';
 
 export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'cliproxyapi';
   protected override loginUnsupportedMessage = 'CLIProxyAPI does not support login';
   protected override checkinUnsupportedMessage = 'CLIProxyAPI does not support checkin';
 
-  async detect(url: string): Promise<boolean> {
+  async detect(url: string, context?: PlatformDetectionContext): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
 
     if (/:8317(\/|$)/.test(normalized)) {
@@ -23,10 +27,14 @@ export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
     try {
       const base = normalizePlatformBaseUrl(url);
       const { fetch } = await import('undici');
-      const res = await fetch(`${base}/v0/management/openai-compatibility`, {
+      const requestInit = {
         method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      });
+        signal: context?.signal ?? AbortSignal.timeout(5000),
+      };
+      const res = await fetch(
+        `${base}/v0/management/openai-compatibility`,
+        withPlatformDetectionRequestInit(context, requestInit),
+      );
 
       const hasCpaHeaders = Boolean(
         res.headers.get('x-cpa-version')

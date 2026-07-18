@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
-import { withSiteProxyRequestInit } from '../siteProxy.js';
+import {
+  withSiteRecordProxyRequestInit,
+  withSiteProxyRequestInit,
+  type SiteProxyConfigLike,
+} from '../siteProxy.js';
 import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
 
 export interface CheckinResult {
@@ -132,9 +136,30 @@ export interface CreateApiTokenOptions {
   modelLimits?: string;
 }
 
+export type PlatformDetectionContext = {
+  siteProxy?: SiteProxyConfigLike | null;
+  signal?: AbortSignal;
+};
+
+/**
+ * 将平台探测上下文应用到单次请求。未提供显式站点代理时保持直连，避免探测意外继承已保存站点配置。
+ */
+export function withPlatformDetectionRequestInit(
+  context: PlatformDetectionContext | undefined,
+  options?: UndiciRequestInit,
+): UndiciRequestInit {
+  const requestOptions: UndiciRequestInit = {
+    ...(options || {}),
+    signal: options?.signal ?? context?.signal,
+  };
+  return context?.siteProxy
+    ? withSiteRecordProxyRequestInit(context.siteProxy, requestOptions)
+    : requestOptions;
+}
+
 export interface PlatformAdapter {
   readonly platformName: string;
-  detect(url: string): Promise<boolean>;
+  detect(url: string, context?: PlatformDetectionContext): Promise<boolean>;
   login(baseUrl: string, username: string, password: string, signal?: AbortSignal): Promise<LoginResult>;
   getUserInfo(baseUrl: string, accessToken: string, platformUserId?: number): Promise<UserInfo | null>;
   verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult>;
@@ -154,7 +179,7 @@ export interface PlatformAdapter {
 export abstract class BasePlatformAdapter implements PlatformAdapter {
   abstract readonly platformName: string;
 
-  abstract detect(url: string): Promise<boolean>;
+  abstract detect(url: string, context?: PlatformDetectionContext): Promise<boolean>;
   abstract checkin(baseUrl: string, accessToken: string): Promise<CheckinResult>;
   abstract getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo>;
   abstract getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]>;
@@ -282,22 +307,38 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     return false;
   }
 
-  protected async fetchJson<T>(url: string, options?: UndiciRequestInit): Promise<T> {
+  protected async fetchJson<T>(
+    url: string,
+    options?: UndiciRequestInit,
+    detectionContext?: PlatformDetectionContext,
+  ): Promise<T> {
     const { fetch } = await import('undici');
     const requestOptions: UndiciRequestInit = {
       ...options,
       body: options?.body ?? undefined,
+      signal: options?.signal ?? detectionContext?.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
       },
     };
-    const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
+    const proxiedRequestOptions = detectionContext !== undefined
+      ? withPlatformDetectionRequestInit(detectionContext, requestOptions)
+      : await withSiteProxyRequestInit(url, requestOptions);
     const res = await fetch(url, proxiedRequestOptions);
     if (!res.ok) {
       throw new PlatformHttpError(res.status, await res.text());
     }
     return res.json() as Promise<T>;
+  }
+
+  /** 使用统一探测上下文读取 JSON；缺省探测上下文明确表示直连。 */
+  protected fetchDetectionJson<T>(
+    url: string,
+    context?: PlatformDetectionContext,
+    options?: UndiciRequestInit,
+  ): Promise<T> {
+    return this.fetchJson<T>(url, options, context ?? {});
   }
 
   protected buildNoticeSourceKey(content: string): string {

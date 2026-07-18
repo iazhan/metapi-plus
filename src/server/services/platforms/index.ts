@@ -1,4 +1,4 @@
-import type { PlatformAdapter } from './base.js';
+import type { PlatformAdapter, PlatformDetectionContext } from './base.js';
 import { NewApiAdapter } from './newApi.js';
 import { OneApiAdapter } from './oneApi.js';
 import { VeloeraAdapter } from './veloera.js';
@@ -42,19 +42,33 @@ const titleFirstPlatforms = new Set<string>([
   'sub2api',
 ]);
 
-export async function detectPlatform(url: string): Promise<PlatformAdapter | undefined> {
+const PLATFORM_DETECTION_TIMEOUT_MS = 10_000;
+
+export async function detectPlatform(
+  url: string,
+  context?: PlatformDetectionContext,
+): Promise<PlatformAdapter | undefined> {
   const urlHint = detectPlatformByUrlHint(url);
   if (urlHint) {
     return getAdapter(urlHint);
   }
 
-  const titleHint = await detectPlatformByTitle(url);
+  const deadlineSignal = AbortSignal.timeout(PLATFORM_DETECTION_TIMEOUT_MS);
+  const boundedContext: PlatformDetectionContext = {
+    ...context,
+    signal: context?.signal
+      ? AbortSignal.any([context.signal, deadlineSignal])
+      : deadlineSignal,
+  };
+
+  const titleHint = await detectPlatformByTitle(url, boundedContext);
   if (titleHint && titleFirstPlatforms.has(titleHint)) {
     return getAdapter(titleHint);
   }
 
   for (const adapter of adapters) {
-    if (await adapter.detect(url)) return adapter;
+    if (boundedContext.signal?.aborted) return undefined;
+    if (await adapter.detect(url, boundedContext)) return adapter;
   }
 
   if (titleHint) {

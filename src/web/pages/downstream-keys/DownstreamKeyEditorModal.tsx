@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
 import { generateDownstreamSkKey } from '../helpers/generateDownstreamSkKey.js';
+import {
+  getRoutePermissionModelName,
+  isExactModelOption,
+  isGroupRouteOption,
+  type RouteSelectorItem,
+} from './routePermissions.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 
@@ -29,6 +35,7 @@ export type DownstreamKeyEditorForm = {
   enabled: boolean;
   selectedModels: string[];
   selectedGroupRouteIds: number[];
+  legacyModelRules: string[];
   siteWeightMultipliersText: string;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -47,13 +54,6 @@ export type DownstreamCredentialOption = {
   accountName: string;
   label: string;
   detail: string;
-};
-
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  enabled: boolean;
 };
 
 function parseTagText(value: string): string[] {
@@ -85,17 +85,6 @@ function uniqStrings(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
-}
-
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
-function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return !isExactModelPattern(route.modelPattern);
 }
 
 function routeTitle(route: RouteSelectorItem): string {
@@ -159,11 +148,13 @@ export function TagInput({
   onChange,
   suggestions = [],
   placeholder,
+  inputId,
 }: {
   tags: string[];
   onChange: (tags: string[]) => void;
   suggestions?: string[];
   placeholder?: string;
+  inputId?: string;
 }) {
   const [draft, setDraft] = useState('');
 
@@ -188,21 +179,24 @@ export function TagInput({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {tags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => removeTag(tag)}
-              style={{ ...tagChipStyle('accent'), cursor: 'pointer' }}
-              title={`移除 ${tag}`}
-            >
-              <span>{tag}</span>
-              <span aria-hidden="true">×</span>
-            </button>
-          ))}
-        </div>
+        {tags.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {tags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => removeTag(tag)}
+                style={{ ...tagChipStyle('accent'), cursor: 'pointer' }}
+                title={`移除 ${tag}`}
+              >
+                <span>{tag}</span>
+                <span aria-hidden="true">×</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <input
+          id={inputId}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitDraft}
@@ -284,7 +278,7 @@ export default function DownstreamKeyEditorModal({
   }, [open]);
 
   const exactModels = useMemo(
-    () => uniqStrings(routeOptions.filter((item) => isExactModelPattern(item.modelPattern)).map((item) => item.modelPattern)).sort((a, b) => a.localeCompare(b)),
+    () => uniqStrings(routeOptions.filter(isExactModelOption).map(getRoutePermissionModelName)).sort((a, b) => a.localeCompare(b)),
     [routeOptions],
   );
   const groupRouteOptions = useMemo(
@@ -364,95 +358,123 @@ export default function DownstreamKeyEditorModal({
       )}
     >
       <div className="info-tip" style={{ marginBottom: 0 }}>
-        支持为每个下游密钥独立配置分组、标签、额度与有效期。高级限制项可按需展开。
+        归属分组和标签只用于管理归类；精确模型和路由群组决定该密钥可访问的模型范围。
       </div>
 
-      <div className="downstream-key-modal-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <div className="downstream-key-modal-field downstream-key-modal-field-full">
-          <div className="downstream-key-modal-label">名称</div>
-          <input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">下游密钥</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', minWidth: 0 }}>
-            <input
-              value={form.key}
-              onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))}
-              placeholder="sk-..."
-              style={{ ...inputStyle, flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}
+      <section className="downstream-key-modal-section">
+        <div className="downstream-key-modal-section-title">基础信息</div>
+        <div className="downstream-key-modal-grid">
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-name">名称</label>
+            <input id="downstream-key-editor-name" value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
+          </div>
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-key">下游密钥</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', minWidth: 0 }}>
+              <input
+                id="downstream-key-editor-key"
+                value={form.key}
+                onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))}
+                placeholder="sk-..."
+                style={{ ...inputStyle, flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}
+              />
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
+                onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
+              >
+                随机
+              </button>
+            </div>
+          </div>
+          <div className="downstream-key-modal-field downstream-key-modal-field-full">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-description">备注说明</label>
+            <textarea
+              id="downstream-key-editor-description"
+              value={form.description}
+              onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
+              placeholder="填写业务场景、负责人或限制说明"
+              style={{ ...inputStyle, minHeight: 72, resize: 'vertical' }}
             />
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
-            >
-              随机
-            </button>
+          </div>
+          <label className="downstream-key-modal-toggle downstream-key-modal-field-full">
+            <input type="checkbox" checked={form.enabled} onChange={(e) => onChange((prev) => ({ ...prev, enabled: e.target.checked }))} />
+            <div>
+              <div className="downstream-key-modal-toggle-title">启用密钥</div>
+              <div className="downstream-key-modal-help">关闭后该密钥无法访问代理接口</div>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <section className="downstream-key-modal-section">
+        <div className="downstream-key-modal-section-title">管理归类</div>
+        <div className="downstream-key-modal-grid">
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-group">归属分组</label>
+            <input
+              id="downstream-key-editor-group"
+              value={form.groupName}
+              onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
+              placeholder="例如：内部项目 / 商务客户 / A组"
+              list="downstream-group-suggestions"
+              style={inputStyle}
+            />
+            <div className="downstream-key-modal-help">每个密钥只能设置一个归属分组。</div>
+          </div>
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-tags">标签</label>
+            <TagInput
+              inputId="downstream-key-editor-tags"
+              tags={form.tags}
+              onChange={(tags) => onChange((prev) => ({ ...prev, tags }))}
+              suggestions={tagSuggestions}
+              placeholder="例如：移动端、VIP、生产环境"
+            />
+            <div className="downstream-key-modal-help">一个密钥可设置多个标签。</div>
           </div>
         </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">主分组</div>
-          <input
-            value={form.groupName}
-            onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
-            placeholder="例如：VIP / 内部项目 / A组"
-            list="downstream-group-suggestions"
-            style={inputStyle}
-          />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">请求额度</div>
-          <input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">成本额度</div>
-          <input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">过期时间</div>
-          <input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
-        </div>
-        <label className="downstream-key-modal-toggle">
-          <input type="checkbox" checked={form.enabled} onChange={(e) => onChange((prev) => ({ ...prev, enabled: e.target.checked }))} />
-          <div>
-            <div className="downstream-key-modal-toggle-title">创建后立即启用</div>
-            <div className="downstream-key-modal-help">关闭后该密钥将无法继续分发请求</div>
+      </section>
+
+      <section className="downstream-key-modal-section">
+        <div className="downstream-key-modal-section-title">额度与有效期</div>
+        <div className="downstream-key-modal-grid downstream-key-modal-grid-three">
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-max-requests">请求额度</label>
+            <input id="downstream-key-editor-max-requests" value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
           </div>
-        </label>
-      </div>
-
-      <div className="downstream-key-modal-field downstream-key-modal-field-full">
-        <div className="downstream-key-modal-label">备注说明</div>
-        <textarea
-          value={form.description}
-          onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-          placeholder="填写业务场景、负责人或限制说明"
-          style={{ ...inputStyle, minHeight: 84, resize: 'vertical' }}
-        />
-      </div>
-
-      <div className="downstream-key-modal-field downstream-key-modal-field-full">
-        <div className="downstream-key-modal-label">标签</div>
-        <TagInput
-          tags={form.tags}
-          onChange={(tags) => onChange((prev) => ({ ...prev, tags }))}
-          suggestions={tagSuggestions}
-          placeholder="输入标签后按回车或逗号，例如：移动端、VIP、项目A"
-        />
-        <div className="downstream-key-modal-help">标签用于搜索、筛选和辅助归类，不影响路由与权限。</div>
-      </div>
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-max-cost">成本额度</label>
+            <input id="downstream-key-editor-max-cost" value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
+          </div>
+          <div className="downstream-key-modal-field">
+            <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-expires-at">过期时间</label>
+            <input id="downstream-key-editor-expires-at" type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
+          </div>
+        </div>
+      </section>
 
       <div className="downstream-key-advanced">
-        <button type="button" className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()} onClick={() => setAdvancedOpen((value) => !value)}>
-          <span>高级配置</span>
+        <button
+          type="button"
+          className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()}
+          aria-expanded={advancedOpen}
+          aria-controls="downstream-key-editor-advanced-content"
+          onClick={() => setAdvancedOpen((value) => !value)}
+        >
+          <span>路由权限与分发</span>
           <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{advancedOpen ? '收起' : '展开'}</span>
         </button>
         {advancedOpen ? (
-          <div className="downstream-key-advanced-content">
+          <div id="downstream-key-editor-advanced-content" className="downstream-key-advanced-content">
+            <div className="info-tip" style={{ marginBottom: 0 }}>
+              精确模型、兼容模型规则与路由群组按并集授权；三项都为空时，该密钥不能访问任何模型。
+            </div>
             <div className="downstream-key-modal-field downstream-key-modal-field-full">
-              <div className="downstream-key-modal-label">站点倍率 JSON</div>
+              <label className="downstream-key-modal-label" htmlFor="downstream-key-editor-site-multipliers">站点路由倍率（JSON）</label>
               <textarea
+                id="downstream-key-editor-site-multipliers"
                 value={form.siteWeightMultipliersText}
                 onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
                 placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
@@ -462,11 +484,47 @@ export default function DownstreamKeyEditorModal({
             </div>
 
             <div className="downstream-key-advanced-grid" style={{ gridTemplateColumns: '1fr' }}>
+              {form.legacyModelRules.length > 0 ? (
+                <div className="downstream-key-advanced-panel">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div>
+                      <div className="downstream-key-modal-section-title">兼容模型规则</div>
+                      <div className="downstream-key-modal-help">保留旧配置中当前无法映射为精确模型或路由群组的规则。</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ border: '1px solid var(--color-border)' }}
+                      onClick={() => onChange((prev) => ({ ...prev, legacyModelRules: [] }))}
+                    >
+                      全部移除
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {form.legacyModelRules.map((rule) => (
+                      <div key={rule} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)' }}>
+                        <code style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--color-text-primary)', fontSize: 12 }}>{rule}</code>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => onChange((prev) => ({
+                            ...prev,
+                            legacyModelRules: prev.legacyModelRules.filter((item) => item !== rule),
+                          }))}
+                        >
+                          移除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="downstream-key-advanced-panel">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div>
-                    <div className="downstream-key-modal-section-title">模型白名单</div>
-                    <div className="downstream-key-modal-help">只展示精确模型；未勾选时默认不允许任何精确模型，可点“全选”一次性放开。</div>
+                    <div className="downstream-key-modal-section-title">精确模型权限</div>
+                    <div className="downstream-key-modal-help">授权直接使用的精确模型名和站点模型别名；与下方群组授权取并集。</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}>全选</button>
@@ -505,24 +563,24 @@ export default function DownstreamKeyEditorModal({
               <div className="downstream-key-advanced-panel">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div>
-                    <div className="downstream-key-modal-section-title">群组范围</div>
-                    <div className="downstream-key-modal-help">限制可访问的群组路由；未勾选时默认不允许任何群组，可点“全选”一次性放开。</div>
+                    <div className="downstream-key-modal-section-title">路由群组权限</div>
+                    <div className="downstream-key-modal-help">授权通配符、正则或显式群组路由；与上方精确模型授权取并集。</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>全选</button>
                     <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>清空</button>
                   </div>
                 </div>
-                <div className="downstream-key-modal-meta">已选 {selectedGroupCount} 个群组</div>
+                <div className="downstream-key-modal-meta">已选 {selectedGroupCount} 个路由群组</div>
                 <div className="toolbar-search" style={{ maxWidth: '100%' }}>
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
+                  <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索路由群组或模型模式" />
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {filteredGroups.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配群组</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配路由群组</div>
                   ) : filteredGroups.map((route) => {
                     const checked = normalizedSelectedGroupRouteIds.includes(route.id);
                     return (

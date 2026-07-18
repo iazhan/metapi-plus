@@ -554,7 +554,9 @@ function RouteCardInner({
   const exactRoute = isRouteExactModel(route);
   const explicitGroupRoute = isExplicitGroupRoute(route);
   const explicitGroupSourceCount = Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0;
-  const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
+  const managedAliasRoute = route.routeKind === 'site_alias';
+  const zeroChannelRoute = route.kind === 'zero_channel';
+  const readOnlyRoute = zeroChannelRoute || route.readOnly === true || route.isVirtual === true || managedAliasRoute;
   const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
   const routingStrategy = normalizeRouteRoutingStrategyValue(route.routingStrategy);
@@ -565,7 +567,9 @@ function RouteCardInner({
     ? `${tr('最近刷新')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
     : undefined;
   const showAddChannelButton = !readOnlyRoute && !channelManagementDisabled;
-  const showMissingTokenHints = !channelManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
+  const showMissingTokenHints = !managedAliasRoute
+    && !channelManagementDisabled
+    && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
   const routingStrategyOptions = [
     {
       value: 'weighted',
@@ -724,7 +728,7 @@ function RouteCardInner({
 
           {readOnlyRoute ? (
             <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
-              {tr('未生成')}
+              {managedAliasRoute ? tr('站点别名') : tr('未生成')}
             </span>
           ) : (
             <button
@@ -762,9 +766,11 @@ function RouteCardInner({
           ) : null}
 
           {readOnlyRoute ? (
-            <span className="badge badge-warning" style={{ fontSize: 10, flexShrink: 0 }}>
-              {tr('0 通道')}
-            </span>
+            !managedAliasRoute ? (
+              <span className="badge badge-warning" style={{ fontSize: 10, flexShrink: 0 }}>
+                {tr('0 通道')}
+              </span>
+            ) : null
           ) : (
             <span
               className="badge badge-muted"
@@ -820,7 +826,7 @@ function RouteCardInner({
             ) : null}
             {readOnlyRoute ? (
               <span className="badge badge-muted" style={{ fontSize: 10 }}>
-                {tr('未生成')}
+                {managedAliasRoute ? tr('站点别名') : tr('未生成')}
               </span>
             ) : (
               <button
@@ -855,7 +861,7 @@ function RouteCardInner({
                 {tr('已缓存')}
               </span>
             ) : null}
-            {readOnlyRoute && (
+            {readOnlyRoute && !managedAliasRoute && (
               <span className="badge badge-warning" style={{ fontSize: 10 }}>
                 {tr('0 通道')}
               </span>
@@ -918,7 +924,7 @@ function RouteCardInner({
                 <span className="badge badge-muted" style={{ fontSize: 10 }}>{route.modelPattern}</span>
               ) : null}
               {readOnlyRoute ? (
-                <span className="badge badge-muted" style={{ fontSize: 10 }}>{tr('未生成')}</span>
+                <span className="badge badge-muted" style={{ fontSize: 10 }}>{managedAliasRoute ? tr('站点别名') : tr('未生成')}</span>
               ) : (
                 <span className={`badge ${route.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 10 }}>
                   {route.enabled ? tr('启用') : tr('禁用')}
@@ -1202,7 +1208,9 @@ function RouteCardInner({
         </div>
       ) : (
         <div style={{ fontSize: 13, color: 'var(--color-text-muted)', paddingLeft: 4 }}>
-          {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
+      {readOnlyRoute
+        ? (managedAliasRoute ? tr('暂无可用来源通道') : tr('暂无通道，先补齐连接配置后再重建路由。'))
+        : tr('暂无通道')}
         </div>
       )}
     </div>

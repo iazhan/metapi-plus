@@ -62,4 +62,62 @@ describe('runtimeMaintenanceOwner', () => {
 
     expect(start).not.toHaveBeenCalled();
   });
+
+  it('calls the scheduler start hook only once when that hook throws', async () => {
+    const start = vi.fn(() => {
+      throw new Error('scheduler start failed');
+    });
+
+    await expect(runRuntimeMaintenance('restore', async () => 'restored', {
+      stop: async () => undefined,
+      start,
+    })).rejects.toThrow('scheduler start failed');
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for an asynchronous scheduler start failure', async () => {
+    const start = vi.fn(async () => {
+      await Promise.resolve();
+      throw new Error('async scheduler start failed');
+    });
+
+    await expect(runRuntimeMaintenance('factory-reset', async () => 'reset', {
+      stop: async () => undefined,
+      start,
+    })).rejects.toThrow('async scheduler start failed');
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps work and committed recovery exclusive while stopping and starting outside the lock', async () => {
+    const steps: string[] = [];
+
+    await expect(runRuntimeMaintenance('restore', async ({ markCommitted }) => {
+      steps.push('work');
+      markCommitted();
+      throw new Error('work failed');
+    }, {
+      stop: async () => { steps.push('stop'); },
+      start: () => { steps.push('start'); },
+      reconcileCommittedRuntime: async () => { steps.push('reconcile-committed'); },
+      runExclusive: async (task) => {
+        steps.push('exclusive:start');
+        try {
+          return await task();
+        } finally {
+          steps.push('exclusive:end');
+        }
+      },
+    })).rejects.toThrow('work failed');
+
+    expect(steps).toEqual([
+      'stop',
+      'exclusive:start',
+      'work',
+      'reconcile-committed',
+      'exclusive:end',
+      'start',
+    ]);
+  });
 });

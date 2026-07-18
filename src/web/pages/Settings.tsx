@@ -431,6 +431,7 @@ export default function Settings() {
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [testingCheckin, setTestingCheckin] = useState(false);
   const [testingPriceRefresh, setTestingPriceRefresh] = useState(false);
+  const [refreshingAccountGroupRates, setRefreshingAccountGroupRates] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
   const [savingModelAvailabilityProbe, setSavingModelAvailabilityProbe] = useState(false);
@@ -917,6 +918,23 @@ export default function Settings() {
       toast.error(err?.message || '触发价格刷新失败');
     } finally {
       setTestingPriceRefresh(false);
+    }
+  };
+
+  const triggerAccountGroupRateRefresh = async () => {
+    setRefreshingAccountGroupRates(true);
+    try {
+      const { result } = await api.refreshAccountGroupRates();
+      const summary = `倍率刷新完成：扫描 ${result.scanned}，符合条件 ${result.candidates}，成功 ${result.synced}，跳过 ${result.skipped}，延后 ${result.deferred}，失败 ${result.failed}，恢复 ${result.recovered}。`;
+      if (result.failed > 0) {
+        toast.info(`${summary}部分账号失败，请查看程序日志。`);
+      } else {
+        toast.success(summary);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || '刷新账号倍率失败');
+    } finally {
+      setRefreshingAccountGroupRates(false);
     }
   };
 
@@ -1565,19 +1583,30 @@ export default function Settings() {
               />
               启用账号倍率自动刷新
             </label>
-            <div style={{ width: isMobile ? '100%' : 220, maxWidth: '100%' }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>倍率刷新间隔（分钟）</div>
-              <input
-                data-testid="account-group-rate-refresh-interval-minutes"
-                type="number"
-                min={ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES}
-                max={ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES}
-                step={1}
-                value={accountGroupRateRefreshIntervalDraft}
-                disabled={!runtime.accountGroupRateRefreshEnabled}
-                onChange={(event) => setAccountGroupRateRefreshIntervalDraft(event.target.value)}
-                style={inputStyle}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '220px auto', gap: 12, alignItems: 'end' }}>
+              <div style={{ width: '100%', maxWidth: '100%' }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>倍率刷新间隔（分钟）</div>
+                <input
+                  data-testid="account-group-rate-refresh-interval-minutes"
+                  type="number"
+                  min={ACCOUNT_GROUP_RATE_REFRESH_MIN_INTERVAL_MINUTES}
+                  max={ACCOUNT_GROUP_RATE_REFRESH_MAX_INTERVAL_MINUTES}
+                  step={1}
+                  value={accountGroupRateRefreshIntervalDraft}
+                  disabled={!runtime.accountGroupRateRefreshEnabled}
+                  onChange={(event) => setAccountGroupRateRefreshIntervalDraft(event.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <button
+                data-testid="account-group-rate-refresh-now"
+                onClick={triggerAccountGroupRateRefresh}
+                disabled={refreshingAccountGroupRates}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+              >
+                {refreshingAccountGroupRates ? '刷新中...' : '立即刷新倍率'}
+              </button>
             </div>
           </ScheduleSubsection>
 

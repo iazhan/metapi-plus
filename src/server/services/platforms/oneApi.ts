@@ -1,4 +1,11 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
+import {
+  ApiTokenInfo,
+  BasePlatformAdapter,
+  CheckinResult,
+  BalanceInfo,
+  CreateApiTokenOptions,
+  type PlatformDetectionContext,
+} from './base.js';
 import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
 import { normalizeNewApiPricingPayload } from '../../pricing/platformQuoteNormalizers.js';
 
@@ -54,9 +61,9 @@ export class OneApiAdapter extends BasePlatformAdapter {
     };
   }
 
-  async detect(url: string): Promise<boolean> {
+  async detect(url: string, context?: PlatformDetectionContext): Promise<boolean> {
     try {
-      const res = await this.fetchJson<any>(`${url}/api/status`);
+      const res = await this.fetchDetectionJson<any>(`${url}/api/status`, context);
       return res?.success === true && !res?.data?.system_name;
     } catch {
       return false;

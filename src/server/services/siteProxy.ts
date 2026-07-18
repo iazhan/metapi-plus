@@ -344,6 +344,15 @@ export function parseSiteProxyUrlInput(input: unknown): ParsedSiteProxyInput {
     return { present: true, valid: false, proxyUrl: null };
   }
 
+  try {
+    const parsedProxyUrl = new URL(normalized);
+    if (SOCKS_PROXY_PROTOCOLS.has(parsedProxyUrl.protocol.toLowerCase())) {
+      parseSocksProxyUrl(parsedProxyUrl);
+    }
+  } catch {
+    return { present: true, valid: false, proxyUrl: null };
+  }
+
   return {
     present: true,
     valid: true,
@@ -442,7 +451,9 @@ export function withExplicitProxyRequestInit(
   if (!normalized) return options ?? {};
 
   const dispatcher = getDispatcherByProxyUrl(normalized, skipCache);
-  if (!dispatcher) return options ?? {};
+  if (!dispatcher) {
+    throw new Error('Failed to initialize proxy dispatcher');
+  }
 
   return {
     ...(options || {}),

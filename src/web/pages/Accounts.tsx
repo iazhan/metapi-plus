@@ -73,6 +73,51 @@ const ACCOUNT_SEGMENTS: Array<{
 
 const SITE_SELECT_SEARCH_PLACEHOLDER = "筛选站点（名称 / 平台 / URL）";
 
+const ACCOUNT_STATUS_SEARCH_LABELS: Record<string, string[]> = {
+  active: ["启用", "正常", "活动"],
+  disabled: ["禁用", "已禁用"],
+  expired: ["过期", "已过期"],
+  healthy: ["健康"],
+  unhealthy: ["异常", "不健康"],
+  degraded: ["降级"],
+  unknown: ["未知"],
+};
+
+function matchesAccountSearch(
+  account: any,
+  displayName: string,
+  query: string,
+): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+
+  const statusValues = [
+    account?.status,
+    account?.runtimeHealth?.state,
+    account?.runtimeHealth?.reason,
+    account?.site?.status,
+  ];
+  const localizedStatuses = statusValues.flatMap((value) => {
+    const key = String(value || "").trim().toLowerCase();
+    return ACCOUNT_STATUS_SEARCH_LABELS[key] || [];
+  });
+  const searchableText = [
+    account?.id,
+    account?.username,
+    displayName,
+    account?.site?.name,
+    account?.site?.platform,
+    account?.site?.url,
+    ...statusValues,
+    ...localizedStatuses,
+  ]
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => String(value).toLowerCase())
+    .join(" ");
+
+  return terms.every((term) => searchableText.includes(term));
+}
+
 function createLoginForm() {
   return { siteId: 0, username: "", password: "" };
 }
@@ -155,6 +200,7 @@ export default function Accounts() {
     null,
   );
   const [expandedAccountIds, setExpandedAccountIds] = useState<number[]>([]);
+  const [accountSearch, setAccountSearch] = useState("");
   const isMobile = useIsMobile();
   const [showMobileTools, setShowMobileTools] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -175,12 +221,19 @@ export default function Accounts() {
     useState<React.ReactNode>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<null | {
-    mode: "single" | "batch";
-    accountId?: number;
-    accountName?: string;
-    count?: number;
-  }>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<
+    | null
+    | {
+        mode: "single";
+        accountId: number;
+        accountName: string;
+      }
+    | {
+        mode: "batch";
+        count: number;
+        targetIds: number[];
+      }
+  >(null);
   const [editingAccount, setEditingAccount] = useState<any | null>(null);
   const [editingAccountGroupRates, setEditingAccountGroupRates] = useState<AccountGroupRateDto[]>([]);
   const [editingAccountGroupRatesLoading, setEditingAccountGroupRatesLoading] = useState(false);
@@ -335,12 +388,22 @@ export default function Accounts() {
   const visibleAccounts = useMemo(() => {
     if (activeSegment === "tokens") return [];
     return sortedAccounts.filter(
-      (account) => resolveAccountCredentialMode(account) === activeSegment,
+      (account) =>
+        resolveAccountCredentialMode(account) === activeSegment &&
+        matchesAccountSearch(
+          account,
+          resolveAccountDisplayName(account),
+          accountSearch,
+        ),
     );
-  }, [activeSegment, sortedAccounts]);
+  }, [accountSearch, activeSegment, sortedAccounts]);
+  const selectedVisibleAccountIds = useMemo(() => {
+    const visibleIds = new Set(visibleAccounts.map((account) => account.id));
+    return selectedAccountIds.filter((id) => visibleIds.has(id));
+  }, [selectedAccountIds, visibleAccounts]);
   const allVisibleAccountsSelected =
     visibleAccounts.length > 0 &&
-    visibleAccounts.every((account) => selectedAccountIds.includes(account.id));
+    selectedVisibleAccountIds.length === visibleAccounts.length;
   const verifyFailureHint = buildVerifyFailureHint(verifyResult);
   const addAccountPrereqHint = buildAddAccountPrereqHint(verifyResult);
 
@@ -1078,17 +1141,23 @@ export default function Accounts() {
   const runBatchAccountAction = async (
     action: "enable" | "disable" | "delete" | "refreshBalance",
     skipDeleteConfirm = false,
+    targetIdsOverride?: number[],
   ) => {
-    if (selectedAccountIds.length === 0) return;
+    const targetIds = targetIdsOverride ?? selectedVisibleAccountIds;
+    if (targetIds.length === 0) return;
     if (action === "delete" && !skipDeleteConfirm) {
-      setDeleteConfirm({ mode: "batch", count: selectedAccountIds.length });
+      setDeleteConfirm({
+        mode: "batch",
+        count: targetIds.length,
+        targetIds: [...targetIds],
+      });
       return;
     }
 
     setBatchActionLoading(true);
     try {
       const result = await api.batchUpdateAccounts({
-        ids: selectedAccountIds,
+        ids: targetIds,
         action,
       });
       const successIds = Array.isArray(result?.successIds)
@@ -1104,11 +1173,14 @@ export default function Accounts() {
       } else {
         toast.success(`批量操作完成：成功 ${successIds.length}`);
       }
-      setSelectedAccountIds(
-        failedItems
-          .map((item: any) => Number(item.id))
-          .filter((id: number) => Number.isFinite(id) && id > 0),
-      );
+      const failedIds = failedItems
+        .map((item: any) => Number(item.id))
+        .filter((id: number) => Number.isFinite(id) && id > 0);
+      const targetIdSet = new Set(targetIds);
+      setSelectedAccountIds((current) => [
+        ...current.filter((id) => !targetIdSet.has(id)),
+        ...failedIds,
+      ]);
       load(true);
     } catch (e: any) {
       toast.error(e.message || "批量操作失败");
@@ -1122,16 +1194,16 @@ export default function Accounts() {
     if (!target) return;
 
     setDeleteConfirm(null);
-    if (target.mode === "single" && target.accountId) {
+    if (target.mode === "single") {
       await withLoading(
         `delete-${target.accountId}`,
-        () => api.deleteAccount(target.accountId!),
+        () => api.deleteAccount(target.accountId),
         "已删除",
       );
       return;
     }
 
-    await runBatchAccountAction("delete", true);
+    await runBatchAccountAction("delete", true, target.targetIds);
   };
 
   const handleAccountRowClick = (
@@ -1313,11 +1385,12 @@ export default function Accounts() {
               <>
                 <button
                   type="button"
+                  data-testid="accounts-mobile-filter"
                   onClick={() => setShowMobileTools(true)}
                   className="btn btn-ghost"
                   style={{ border: "1px solid var(--color-border)" }}
                 >
-                  排序与操作
+                  筛选与操作
                 </button>
                 <button
                   type="button"
@@ -1412,9 +1485,29 @@ export default function Accounts() {
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="连接排序与操作"
+        mobileTitle="连接筛选与操作"
         mobileContent={
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {activeSegment !== "tokens" && (
+              <label
+                style={{ display: "flex", flexDirection: "column", gap: 6 }}
+              >
+                <span
+                  style={{ fontSize: 12, color: "var(--color-text-muted)" }}
+                >
+                  搜索连接
+                </span>
+                <input
+                  type="search"
+                  data-testid="accounts-search"
+                  aria-label="搜索连接"
+                  value={accountSearch}
+                  onChange={(event) => setAccountSearch(event.target.value)}
+                  placeholder="账号、站点、状态或 ID"
+                  style={inputStyle}
+                />
+              </label>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
                 排序方式
@@ -1473,6 +1566,21 @@ export default function Accounts() {
               )}
             </button>
           </div>
+        }
+        desktopContent={
+          activeSegment !== "tokens" ? (
+            <div className="toolbar" style={{ marginBottom: 12 }}>
+              <input
+                type="search"
+                data-testid="accounts-search"
+                aria-label="搜索连接"
+                value={accountSearch}
+                onChange={(event) => setAccountSearch(event.target.value)}
+                placeholder="搜索账号、站点、状态或 ID"
+                style={{ ...inputStyle, maxWidth: 420 }}
+              />
+            </div>
+          ) : null
         }
       />
 
@@ -1549,10 +1657,10 @@ export default function Accounts() {
         }
       />
 
-      {activeSegment !== "tokens" && selectedAccountIds.length > 0 && (
+      {activeSegment !== "tokens" && selectedVisibleAccountIds.length > 0 && (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
-          info={`已选 ${selectedAccountIds.length} 项`}
+          info={`已选 ${selectedVisibleAccountIds.length} 项`}
           desktopStyle={{ marginBottom: 12 }}
         >
           <button
@@ -3505,18 +3613,22 @@ export default function Accounts() {
                   />
                 </svg>
                 <div className="empty-state-title">
-                  {activeSegment === "apikey"
-                    ? "暂无 API Key 连接"
-                    : "暂无 Session 连接"}
+                  {accountSearch.trim()
+                    ? "没有匹配的连接"
+                    : activeSegment === "apikey"
+                      ? "暂无 API Key 连接"
+                      : "暂无 Session 连接"}
                 </div>
                 <div className="empty-state-desc">
-                  {activeSegment === "apikey"
-                    ? sites.length > 0
-                      ? "请为现有站点补充 API Key 连接"
-                      : "请先添加站点，然后为站点补充 API Key 连接"
-                    : sites.length > 0
-                      ? "请为现有站点添加 Session 连接"
-                      : "请先添加站点，然后添加 Session 连接"}
+                  {accountSearch.trim()
+                    ? "请调整账号、站点、状态或 ID 关键词"
+                    : activeSegment === "apikey"
+                      ? sites.length > 0
+                        ? "请为现有站点补充 API Key 连接"
+                        : "请先添加站点，然后为站点补充 API Key 连接"
+                      : sites.length > 0
+                        ? "请为现有站点添加 Session 连接"
+                        : "请先添加站点，然后添加 Session 连接"}
                 </div>
               </div>
             )}

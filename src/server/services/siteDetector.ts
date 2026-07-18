@@ -1,8 +1,9 @@
 import { detectPlatform } from './platforms/index.js';
+import type { PlatformDetectionContext } from './platforms/base.js';
 import { detectSiteInitializationPreset } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
 
-export async function detectSite(url: string) {
+export async function detectSite(url: string, context?: PlatformDetectionContext) {
   const analyzed = analyzePrimarySiteUrl(url);
   const detectionUrl = analyzed.canonicalUrl;
   const persistedUrl = analyzed.persistedUrl || detectionUrl;
@@ -14,7 +15,7 @@ export async function detectSite(url: string) {
       initializationPresetId: preset.id,
     };
   }
-  const adapter = await detectPlatform(detectionUrl);
+  const adapter = await detectPlatform(detectionUrl, context);
   if (!adapter) return null;
   return { url: persistedUrl, platform: adapter.platformName };
 }

@@ -171,11 +171,21 @@ describe('Accounts mobile actions', () => {
         selectAllButton.props.onClick();
       });
       await flushMicrotasks();
-      expect(collectText(root.root)).toContain('已选 2 项');
+      expect(collectText(root.root)).toContain('已选 1 项');
 
       const clearVisibleButton = root.root.find((node) => node.props['data-testid'] === 'accounts-mobile-select-all');
       await act(async () => {
         clearVisibleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(root.root.findAll((node) => (
+        node.props['data-testid'] === 'accounts-batch-refresh-balance'
+      ))).toHaveLength(0);
+
+      const sessionSegmentButton = findButtonByText(root.root, '账号管理');
+      await act(async () => {
+        sessionSegmentButton.props.onClick();
       });
       await flushMicrotasks();
 

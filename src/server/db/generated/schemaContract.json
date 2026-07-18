@@ -2066,6 +2066,58 @@
         }
       }
     },
+    "site_model_aliases": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_model": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "alias_model": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "alias_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "site_model_price_rules": {
       "columns": {
         "id": {
@@ -2524,6 +2576,12 @@
           "logicalType": "text",
           "notNull": false,
           "defaultValue": "'pattern'",
+          "primaryKey": false
+        },
+        "route_kind": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }
@@ -3162,6 +3220,23 @@
       "unique": false
     },
     {
+      "name": "site_model_aliases_site_alias_key_unique",
+      "table": "site_model_aliases",
+      "columns": [
+        "site_id",
+        "alias_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "site_model_aliases_site_id_idx",
+      "table": "site_model_aliases",
+      "columns": [
+        "site_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "site_model_price_rules_site_id_idx",
       "table": "site_model_price_rules",
       "columns": [
@@ -3399,6 +3474,14 @@
       ]
     },
     {
+      "name": "site_model_aliases_site_alias_key_unique",
+      "table": "site_model_aliases",
+      "columns": [
+        "site_id",
+        "alias_key"
+      ]
+    },
+    {
       "name": "site_model_price_rules_site_model_unique",
       "table": "site_model_price_rules",
       "columns": [
@@ -3621,6 +3704,17 @@
     },
     {
       "table": "site_hour_usage",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_model_aliases",
       "columns": [
         "site_id"
       ],

@@ -211,6 +211,13 @@
       "when": 1783834006328,
       "tag": "0030_remove_oauth_native_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1784097159032,
+      "tag": "0031_site_model_aliases",
+      "breakpoints": true
     }
   ]
 }

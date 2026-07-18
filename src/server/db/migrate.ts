@@ -459,6 +459,107 @@ function backfillMissingRecordedMigrations(sqlite: Database.Database, migrations
   return recoveredCount;
 }
 
+type OauthRetirementState = 'pending' | 'applied' | 'inconsistent';
+
+function inspectOauthRetirementState(sqlite: Database.Database): OauthRetirementState {
+  if (!tableExists(sqlite, 'sites')) return 'pending';
+  if (!tableExists(sqlite, 'accounts')) return 'pending';
+  if (!tableExists(sqlite, 'route_channels')) return 'pending';
+
+  const obsoleteSchemaExists = (
+    tableExists(sqlite, 'oauth_route_unit_members')
+    || tableExists(sqlite, 'oauth_route_units')
+    || columnExists(sqlite, 'accounts', 'oauth_provider')
+    || columnExists(sqlite, 'accounts', 'oauth_account_key')
+    || columnExists(sqlite, 'accounts', 'oauth_project_id')
+    || columnExists(sqlite, 'route_channels', 'oauth_route_unit_id')
+  );
+  if (obsoleteSchemaExists) return 'pending';
+
+  const legacyPlatformRow = sqlite.prepare(`
+    SELECT 1
+    FROM sites
+    WHERE lower(trim(platform)) IN ('codex', 'gemini-cli', 'antigravity')
+    LIMIT 1
+  `).get();
+  const oauthExtraConfigRow = sqlite.prepare(`
+    SELECT 1
+    FROM accounts
+    WHERE CASE
+      WHEN json_valid(extra_config) = 1
+        THEN json_extract(extra_config, '$.oauth.provider') IS NOT NULL
+      ELSE 0
+    END
+    LIMIT 1
+  `).get();
+  return legacyPlatformRow || oauthExtraConfigRow ? 'inconsistent' : 'applied';
+}
+
+function reconcileMissingOauthRetirementMigrationRecord(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+): void {
+  if (!tableExists(sqlite, '__drizzle_migrations')) return;
+
+  const migrations = readRecoveryMigrations(migrationsFolder);
+  const retirementIndex = migrations.findIndex((migration) => (
+    migration.tag === OAUTH_RETIREMENT_MIGRATION_TAG
+  ));
+  if (retirementIndex < 0) return;
+
+  const retirementMigration = migrations[retirementIndex]!;
+  if (hasMigrationRecord(sqlite, retirementMigration)) return;
+
+  const knownLaterMigrations = migrations.slice(retirementIndex + 1);
+  const knownLaterHashes = new Set(knownLaterMigrations.map((migration) => migration.hash));
+  const laterRows = sqlite.prepare(
+    'SELECT "hash", "created_at" FROM "__drizzle_migrations"',
+  ).all() as Array<{ hash: string; created_at: number | string | null }>;
+  const unknownLaterRows = laterRows.filter((row) => {
+    if (knownLaterHashes.has(row.hash)) return false;
+    const rawCreatedAt = row.created_at;
+    const createdAt = typeof rawCreatedAt === 'number'
+      ? rawCreatedAt
+      : (typeof rawCreatedAt === 'string' && rawCreatedAt.trim()
+        ? Number(rawCreatedAt)
+        : Number.NaN);
+    return !Number.isFinite(createdAt) || createdAt >= retirementMigration.createdAt;
+  });
+  if (unknownLaterRows.length > 0) {
+    throw new Error(
+      `[db] Cannot safely recover unknown migration record after missing ${OAUTH_RETIREMENT_MIGRATION_TAG}.`,
+    );
+  }
+
+  const retirementState = inspectOauthRetirementState(sqlite);
+  if (retirementState === 'inconsistent') {
+    throw new Error(
+      `[db] Cannot safely recover inconsistent OAuth retirement state after missing ${OAUTH_RETIREMENT_MIGRATION_TAG}.`,
+    );
+  }
+  if (retirementState === 'applied') {
+    markMigrationRecordIfMissing(sqlite, retirementMigration);
+    console.warn(`[db] Recorded already-applied migration ${OAUTH_RETIREMENT_MIGRATION_TAG}.`);
+    return;
+  }
+
+  const recordedLaterMigrations = knownLaterMigrations
+    .filter((migration) => hasMigrationRecord(sqlite, migration));
+  if (recordedLaterMigrations.length === 0) return;
+
+  const removeRecord = sqlite.prepare(
+    'DELETE FROM "__drizzle_migrations" WHERE "hash" = ?',
+  );
+  const rewind = sqlite.transaction((records: RecoveryMigration[]) => {
+    for (const record of records) removeRecord.run(record.hash);
+  });
+  rewind(recordedLaterMigrations);
+
+  console.warn(
+    `[db] Rewound ${recordedLaterMigrations.length} migration record(s) after missing ${OAUTH_RETIREMENT_MIGRATION_TAG}.`,
+  );
+}
+
 function buildOauthRetirementBackupPath(dbPath: string, now = new Date()): string {
   const timestamp = now.toISOString()
     .replace(/[-:]/g, '')
@@ -734,11 +835,13 @@ export async function runSqliteMigrations(): Promise<void> {
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   try {
     await backupBeforeOauthRetirement(sqlite, dbPath, migrationsFolder);
+    backfillMissingRecordedMigrations(sqlite, migrationsFolder);
+    reconcileMissingOauthRetirementMigrationRecord(sqlite, migrationsFolder);
+    backfillMissingRecordedMigrations(sqlite, migrationsFolder);
   } catch (error) {
     sqlite.close();
     throw error;
   }
-  backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
   runSqliteMigrationRecoveryLoop({
     runMigrate: () => {

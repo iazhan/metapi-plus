@@ -148,6 +148,29 @@ describe('api proxy test timeout handling', () => {
     expect(result.error.message).toBe('请求超时（75s）');
   });
 
+  it('keeps an immediate account rate refresh alive past the default timeout', async () => {
+    installPendingFetch();
+
+    let settled = false;
+    const handled = api.refreshAccountGroupRates()
+      .then(() => ({ ok: true as const }))
+      .catch((error: Error) => ({ ok: false as const, error }))
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const result = await handled;
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('Expected account rate refresh to time out');
+    }
+    expect(result.error.message).toBe('请求超时（150s）');
+  });
+
   it('keeps all-model site probes alive past the default 30 second timeout', async () => {
     installPendingFetch();
 
@@ -247,5 +270,51 @@ describe('api proxy test timeout handling', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       '/api/accounts/9/group-rates/pro%2Fteam/rule',
     );
+  });
+
+  it('sends proxy context with site detection requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ platform: 'new-api' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.detectSite('https://proxy-detect.example.com', {
+      proxyUrl: 'socks5h://proxy-user:proxy-secret@127.0.0.1:1080',
+      useSystemProxy: true,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sites/detect');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      url: 'https://proxy-detect.example.com',
+      proxyUrl: 'socks5h://proxy-user:proxy-secret@127.0.0.1:1080',
+      useSystemProxy: true,
+    });
+  });
+
+  it('requests an immediate account group rate refresh', async () => {
+    const responseBody = {
+      success: true,
+      result: {
+        scanned: 4,
+        candidates: 3,
+        synced: 2,
+        skipped: 1,
+        deferred: 0,
+        failed: 1,
+        recovered: 0,
+        durationMs: 80,
+      },
+    } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(responseBody),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.refreshAccountGroupRates()).resolves.toEqual(responseBody);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/settings/account-group-rates/refresh');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
   });
 });
