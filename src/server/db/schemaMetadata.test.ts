@@ -14,4 +14,14 @@ describe('schema metadata pricing fields', () => {
       dialect: 'sqlite',
     })).toBe('json');
   });
+
+  it('preserves prompt cache inclusion flags as booleans across dialects', () => {
+    for (const dialect of ['sqlite', 'mysql', 'postgres'] as const) {
+      expect(normalizeLogicalColumnType({
+        declaredType: 'integer',
+        columnName: 'prompt_tokens_include_cache',
+        dialect,
+      })).toBe('boolean');
+    }
+  });
 });

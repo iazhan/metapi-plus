@@ -139,6 +139,34 @@ describe('pricing routes', () => {
     ]);
   });
 
+  it('exposes only first-party catalog entries and rejects third-party mappings', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'catalog-site', url: 'https://catalog.example', platform: 'new-api', status: 'active',
+    }).returning().get();
+    await db.insert(schema.accounts).values({
+      siteId: site.id, username: 'alice', accessToken: 'token', status: 'active',
+    }).returning().get();
+    const fetchedAt = '2026-07-12T00:00:00.000Z';
+    await db.insert(schema.officialModelPrices).values([
+      { providerId: 'openai', modelId: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', inputPerMillionUsd: 5, fetchedAt },
+      { providerId: 'openrouter', modelId: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol via OpenRouter', inputPerMillionUsd: 4, fetchedAt },
+    ]).run();
+
+    const view = await app.inject({ method: 'GET', url: `/api/sites/${site.id}/pricing` });
+    expect(view.statusCode).toBe(200);
+    expect(view.json().catalog).toEqual([
+      expect.objectContaining({ providerId: 'openai', modelId: 'gpt-5.6-sol' }),
+    ]);
+
+    const rejected = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}/pricing/models/gpt-5.6-sol/rule`,
+      payload: { mappingMode: 'manual', mappedProviderId: 'openrouter', mappedModelId: 'gpt-5.6-sol' },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error).toContain('first-party provider');
+  });
+
   it('persists validated refresh settings', async () => {
     const response = await app.inject({
       method: 'PUT', url: '/api/pricing/settings',

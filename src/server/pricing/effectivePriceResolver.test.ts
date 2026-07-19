@@ -85,6 +85,33 @@ describe('effective price resolver', () => {
     });
   });
 
+  it('uses only the first-party catalog quote when third-party quotes share the model id', async () => {
+    await repository.replaceOfficialPriceSnapshot([
+      {
+        providerId: 'openai', modelId: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol',
+        inputPerMillionUsd: 5, outputPerMillionUsd: 30,
+        fetchedAt: '2026-07-12T00:00:00.000Z',
+      },
+      {
+        providerId: 'openrouter', modelId: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol via OpenRouter',
+        inputPerMillionUsd: 4, outputPerMillionUsd: 24,
+        fetchedAt: '2026-07-12T00:00:00.000Z',
+      },
+    ]);
+
+    const result = await resolver.resolveEffectivePrice({
+      siteId, accountId, tokenGroup: null, upstreamModelId: 'gpt-5.6-sol',
+    });
+
+    expect(result).toMatchObject({
+      providerId: 'openai',
+      catalogModelId: 'gpt-5.6-sol',
+      mappingSource: 'exact',
+      inputPerMillionUsd: 5,
+      outputPerMillionUsd: 30,
+    });
+  });
+
   it('uses manual group rate before synchronized rate and restores inheritance on delete', async () => {
     await db.insert(schema.accountGroupRates).values({
       accountId, groupKey: 'vip', groupName: 'VIP', ratio: 1.5,

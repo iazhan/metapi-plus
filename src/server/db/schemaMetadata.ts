@@ -22,7 +22,8 @@ function isBooleanLikeColumn(columnName: string, defaultValue: string | null): b
     || normalizedColumn === 'read'
     || normalizedColumn === 'enabled'
     || normalizedColumn === 'available'
-    || normalizedColumn === 'manual_override';
+    || normalizedColumn === 'manual_override'
+    || normalizedColumn === 'prompt_tokens_include_cache';
 }
 
 function isDateTimeLikeColumn(columnName: string, defaultValue: string | null): boolean {

@@ -3008,6 +3008,94 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
   border-top-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
+.tooltip-bubble.is-detail,
+[data-theme="dark"] .tooltip-bubble.is-detail {
+  width: min(330px, calc(100vw - 24px));
+  min-width: min(290px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #e5e7eb;
+  background: #101827;
+  box-shadow: 0 14px 36px rgba(2, 6, 23, 0.42);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.tooltip-bubble.is-detail .tooltip-bubble-arrow,
+[data-theme="dark"] .tooltip-bubble.is-detail .tooltip-bubble-arrow {
+  background: #101827;
+  border-color: #334155;
+}
+
+.tooltip-detail-title {
+  padding: 9px 12px 7px;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tooltip-detail-section {
+  padding: 7px 12px 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.tooltip-detail-section-title {
+  margin-bottom: 5px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tooltip-detail-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(0, 1.7fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.tooltip-detail-row + .tooltip-detail-row {
+  margin-top: 3px;
+}
+
+.tooltip-detail-label {
+  min-width: 0;
+  color: #94a3b8;
+}
+
+.tooltip-detail-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e5e7eb;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-align: right;
+}
+
+.tooltip-detail-value.is-muted {
+  color: #94a3b8;
+}
+
+.tooltip-detail-value.is-info {
+  color: #7dd3fc;
+}
+
+.tooltip-detail-value.is-accent {
+  color: #60a5fa;
+}
+
+.tooltip-detail-value.is-success {
+  color: #4ade80;
+}
+
+.tooltip-detail-value.is-warning {
+  color: #fbbf24;
+}
+
 [data-theme="dark"] .route-enable-toggle.is-enabled {
   background: #052e16;
   color: #4ade80;
@@ -5032,6 +5120,203 @@ textarea {
 .proxy-logs-filter-reset {
   border: 1px solid var(--color-border);
   padding: 8px 12px;
+}
+
+.proxy-logs-table {
+  table-layout: fixed;
+}
+
+.proxy-logs-table th,
+.proxy-logs-table td {
+  text-align: left;
+}
+
+.proxy-logs-table .proxy-log-col-disclosure {
+  width: 28px;
+}
+
+.proxy-logs-table .proxy-log-col-time {
+  width: 140px;
+}
+
+.proxy-logs-table .proxy-log-col-model {
+  width: 120px;
+}
+
+.proxy-logs-table .proxy-log-col-site {
+  width: 68px;
+}
+
+.proxy-logs-table .proxy-log-col-client {
+  width: 96px;
+}
+
+.proxy-logs-table .proxy-log-col-status {
+  width: 64px;
+}
+
+.proxy-logs-table .proxy-log-col-latency {
+  width: 64px;
+}
+
+.proxy-logs-table .proxy-log-col-token {
+  width: 60px;
+}
+
+.proxy-logs-table .proxy-log-col-cache {
+  width: 68px;
+}
+
+.proxy-logs-table .proxy-log-col-cost {
+  width: 124px;
+}
+
+.proxy-logs-table .proxy-log-col-retry {
+  width: 44px;
+}
+
+.proxy-logs-table .proxy-log-disclosure-cell {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.proxy-logs-table .proxy-log-compact-cell {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.proxy-logs-table .proxy-log-numeric-column {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.proxy-logs-table .proxy-log-retry-column {
+  text-align: center;
+}
+
+@media (min-width: 1600px) {
+  .proxy-logs-table .proxy-log-col-time {
+    width: 176px;
+  }
+
+  .proxy-logs-table .proxy-log-col-model {
+    width: 190px;
+  }
+
+  .proxy-logs-table .proxy-log-col-site {
+    width: 96px;
+  }
+
+  .proxy-logs-table .proxy-log-col-client {
+    width: 148px;
+  }
+
+  .proxy-logs-table .proxy-log-col-status {
+    width: 72px;
+  }
+
+  .proxy-logs-table .proxy-log-col-latency {
+    width: 78px;
+  }
+
+  .proxy-logs-table .proxy-log-col-token {
+    width: 72px;
+  }
+
+  .proxy-logs-table .proxy-log-col-cache {
+    width: 84px;
+  }
+
+  .proxy-logs-table .proxy-log-col-cost {
+    width: 152px;
+  }
+
+  .proxy-logs-table .proxy-log-col-retry {
+    width: 54px;
+  }
+}
+
+.proxy-log-cost-display {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.proxy-log-cost-info {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-info) 48%, transparent);
+  border-radius: 50%;
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 10%, var(--color-bg-card));
+  cursor: help;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.proxy-log-cost-info:hover,
+.proxy-log-cost-info:focus-visible {
+  border-color: var(--color-info);
+  color: #ffffff;
+  background: var(--color-info);
+  outline: none;
+}
+
+.proxy-log-cost-info:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-info) 25%, transparent);
+}
+
+.proxy-log-billing-fallback {
+  width: min(760px, 100%);
+  min-width: 0;
+}
+
+.proxy-log-billing-fallback-note {
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+.proxy-log-billing-fallback-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.proxy-log-billing-fallback-metric {
+  min-width: 0;
+}
+
+.proxy-log-billing-fallback-label,
+.proxy-log-billing-fallback-value {
+  display: block;
+}
+
+.proxy-log-billing-fallback-label {
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+.proxy-log-billing-fallback-value {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 /* ===== View Toggle ===== */

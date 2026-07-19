@@ -39,6 +39,66 @@ describe('site model mapping', () => {
     })).toMatchObject({ status: 'mapped', source: 'exact', providerId: 'anthropic' });
   });
 
+  it('prefers the first-party provider over third-party catalog quotes', () => {
+    expect(resolveCatalogMapping({
+      upstreamModelId: 'gpt-5.6-sol',
+      catalog: [
+        { providerId: 'openai', modelId: 'gpt-5.6-sol' },
+        { providerId: 'openrouter', modelId: 'gpt-5.6-sol' },
+        { providerId: 'azure', modelId: 'gpt-5.6-sol' },
+      ],
+    })).toEqual({
+      status: 'mapped',
+      source: 'exact',
+      providerId: 'openai',
+      modelId: 'gpt-5.6-sol',
+    });
+  });
+
+  it('rejects manual mappings to non-first-party providers', () => {
+    expect(resolveCatalogMapping({
+      upstreamModelId: 'gpt-5.6-sol',
+      catalog,
+      rule: {
+        mappingMode: 'manual',
+        mappedProviderId: 'openrouter',
+        mappedModelId: 'gpt-5.6-sol',
+      },
+    })).toEqual({ status: 'unmapped' });
+  });
+
+  it('does not treat hosted Bedrock prices as model-owner prices', () => {
+    const catalogWithHostedQuote: CatalogModelIdentity[] = [
+      { providerId: 'amazon-bedrock', modelId: 'claude-sonnet-4-5' },
+      { providerId: 'anthropic', modelId: 'claude-sonnet-4-5' },
+    ];
+    expect(resolveCatalogMapping({
+      upstreamModelId: 'claude-sonnet-4-5',
+      catalog: catalogWithHostedQuote,
+    })).toMatchObject({ status: 'mapped', providerId: 'anthropic' });
+    expect(resolveCatalogMapping({
+      upstreamModelId: 'claude-sonnet-4-5',
+      catalog: catalogWithHostedQuote.slice(0, 1),
+    })).toEqual({ status: 'unmapped' });
+  });
+
+  it.each([
+    ['grok-4', 'xai', 'openrouter'],
+    ['gemini-2.5-pro', 'google', 'google-vertex'],
+  ])('uses the model owner for %s instead of a hosted quote', (modelId, ownerProviderId, hostedProviderId) => {
+    expect(resolveCatalogMapping({
+      upstreamModelId: modelId,
+      catalog: [
+        { providerId: hostedProviderId, modelId },
+        { providerId: ownerProviderId, modelId },
+      ],
+    })).toMatchObject({
+      status: 'mapped',
+      providerId: ownerProviderId,
+      modelId,
+    });
+  });
+
   it('allows only a controlled YYYY-MM-DD suffix with one verified candidate', () => {
     expect(resolveCatalogMapping({
       upstreamModelId: 'gpt-4.1-mini-2025-04-14',

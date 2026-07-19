@@ -2,3 +2,6 @@ CREATE TABLE IF NOT EXISTS `site_model_aliases` (`id` INT AUTO_INCREMENT NOT NUL
 ALTER TABLE `token_routes` ADD COLUMN `route_kind` TEXT;
 CREATE UNIQUE INDEX `site_model_aliases_site_alias_key_unique` ON `site_model_aliases` (`site_id`, `alias_key`(191));
 CREATE INDEX `site_model_aliases_site_id_idx` ON `site_model_aliases` (`site_id`);
+ALTER TABLE `proxy_logs` ADD COLUMN `cache_read_tokens` INT;
+ALTER TABLE `proxy_logs` ADD COLUMN `cache_creation_tokens` INT;
+ALTER TABLE `proxy_logs` ADD COLUMN `prompt_tokens_include_cache` BOOLEAN;

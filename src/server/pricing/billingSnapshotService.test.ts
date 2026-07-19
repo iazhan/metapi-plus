@@ -65,4 +65,45 @@ describe('billing snapshot service', () => {
       siteId: 1, accountId: 2, tokenGroup: null, upstreamModelId: 'missing', promptTokens: 10,
     }, { resolveEffectivePrice: vi.fn().mockResolvedValue(missing) })).resolves.toBeNull();
   });
+
+  it('preserves cache usage and bills missing cache prices at the input rate', async () => {
+    const snapshot = await buildBillingSnapshot({
+      siteId: 1,
+      accountId: 2,
+      tokenGroup: 'default',
+      upstreamModelId: 'gpt',
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cacheReadTokens: 600_000,
+      cacheWriteTokens: 100_000,
+      promptTokensIncludeCache: true,
+    }, {
+      resolveEffectivePrice: vi.fn().mockResolvedValue(effectivePrice({
+        inputPerMillionUsd: 2,
+        outputPerMillionUsd: 4,
+        cacheReadPerMillionUsd: null,
+        cacheWritePerMillionUsd: null,
+      })),
+    });
+
+    expect(snapshot).toMatchObject({
+      usage: {
+        promptTokens: 1_000_000,
+        completionTokens: 0,
+        cacheReadTokens: 600_000,
+        cacheWriteTokens: 100_000,
+        billablePromptTokens: 300_000,
+        promptTokensIncludeCache: true,
+      },
+      costBreakdownUsd: {
+        input: 0.6,
+        output: 0,
+        cacheRead: 1.2,
+        cacheWrite: 0.2,
+      },
+      cacheReadPriceFallback: true,
+      cacheWritePriceFallback: true,
+    });
+    expect(snapshot?.siteCostUsd).toBeCloseTo(2, 10);
+  });
 });

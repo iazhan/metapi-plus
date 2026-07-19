@@ -490,6 +490,28 @@ export type PricingDomainBillingDetails = {
   inputAudioPerMillionUsd: number | null;
   outputAudioPerMillionUsd: number | null;
   perCallUsd: number | null;
+  appliedCacheReadPerMillionUsd?: number | null;
+  appliedCacheWritePerMillionUsd?: number | null;
+  cacheReadPriceFallback?: boolean;
+  cacheWritePriceFallback?: boolean;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    billablePromptTokens: number;
+    promptTokensIncludeCache: boolean | null;
+  };
+  costBreakdownUsd?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    reasoning: number;
+    inputAudio: number;
+    outputAudio: number;
+    perCall: number;
+  };
   groupRatio: number;
   groupRatioApplied: boolean;
   paidCny: number;
@@ -529,7 +551,11 @@ export type ProxyLogListItem = {
   usageSource?: ProxyLogUsageSource;
   promptTokens?: number | null;
   completionTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  promptTokensIncludeCache?: boolean | null;
   estimatedCost?: number | null;
+  billingDetails?: ProxyLogBillingDetails;
   compatibilityNotes?: ProxyLogCompatibilityNotes | null;
 };
 

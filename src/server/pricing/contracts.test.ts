@@ -49,6 +49,11 @@ describe('pricing contracts', () => {
       mappedProviderId: 'openai',
       mappedModelId: 'gpt-4.1-mini',
     }).success).toBe(false);
+    expect(siteModelPriceRuleInputSchema.safeParse({
+      mappingMode: 'manual',
+      mappedProviderId: 'openrouter',
+      mappedModelId: 'gpt-4.1-mini',
+    }).success).toBe(false);
   });
 
   it('requires finite positive recharge amounts and finite non-negative ratios', () => {

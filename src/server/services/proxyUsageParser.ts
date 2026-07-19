@@ -169,6 +169,8 @@ function detectPromptTokensIncludeCache(record: Record<string, unknown>): boolea
   ].some((key) => key in record);
   if (hasAnthropicCacheFields) return false;
 
+  if ('cachedContentTokenCount' in record) return true;
+
   const hasDetailCacheFields = [
     'prompt_tokens_details',
     'promptTokensDetails',
@@ -176,6 +178,8 @@ function detectPromptTokensIncludeCache(record: Record<string, unknown>): boolea
     'inputTokensDetails',
     'prompt_cache_hit_tokens',
     'promptCacheHitTokens',
+    'cached_tokens',
+    'cachedTokens',
   ].some((key) => key in record);
   if (hasDetailCacheFields) return true;
 
@@ -192,6 +196,7 @@ function getCacheReadTokens(record: Record<string, unknown>): number {
     'cachedTokens',
     'cache_read_tokens',
     'cacheReadTokens',
+    'cachedContentTokenCount',
   ]);
   if (direct > 0) return direct;
 

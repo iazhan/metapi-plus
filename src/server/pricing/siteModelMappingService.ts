@@ -1,4 +1,5 @@
 import type { MappingMode } from './contracts.js';
+import { isFirstPartyModelProvider } from './officialProviderPolicy.js';
 
 export interface CatalogModelIdentity {
   providerId: string;
@@ -49,10 +50,17 @@ function findUniqueCandidate(
   return matches.length === 1 ? matches[0] : null;
 }
 
-/** Resolves only explicit, exact, or controlled date-suffix mappings. */
+/**
+ * 只解析显式、精确或受控日期后缀映射，并排除非模型原厂 provider。
+ * 手工映射若指向非原厂 provider 返回 unmapped；自动映射只在原厂候选中要求唯一。
+ */
 export function resolveCatalogMapping(input: MappingInput): ModelMappingResult {
   if (input.rule?.mappingMode === 'manual') {
-    if (input.rule.mappedProviderId && input.rule.mappedModelId) {
+    if (
+      input.rule.mappedProviderId
+      && input.rule.mappedModelId
+      && isFirstPartyModelProvider(input.rule.mappedProviderId)
+    ) {
       return {
         status: 'mapped',
         source: 'manual',
@@ -66,7 +74,8 @@ export function resolveCatalogMapping(input: MappingInput): ModelMappingResult {
     return { status: 'custom' };
   }
 
-  const exact = findUniqueCandidate(input.catalog, input.upstreamModelId, input.providerHint);
+  const firstPartyCatalog = input.catalog.filter((entry) => isFirstPartyModelProvider(entry.providerId));
+  const exact = findUniqueCandidate(firstPartyCatalog, input.upstreamModelId, input.providerHint);
   if (exact) {
     return {
       status: 'mapped',
@@ -78,7 +87,7 @@ export function resolveCatalogMapping(input: MappingInput): ModelMappingResult {
 
   const dateSuffixMatch = /^(.*)-\d{4}-\d{2}-\d{2}$/.exec(input.upstreamModelId.trim());
   if (!dateSuffixMatch?.[1]) return { status: 'unmapped' };
-  const dated = findUniqueCandidate(input.catalog, dateSuffixMatch[1], input.providerHint);
+  const dated = findUniqueCandidate(firstPartyCatalog, dateSuffixMatch[1], input.providerHint);
   if (!dated) return { status: 'unmapped' };
   return {
     status: 'mapped',

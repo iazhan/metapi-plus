@@ -180,6 +180,9 @@ export async function writeSurfaceProxyLog(input: {
   downstreamPath: string;
   promptTokens?: number | null;
   completionTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  promptTokensIncludeCache?: boolean | null;
   totalTokens?: number | null;
   estimatedCost?: number;
   billingDetails?: unknown;
@@ -216,6 +219,9 @@ export async function writeSurfaceProxyLog(input: {
       latencyMs: input.latencyMs,
       promptTokens: input.promptTokens ?? null,
       completionTokens: input.completionTokens ?? null,
+      ...(input.cacheReadTokens != null ? { cacheReadTokens: input.cacheReadTokens } : {}),
+      ...(input.cacheCreationTokens != null ? { cacheCreationTokens: input.cacheCreationTokens } : {}),
+      ...(input.promptTokensIncludeCache != null ? { promptTokensIncludeCache: input.promptTokensIncludeCache } : {}),
       totalTokens: input.totalTokens ?? null,
       estimatedCost: input.estimatedCost ?? 0,
       billingDetails: input.billingDetails ?? null,
@@ -283,6 +289,9 @@ export async function recordSurfaceSuccess(input: {
     retryCount: number;
     promptTokens?: number | null;
     completionTokens?: number | null;
+    cacheReadTokens?: number | null;
+    cacheCreationTokens?: number | null;
+    promptTokensIncludeCache?: boolean | null;
     totalTokens?: number | null;
     usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
@@ -370,6 +379,14 @@ export async function recordSurfaceSuccess(input: {
       completionTokens: resolvedUsage.completionTokens,
       totalTokens: resolvedUsage.totalTokens,
     };
+  const logCacheReadTokens = resolvedUsage.usageSource === 'unknown'
+    ? null
+    : resolvedUsage.selfLogBillingMeta?.cacheReadTokens ?? input.parsedUsage.cacheReadTokens;
+  const logCacheCreationTokens = resolvedUsage.usageSource === 'unknown'
+    ? null
+    : resolvedUsage.selfLogBillingMeta?.cacheCreationTokens ?? input.parsedUsage.cacheCreationTokens;
+  const logPromptTokensIncludeCache = resolvedUsage.selfLogBillingMeta?.promptTokensIncludeCache
+    ?? input.parsedUsage.promptTokensIncludeCache;
   await input.logSuccess({
     selected: input.selected,
     modelRequested: input.requestedModel,
@@ -382,6 +399,9 @@ export async function recordSurfaceSuccess(input: {
     retryCount: input.retryCount,
     promptTokens: logTokens.promptTokens,
     completionTokens: logTokens.completionTokens,
+    ...(logCacheReadTokens != null ? { cacheReadTokens: logCacheReadTokens } : {}),
+    ...(logCacheCreationTokens != null ? { cacheCreationTokens: logCacheCreationTokens } : {}),
+    ...(logPromptTokensIncludeCache != null ? { promptTokensIncludeCache: logPromptTokensIncludeCache } : {}),
     totalTokens: logTokens.totalTokens,
     usageSource: resolvedUsage.usageSource,
     estimatedCost,
@@ -416,6 +436,9 @@ export function createSurfaceFailureToolkit(input: {
     retryCount: number;
     promptTokens?: number | null;
     completionTokens?: number | null;
+    cacheReadTokens?: number | null;
+    cacheCreationTokens?: number | null;
+    promptTokensIncludeCache?: boolean | null;
     totalTokens?: number | null;
     usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
@@ -437,6 +460,9 @@ export function createSurfaceFailureToolkit(input: {
       downstreamPath: input.downstreamPath,
       promptTokens: args.promptTokens,
       completionTokens: args.completionTokens,
+      cacheReadTokens: args.cacheReadTokens,
+      cacheCreationTokens: args.cacheCreationTokens,
+      promptTokensIncludeCache: args.promptTokensIncludeCache,
       totalTokens: args.totalTokens,
       usageSource: args.usageSource,
       estimatedCost: args.estimatedCost,

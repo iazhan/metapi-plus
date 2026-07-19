@@ -200,7 +200,9 @@ describe("stats proxy logs routes", () => {
         removed: 2,
       },
     });
-    expect(body.items[0]).not.toHaveProperty("billingDetails");
+    expect(body.items[0]).toMatchObject({
+      billingDetails: { id: "failed-gpt" },
+    });
     expect(body.clientOptions).toEqual([
       { value: "family:codex", label: "协议 · Codex" },
     ]);
@@ -293,6 +295,8 @@ describe("stats proxy logs routes", () => {
         clientConfidence: "exact",
         promptTokens: 100,
         completionTokens: 20,
+        cacheReadTokens: 60,
+        cacheCreationTokens: 10,
         totalTokens: 120,
         estimatedCost: 0.12,
         errorMessage: "downstream: /v1/chat upstream: /api/chat",
@@ -346,6 +350,8 @@ describe("stats proxy logs routes", () => {
     expect(body.clientConfidence).toBe("exact");
     expect(body.isStream).toBe(true);
     expect(body.firstByteLatencyMs).toBe(64);
+    expect(body.cacheReadTokens).toBe(60);
+    expect(body.cacheCreationTokens).toBe(10);
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },

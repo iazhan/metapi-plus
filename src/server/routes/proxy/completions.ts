@@ -205,6 +205,16 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             resolvedUsage.promptTokens,
             resolvedUsage.completionTokens,
             resolvedUsage.totalTokens,
+            resolvedUsage.usageSource === 'unknown'
+              ? null
+              : (resolvedUsage.selfLogBillingMeta?.cacheReadTokens ?? parsedUsage.cacheReadTokens),
+            resolvedUsage.usageSource === 'unknown'
+              ? null
+              : (resolvedUsage.selfLogBillingMeta?.cacheCreationTokens ?? parsedUsage.cacheCreationTokens),
+            resolvedUsage.usageSource === 'unknown'
+              ? null
+              : (resolvedUsage.selfLogBillingMeta?.promptTokensIncludeCache
+                ?? parsedUsage.promptTokensIncludeCache),
             estimatedCost,
             billingDetails,
             clientContext,
@@ -245,6 +255,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             0,
             0,
             0,
+            null,
+            null,
+            null,
             0,
             null,
             clientContext,
@@ -309,6 +322,16 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           resolvedUsage.promptTokens,
           resolvedUsage.completionTokens,
           resolvedUsage.totalTokens,
+          resolvedUsage.usageSource === 'unknown'
+            ? null
+            : (resolvedUsage.selfLogBillingMeta?.cacheReadTokens ?? parsedUsage.cacheReadTokens),
+          resolvedUsage.usageSource === 'unknown'
+            ? null
+            : (resolvedUsage.selfLogBillingMeta?.cacheCreationTokens ?? parsedUsage.cacheCreationTokens),
+          resolvedUsage.usageSource === 'unknown'
+            ? null
+            : (resolvedUsage.selfLogBillingMeta?.promptTokensIncludeCache
+              ?? parsedUsage.promptTokensIncludeCache),
           estimatedCost,
           billingDetails,
           clientContext,
@@ -339,6 +362,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           0,
           0,
           0,
+          null,
+          null,
+          null,
           0,
           null,
           clientContext,
@@ -383,6 +409,9 @@ async function logProxy(
   promptTokens = 0,
   completionTokens = 0,
   totalTokens = 0,
+  cacheReadTokens: number | null = null,
+  cacheCreationTokens: number | null = null,
+  promptTokensIncludeCache: boolean | null = null,
   estimatedCost = 0,
   billingDetails: unknown = null,
   clientContext: DownstreamClientContext | null = null,
@@ -417,6 +446,9 @@ async function logProxy(
       latencyMs,
       promptTokens,
       completionTokens,
+      ...(cacheReadTokens != null ? { cacheReadTokens } : {}),
+      ...(cacheCreationTokens != null ? { cacheCreationTokens } : {}),
+      ...(promptTokensIncludeCache != null ? { promptTokensIncludeCache } : {}),
       totalTokens,
       estimatedCost,
       billingDetails,

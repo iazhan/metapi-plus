@@ -5,7 +5,8 @@ import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import ProxyLogs from './ProxyLogs.js';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, mobileState } = vi.hoisted(() => ({
+  mobileState: { value: false },
   apiMock: {
     getProxyLogs: vi.fn(),
     getProxyLogsQuery: vi.fn(),
@@ -21,6 +22,10 @@ const { apiMock } = vi.hoisted(() => ({
 
 vi.mock('../api.js', () => ({
   api: apiMock,
+}));
+
+vi.mock('../components/useIsMobile.js', () => ({
+  useIsMobile: () => mobileState.value,
 }));
 
 function collectText(node: ReactTestInstance): string {
@@ -110,9 +115,78 @@ function buildListResponse(overrides?: Partial<{
   };
 }
 
+function buildPricingDomainDetail(costOverrides: Partial<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}> = {}) {
+  return {
+    id: 101,
+    createdAt: '2026-07-12 16:00:00',
+    modelRequested: 'gpt-4.1-mini',
+    modelActual: 'gpt-4.1-mini-2025-04-14',
+    status: 'success',
+    latencyMs: 120,
+    promptTokens: 1000,
+    completionTokens: 500,
+    totalTokens: 1500,
+    retryCount: 0,
+    estimatedCost: 0.0024,
+    username: 'tester',
+    siteName: 'main-site',
+    billingDetails: {
+      currency: 'CNY',
+      priceSources: { inputPerMillionUsd: 'models_dev', outputPerMillionUsd: 'models_dev' },
+      providerId: 'openai',
+      catalogModelId: 'gpt-4.1-mini',
+      upstreamModelId: 'gpt-4.1-mini-2025-04-14',
+      inputPerMillionUsd: 0.4,
+      outputPerMillionUsd: 1.6,
+      cacheReadPerMillionUsd: null,
+      cacheWritePerMillionUsd: null,
+      appliedCacheReadPerMillionUsd: 0.4,
+      appliedCacheWritePerMillionUsd: 0.4,
+      cacheReadPriceFallback: true,
+      cacheWritePriceFallback: true,
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheReadTokens: 300,
+        cacheWriteTokens: 50,
+        billablePromptTokens: 650,
+        promptTokensIncludeCache: true,
+      },
+      costBreakdownUsd: {
+        input: 0.00026,
+        output: 0.0008,
+        cacheRead: 0.00012,
+        cacheWrite: 0.00002,
+        reasoning: 0,
+        inputAudio: 0,
+        outputAudio: 0,
+        perCall: 0,
+        ...costOverrides,
+      },
+      reasoningPerMillionUsd: null,
+      inputAudioPerMillionUsd: null,
+      outputAudioPerMillionUsd: null,
+      perCallUsd: null,
+      groupRatio: 1.2,
+      groupRatioApplied: true,
+      paidCny: 1,
+      creditedUsd: 10,
+      siteCostUsd: 0.0024,
+      actualCostCny: 0.00024,
+      pricedAt: '2026-07-12T08:00:00.000Z',
+    },
+  };
+}
+
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mobileState.value = false;
     const localStorageState = new Map<string, string>();
     Object.defineProperty(globalThis, 'navigator', {
       value: {
@@ -344,6 +418,8 @@ describe('ProxyLogs server-driven page', () => {
       isStream: true,
       promptTokens: 10,
       completionTokens: 5,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 2,
       totalTokens: 15,
       retryCount: 0,
       estimatedCost: 1.23,
@@ -396,7 +472,13 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('日志详情');
       expect(text).toContain('Codex 兼容：移除 2 项 image generation 声明');
       expect(text).toContain('计费过程');
-      expect(text).toContain('无详细计费拆分');
+      expect(text).toContain('未保存计费快照');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-input' }))).toContain('10 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-output' }))).toContain('5 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-read' }))).toContain('3 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-creation' }))).toContain('2 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-total' }))).toContain('15 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cost' }))).toContain('$1.230000');
     } finally {
       await act(async () => {
         root?.unmount();
@@ -404,44 +486,45 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('does not claim the billing snapshot is missing before detail loading finishes', async () => {
+    let resolveDetail!: (value: any) => void;
+    apiMock.getProxyLogDetail.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDetail = resolve;
+    }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => { row.props.onClick(); });
+
+      expect(collectText(root.root)).toContain('加载详情中...');
+      expect(collectText(root.root)).not.toContain('未保存计费快照');
+
+      await act(async () => {
+        resolveDetail({
+          ...buildListResponse().items[0],
+          billingDetails: null,
+        });
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('未保存计费快照');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('shows immutable site USD and actual CNY costs for pricing-domain snapshots', async () => {
-    apiMock.getProxyLogDetail.mockResolvedValueOnce({
-      id: 101,
-      createdAt: '2026-07-12 16:00:00',
-      modelRequested: 'gpt-4.1-mini',
-      modelActual: 'gpt-4.1-mini-2025-04-14',
-      status: 'success',
-      latencyMs: 120,
-      promptTokens: 1000,
-      completionTokens: 500,
-      totalTokens: 1500,
-      retryCount: 0,
-      estimatedCost: 0.0024,
-      username: 'tester',
-      siteName: 'main-site',
-      billingDetails: {
-        currency: 'CNY',
-        priceSources: { inputPerMillionUsd: 'models_dev', outputPerMillionUsd: 'models_dev' },
-        providerId: 'openai',
-        catalogModelId: 'gpt-4.1-mini',
-        upstreamModelId: 'gpt-4.1-mini-2025-04-14',
-        inputPerMillionUsd: 0.4,
-        outputPerMillionUsd: 1.6,
-        cacheReadPerMillionUsd: null,
-        cacheWritePerMillionUsd: null,
-        reasoningPerMillionUsd: null,
-        inputAudioPerMillionUsd: null,
-        outputAudioPerMillionUsd: null,
-        perCallUsd: null,
-        groupRatio: 1.2,
-        groupRatioApplied: true,
-        paidCny: 1,
-        creditedUsd: 10,
-        siteCostUsd: 0.0024,
-        actualCostCny: 0.00024,
-        pricedAt: '2026-07-12T08:00:00.000Z',
-      },
-    });
+    apiMock.getProxyLogDetail.mockResolvedValueOnce(buildPricingDomainDetail());
 
     let root!: WebTestRenderer;
     try {
@@ -981,6 +1064,198 @@ describe('ProxyLogs server-driven page', () => {
       ));
 
       expect(modelBadge.props.style?.alignSelf).toBe('flex-start');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps historical pricing-domain snapshots expandable without cache breakdown fields', async () => {
+    apiMock.getProxyLogDetail.mockResolvedValueOnce({
+      id: 101,
+      createdAt: '2026-07-12 16:00:00',
+      modelRequested: 'gpt-4.1-mini',
+      modelActual: 'gpt-4.1-mini-2025-04-14',
+      status: 'success',
+      latencyMs: 120,
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      retryCount: 0,
+      estimatedCost: 0.0024,
+      username: 'tester',
+      siteName: 'main-site',
+      billingDetails: {
+        currency: 'CNY',
+        priceSources: { inputPerMillionUsd: 'models_dev', outputPerMillionUsd: 'models_dev' },
+        providerId: 'openai',
+        catalogModelId: 'gpt-4.1-mini',
+        upstreamModelId: 'gpt-4.1-mini-2025-04-14',
+        inputPerMillionUsd: 0.4,
+        outputPerMillionUsd: 1.6,
+        cacheReadPerMillionUsd: null,
+        cacheWritePerMillionUsd: null,
+        reasoningPerMillionUsd: null,
+        inputAudioPerMillionUsd: null,
+        outputAudioPerMillionUsd: null,
+        perCallUsd: null,
+        groupRatio: 1.2,
+        groupRatioApplied: true,
+        paidCny: 1,
+        creditedUsd: 10,
+        siteCostUsd: 0.0024,
+        actualCostCny: 0.00024,
+        pricedAt: '2026-07-12T08:00:00.000Z',
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      await act(async () => { row.props.onClick(); });
+      await flushMicrotasks();
+
+      const rendered = collectText(root.root);
+      expect(rendered).toContain('站点计价成本 USD $0.002400');
+      expect(rendered).toContain('真实成本 CNY ¥0.000240');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows pricing-domain cache usage and zero-cost cache lines on mobile', async () => {
+    mobileState.value = true;
+    apiMock.getProxyLogDetail.mockResolvedValueOnce(buildPricingDomainDetail({
+      cacheRead: 0,
+      cacheWrite: 0,
+    }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const detailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '详情'
+      ));
+      await act(async () => { detailButton.props.onClick(); });
+      await flushMicrotasks();
+
+      const summary = collectText(root.root.findByProps({
+        'data-testid': 'pricing-domain-billing-summary',
+      }));
+      expect(summary).toContain('缓存读 300 tokens');
+      expect(summary).toContain('缓存建 50 tokens');
+      expect(summary).toContain('缓存读成本 $0.000000');
+      expect(summary).toContain('缓存建成本 $0.000000');
+      expect(summary).toContain('站点计价成本 USD $0.002400');
+      expect(summary).toContain('真实成本 CNY ¥0.000240');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('renders separate cache read and creation columns after input and output', async () => {
+    apiMock.getProxyLogs.mockResolvedValueOnce(buildListResponse({
+      items: [{
+        ...buildListResponse().items[0],
+        cacheReadTokens: 1000,
+        cacheCreationTokens: 40,
+      }],
+    }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.findByProps({ 'data-testid': 'proxy-log-row-101' });
+      const cells = childInstances(row).filter((node) => node.type === 'td');
+      const headers = root.root.findAllByType('th').map(collectText);
+
+      expect(headers).toContain('缓存读');
+      expect(headers).toContain('缓存建');
+      expect(headers).not.toContain('缓存读/建');
+      expect(collectText(cells[2]!)).toContain('gpt-4o');
+      expect(collectText(cells[9]!)).toBe('1,000');
+      expect(collectText(cells[10]!)).toBe('40');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('exposes pricing, costs, and ratios through the cost info tooltip', async () => {
+    apiMock.getProxyLogs.mockResolvedValueOnce(buildListResponse({
+      items: [buildPricingDomainDetail()],
+    }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider><ProxyLogs /></ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const trigger = root.root.findByProps({
+        'data-testid': 'billing-cost-tooltip-101',
+      });
+      const tooltip = JSON.parse(String(trigger.props['data-tooltip-detail'])) as {
+        title: string;
+        sections: Array<{ rows: Array<{ label: string; value: string }> }>;
+      };
+      const rows = tooltip.sections.flatMap((section) => section.rows);
+
+      expect(trigger.props['aria-label']).toBe('查看费用明细');
+      expect(tooltip.title).toBe('费用明细');
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '输入单价',
+        value: '$0.4000 / 1M tokens',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '缓存读单价',
+        value: '$0.4000 / 1M tokens（输入价回退）',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '缓存读成本',
+        value: '$0.000120',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '分组倍率',
+        value: '1.2x（已应用）',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '实际成本',
+        value: '¥0.000240',
+      }));
+      expect(apiMock.getProxyLogDetail).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }

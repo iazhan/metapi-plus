@@ -981,6 +981,9 @@ describe('backupService', () => {
       modelRequested: 'gpt-4o',
       modelActual: 'gpt-4o',
       status: 'success',
+      cacheReadTokens: 1000,
+      cacheCreationTokens: 40,
+      promptTokensIncludeCache: false,
       totalTokens: 321,
       estimatedCost: 0.123,
       createdAt: localRuntimeAt,
@@ -1015,6 +1018,9 @@ describe('backupService', () => {
     expect(restoredProxyLogs[0]?.accountId).toBe(account.id);
     expect(restoredProxyLogs[0]?.routeId).toBe(route.id);
     expect(restoredProxyLogs[0]?.channelId).toBe(insertedChannel!.id);
+    expect(restoredProxyLogs[0]?.cacheReadTokens).toBe(1000);
+    expect(restoredProxyLogs[0]?.cacheCreationTokens).toBe(40);
+    expect(restoredProxyLogs[0]?.promptTokensIncludeCache).toBe(false);
     expect(restoredProxyLogs[0]?.totalTokens).toBe(321);
     expect(restoredCheckinLogs).toHaveLength(1);
     expect(restoredCheckinLogs[0]?.accountId).toBe(account.id);

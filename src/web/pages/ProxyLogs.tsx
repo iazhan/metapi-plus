@@ -12,11 +12,9 @@ import {
   type RuntimeSettingsPayload,
   type ProxyDebugTraceDetail,
   type ProxyDebugTraceListItem,
-  type ProxyLogBillingDetails,
   type LegacyProxyLogBillingDetails,
   type PricingDomainBillingDetails,
   type ProxyLogClientOption,
-  type ProxyLogCompatibilityNotes,
   type ProxyLogDetail,
   type ProxyLogListItem,
   type ProxyLogsSummary,
@@ -32,19 +30,13 @@ import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import { useIsMobile } from "../components/useIsMobile.js";
+import type { StructuredTooltipDetail } from "../components/TooltipLayer.js";
 import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
 import { tr } from "../i18n.js";
 
-type ProxyLogRenderItem = ProxyLogListItem & {
-  billingDetails?: ProxyLogBillingDetails;
-  username?: string | null;
-  siteName?: string | null;
-  siteUrl?: string | null;
-  errorMessage?: string | null;
-  compatibilityNotes?: ProxyLogCompatibilityNotes | null;
-};
+type ProxyLogRenderItem = ProxyLogListItem;
 
 type ProxyLogDetailState = {
   loading: boolean;
@@ -417,6 +409,429 @@ function formatProxyLogUsageSource(
 
 function formatProxyLogTokenValue(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString() : "--";
+}
+
+function BillingFallbackSummary({ log }: { log: ProxyLogRenderItem }) {
+  const metrics = [
+    {
+      key: "input",
+      label: "输入",
+      value: formatProxyLogTokenValue(log.promptTokens),
+      unit: "tokens",
+    },
+    {
+      key: "output",
+      label: "输出",
+      value: formatProxyLogTokenValue(log.completionTokens),
+      unit: "tokens",
+    },
+    {
+      key: "cache-read",
+      label: "缓存读",
+      value: formatProxyLogTokenValue(log.cacheReadTokens),
+      unit: "tokens",
+    },
+    {
+      key: "cache-creation",
+      label: "缓存建",
+      value: formatProxyLogTokenValue(log.cacheCreationTokens),
+      unit: "tokens",
+    },
+    {
+      key: "total",
+      label: "总计",
+      value: formatProxyLogTokenValue(log.totalTokens),
+      unit: "tokens",
+    },
+    {
+      key: "cost",
+      label: "历史预估费用",
+      value:
+        typeof log.estimatedCost === "number"
+          ? `$${log.estimatedCost.toFixed(6)}`
+          : "--",
+      unit: "",
+    },
+  ];
+
+  return (
+    <div
+      className="proxy-log-billing-fallback"
+      data-testid="proxy-log-billing-fallback"
+    >
+      <div className="proxy-log-billing-fallback-note">
+        未保存计费快照，无法还原当时单价、倍率和分项成本；以下为日志原始用量与历史预估费用，不按当前价格重算。
+      </div>
+      <div className="proxy-log-billing-fallback-metrics">
+        {metrics.map((metric) => (
+          <div
+            className="proxy-log-billing-fallback-metric"
+            data-testid={`billing-fallback-${metric.key}`}
+            key={metric.key}
+          >
+            <span className="proxy-log-billing-fallback-label">
+              {metric.label}
+            </span>
+            <strong className="proxy-log-billing-fallback-value">
+              {metric.value}
+              {metric.unit && metric.value !== "--" ? ` ${metric.unit}` : ""}
+            </strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatPricingDomainUsage(detail: PricingDomainBillingDetails): string[] {
+  if (!detail.usage) return [];
+  const lines = [
+    `输入 ${detail.usage.billablePromptTokens.toLocaleString()} tokens`,
+    `输出 ${detail.usage.completionTokens.toLocaleString()} tokens`,
+  ];
+  if (detail.usage.cacheReadTokens > 0) {
+    lines.push(
+      `缓存读 ${detail.usage.cacheReadTokens.toLocaleString()} tokens${detail.cacheReadPriceFallback ? "（按输入价格回退）" : ""}`,
+    );
+  }
+  if (detail.usage.cacheWriteTokens > 0) {
+    lines.push(
+      `缓存建 ${detail.usage.cacheWriteTokens.toLocaleString()} tokens${detail.cacheWritePriceFallback ? "（按输入价格回退）" : ""}`,
+    );
+  }
+  return lines;
+}
+
+function PricingDomainBillingSummary({
+  detail,
+}: {
+  detail: PricingDomainBillingDetails;
+}) {
+  const cacheReadHasUsage = (detail.usage?.cacheReadTokens ?? 0) > 0;
+  const cacheWriteHasUsage = (detail.usage?.cacheWriteTokens ?? 0) > 0;
+
+  return (
+    <div
+      data-testid="pricing-domain-billing-summary"
+      style={{ display: "flex", flexDirection: "column", gap: 2 }}
+    >
+      {formatPricingDomainUsage(detail).map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+      {detail.costBreakdownUsd && (
+        <>
+          <span>
+            输入成本 <strong>${detail.costBreakdownUsd.input.toFixed(6)}</strong>
+          </span>
+          <span>
+            输出成本 <strong>${detail.costBreakdownUsd.output.toFixed(6)}</strong>
+          </span>
+          {(cacheReadHasUsage || detail.costBreakdownUsd.cacheRead > 0) && (
+            <span>
+              缓存读成本{" "}
+              <strong>${detail.costBreakdownUsd.cacheRead.toFixed(6)}</strong>
+            </span>
+          )}
+          {(cacheWriteHasUsage || detail.costBreakdownUsd.cacheWrite > 0) && (
+            <span>
+              缓存建成本{" "}
+              <strong>${detail.costBreakdownUsd.cacheWrite.toFixed(6)}</strong>
+            </span>
+          )}
+        </>
+      )}
+      <span>
+        站点计价成本 USD <strong>${detail.siteCostUsd.toFixed(6)}</strong>
+      </span>
+      <span>
+        真实成本 CNY <strong>¥{detail.actualCostCny.toFixed(6)}</strong>
+      </span>
+      <span style={{ color: "var(--color-text-muted)" }}>
+        计价时间 {formatDateTimeLocal(detail.pricedAt)}；历史快照不随当前价格重算
+      </span>
+    </div>
+  );
+}
+
+type StructuredTooltipRow = StructuredTooltipDetail["sections"][number]["rows"][number];
+
+function formatTooltipTokens(value: number | null | undefined): string {
+  return typeof value === "number" ? `${value.toLocaleString()} tokens` : "--";
+}
+
+function formatTooltipUsd(value: unknown): string {
+  return isFiniteNumber(value) ? `$${value.toFixed(6)}` : "--";
+}
+
+function formatTooltipPerMillionPrice(value: unknown): string {
+  if (!isFiniteNumber(value)) return "未配置";
+  let formatted = value.toFixed(6);
+  while (formatted.endsWith("0") && formatted.split(".")[1]!.length > 4) {
+    formatted = formatted.slice(0, -1);
+  }
+  return `$${formatted} / 1M tokens`;
+}
+
+function buildUsagePriceCostRows(input: {
+  label: string;
+  tokens: number;
+  price: number | null;
+  cost: number;
+  priceNote?: string;
+}): StructuredTooltipRow[] {
+  return [
+    {
+      label: `${input.label}用量`,
+      value: formatTooltipTokens(input.tokens),
+    },
+    {
+      label: `${input.label}单价`,
+      value: !isFiniteNumber(input.price)
+        ? "未配置"
+        : `${formatTooltipPerMillionPrice(input.price)}${input.priceNote ?? ""}`,
+      tone: !isFiniteNumber(input.price) ? "warning" : "info",
+    },
+    {
+      label: `${input.label}成本`,
+      value: formatTooltipUsd(input.cost),
+    },
+  ];
+}
+
+function formatPricingSources(
+  sources: PricingDomainBillingDetails["priceSources"] | undefined,
+): string {
+  if (!sources || typeof sources !== "object") return "--";
+  const labels = {
+    manual: "手工覆盖",
+    site: "站点价格",
+    models_dev: "官方目录",
+    missing: "缺失",
+  } as const;
+  const unique = Array.from(new Set(Object.values(sources).map((source) => labels[source])));
+  return unique.join(" / ") || "--";
+}
+
+function buildPricingDomainTooltipDetail(
+  detail: PricingDomainBillingDetails,
+): StructuredTooltipDetail {
+  const usage = detail.usage;
+  const breakdown = detail.costBreakdownUsd;
+  const rows: StructuredTooltipRow[] = [];
+
+  if (usage && breakdown) {
+    rows.push(...buildUsagePriceCostRows({
+      label: "输入",
+      tokens: usage.billablePromptTokens,
+      price: detail.inputPerMillionUsd,
+      cost: breakdown.input,
+    }));
+    rows.push(...buildUsagePriceCostRows({
+      label: "输出",
+      tokens: usage.completionTokens,
+      price: detail.outputPerMillionUsd,
+      cost: breakdown.output,
+    }));
+    if (usage.cacheReadTokens > 0 || breakdown.cacheRead > 0) {
+      rows.push(...buildUsagePriceCostRows({
+        label: "缓存读",
+        tokens: usage.cacheReadTokens,
+        price: detail.appliedCacheReadPerMillionUsd ?? detail.cacheReadPerMillionUsd,
+        cost: breakdown.cacheRead,
+        priceNote: detail.cacheReadPriceFallback ? "（输入价回退）" : "",
+      }));
+    }
+    if (usage.cacheWriteTokens > 0 || breakdown.cacheWrite > 0) {
+      rows.push(...buildUsagePriceCostRows({
+        label: "缓存建",
+        tokens: usage.cacheWriteTokens,
+        price: detail.appliedCacheWritePerMillionUsd ?? detail.cacheWritePerMillionUsd,
+        cost: breakdown.cacheWrite,
+        priceNote: detail.cacheWritePriceFallback ? "（输入价回退）" : "",
+      }));
+    }
+
+    const optionalCosts: Array<{
+      label: string;
+      price: number | null;
+      cost: number;
+    }> = [
+      { label: "推理", price: detail.reasoningPerMillionUsd, cost: breakdown.reasoning },
+      { label: "输入音频", price: detail.inputAudioPerMillionUsd, cost: breakdown.inputAudio },
+      { label: "输出音频", price: detail.outputAudioPerMillionUsd, cost: breakdown.outputAudio },
+    ];
+    for (const item of optionalCosts) {
+      if (!isFiniteNumber(item.cost) || item.cost <= 0) continue;
+      rows.push(
+        {
+          label: `${item.label}单价`,
+          value: !isFiniteNumber(item.price)
+            ? "未配置"
+            : formatTooltipPerMillionPrice(item.price),
+          tone: !isFiniteNumber(item.price) ? "warning" : "info",
+        },
+        { label: `${item.label}成本`, value: formatTooltipUsd(item.cost) },
+      );
+    }
+    if (breakdown.perCall > 0 || detail.perCallUsd != null) {
+      rows.push(
+        {
+          label: "单次调用价",
+          value: detail.perCallUsd == null ? "未配置" : formatTooltipUsd(detail.perCallUsd),
+          tone: detail.perCallUsd == null ? "warning" : "info",
+        },
+        { label: "单次调用成本", value: formatTooltipUsd(breakdown.perCall) },
+      );
+    }
+  }
+
+  const pricingModel = [detail.providerId, detail.catalogModelId]
+    .filter(Boolean)
+    .join(" / ") || detail.upstreamModelId;
+  return {
+    title: "费用明细",
+    sections: [
+      ...(rows.length > 0 ? [{ title: "用量、单价与成本", rows }] : []),
+      {
+        title: "计价参数",
+        rows: [
+          { label: "计价模型", value: pricingModel },
+          { label: "价格来源", value: formatPricingSources(detail.priceSources), tone: "info" },
+          {
+            label: "分组倍率",
+            value: `${formatCompactNumber(detail.groupRatio)}x${detail.groupRatioApplied ? "（已应用）" : "（未应用）"}`,
+            tone: "accent",
+          },
+          {
+            label: "服务档位",
+            value: `¥${formatCompactNumber(detail.paidCny)} / $${formatCompactNumber(detail.creditedUsd)}`,
+          },
+        ],
+      },
+      {
+        title: "合计",
+        rows: [
+          { label: "站点计价", value: formatTooltipUsd(detail.siteCostUsd), tone: "info" },
+          { label: "实际成本", value: `¥${detail.actualCostCny.toFixed(6)}`, tone: "success" },
+          {
+            label: "计价时间",
+            value: formatDateTimeLocal(detail.pricedAt),
+            tone: "muted",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function buildLegacyBillingTooltipDetail(
+  detail: LegacyProxyLogBillingDetails,
+): StructuredTooltipDetail {
+  const rows: StructuredTooltipRow[] = [
+    ...buildUsagePriceCostRows({
+      label: "输入",
+      tokens: detail.usage.billablePromptTokens,
+      price: detail.breakdown.inputPerMillion,
+      cost: detail.breakdown.inputCost,
+    }),
+    ...buildUsagePriceCostRows({
+      label: "输出",
+      tokens: detail.usage.completionTokens,
+      price: detail.breakdown.outputPerMillion,
+      cost: detail.breakdown.outputCost,
+    }),
+  ];
+  if (detail.usage.cacheReadTokens > 0) {
+    rows.push(...buildUsagePriceCostRows({
+      label: "缓存读",
+      tokens: detail.usage.cacheReadTokens,
+      price: detail.breakdown.cacheReadPerMillion,
+      cost: detail.breakdown.cacheReadCost,
+    }));
+  }
+  if (detail.usage.cacheCreationTokens > 0) {
+    rows.push(...buildUsagePriceCostRows({
+      label: "缓存建",
+      tokens: detail.usage.cacheCreationTokens,
+      price: detail.breakdown.cacheCreationPerMillion,
+      cost: detail.breakdown.cacheCreationCost,
+    }));
+  }
+
+  return {
+    title: "费用明细",
+    sections: [
+      { title: "用量、单价与成本", rows },
+      {
+        title: "倍率",
+        rows: [
+          { label: "模型倍率", value: `${formatCompactNumber(detail.pricing.modelRatio)}x`, tone: "accent" },
+          { label: "输出倍率", value: `${formatCompactNumber(detail.pricing.completionRatio)}x`, tone: "accent" },
+          { label: "缓存读倍率", value: `${formatCompactNumber(detail.pricing.cacheRatio)}x`, tone: "accent" },
+          { label: "缓存建倍率", value: `${formatCompactNumber(detail.pricing.cacheCreationRatio)}x`, tone: "accent" },
+          { label: "分组倍率", value: `${formatCompactNumber(detail.pricing.groupRatio)}x`, tone: "accent" },
+        ],
+      },
+      {
+        title: "合计",
+        rows: [
+          { label: "预估费用", value: formatTooltipUsd(detail.breakdown.totalCost), tone: "success" },
+        ],
+      },
+    ],
+  };
+}
+
+function buildBillingTooltipDetail(log: ProxyLogRenderItem): StructuredTooltipDetail {
+  const pricingDomainDetail = getPricingDomainBillingDetails(log);
+  if (pricingDomainDetail) {
+    return buildPricingDomainTooltipDetail(pricingDomainDetail);
+  }
+  const legacyDetail = getCompleteBillingDetails(log);
+  if (legacyDetail) return buildLegacyBillingTooltipDetail(legacyDetail);
+
+  const rows: StructuredTooltipRow[] = [
+    { label: "状态", value: "未保存计费快照", tone: "warning" },
+    { label: "输入", value: formatTooltipTokens(log.promptTokens) },
+    { label: "输出", value: formatTooltipTokens(log.completionTokens) },
+    { label: "缓存读", value: formatTooltipTokens(log.cacheReadTokens) },
+    { label: "缓存建", value: formatTooltipTokens(log.cacheCreationTokens) },
+    { label: "总计", value: formatTooltipTokens(log.totalTokens) },
+    {
+      label: "历史预估",
+      value: typeof log.estimatedCost === "number"
+        ? formatTooltipUsd(log.estimatedCost)
+        : "--",
+      tone: "success",
+    },
+    { label: "说明", value: "无法还原当时单价和倍率", tone: "muted" },
+  ];
+  return { title: "费用明细", sections: [{ rows }] };
+}
+
+function BillingCostDisplay({ log }: { log: ProxyLogRenderItem }) {
+  const tooltipDetail = buildBillingTooltipDetail(log);
+  return (
+    <span className="proxy-log-cost-display">
+      <span>
+        {typeof log.estimatedCost === "number"
+          ? `$${log.estimatedCost.toFixed(6)}`
+          : "-"}
+      </span>
+      <button
+        type="button"
+        className="proxy-log-cost-info"
+        aria-label="查看费用明细"
+        data-testid={`billing-cost-tooltip-${log.id}`}
+        data-tooltip="费用明细"
+        data-tooltip-align="end"
+        data-tooltip-detail={JSON.stringify(tooltipDetail)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <span aria-hidden="true">i</span>
+      </button>
+    </span>
+  );
 }
 
 function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
@@ -2684,6 +3099,9 @@ export default function ProxyLogs() {
               const billingProcessLines = detail
                 ? buildBillingProcessLines(detailLog)
                 : [];
+              const pricingDomainBillingDetails = detail
+                ? getPricingDomainBillingDetails(detailLog)
+                : null;
               const downstreamKeySummary =
                 renderDownstreamKeySummary(detailLog);
               const isExpanded = expanded === log.id;
@@ -2799,13 +3217,23 @@ export default function ProxyLogs() {
                       </div>
                     </div>
                     <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">花费</div>
+                      <div className="mobile-summary-metric-label">缓存读</div>
                       <div className="mobile-summary-metric-value">
-                        {typeof log.estimatedCost === "number"
-                          ? `$${log.estimatedCost.toFixed(6)}`
-                          : "-"}
+                        {formatProxyLogTokenValue(log.cacheReadTokens)}
                       </div>
                     </div>
+                    <div className="mobile-summary-metric">
+                      <div className="mobile-summary-metric-label">缓存建</div>
+                      <div className="mobile-summary-metric-value">
+                        {formatProxyLogTokenValue(log.cacheCreationTokens)}
+                      </div>
+                    </div>
+                      <div className="mobile-summary-metric">
+                        <div className="mobile-summary-metric-label">花费</div>
+                        <div className="mobile-summary-metric-value">
+                          <BillingCostDisplay log={detailLog} />
+                        </div>
+                      </div>
                   </div>
                   {isExpanded ? (
                     <div className="mobile-card-extra">
@@ -2877,7 +3305,9 @@ export default function ProxyLogs() {
                           {downstreamKeySummary}
                         </div>
                       )}
-                      {billingProcessLines.length > 0 && (
+                      {pricingDomainBillingDetails ? (
+                        <PricingDomainBillingSummary detail={pricingDomainBillingDetails} />
+                      ) : billingProcessLines.length > 0 ? (
                         <div
                           style={{
                             display: "flex",
@@ -2891,7 +3321,9 @@ export default function ProxyLogs() {
                             </span>
                           ))}
                         </div>
-                      )}
+                      ) : detail ? (
+                        <BillingFallbackSummary log={detailLog} />
+                      ) : null}
                       {detail && pathMeta.errorMessage.trim().length > 0 && (
                         <div style={{ color: "var(--color-danger)" }}>
                           {pathMeta.errorMessage}
@@ -2904,20 +3336,50 @@ export default function ProxyLogs() {
             })}
           </div>
         ) : (
-          <table className="data-table" style={{ width: "100%" }}>
+          <table
+            className="data-table proxy-logs-table"
+            style={{ width: "100%" }}
+          >
+            <colgroup>
+              <col className="proxy-log-col-disclosure" />
+              <col className="proxy-log-col-time" />
+              <col className="proxy-log-col-model" />
+              <col className="proxy-log-col-site" />
+              <col className="proxy-log-col-client" />
+              <col className="proxy-log-col-status" />
+              <col className="proxy-log-col-latency" />
+              <col className="proxy-log-col-token" />
+              <col className="proxy-log-col-token" />
+              <col className="proxy-log-col-cache" />
+              <col className="proxy-log-col-cache" />
+              <col className="proxy-log-col-cost" />
+              <col className="proxy-log-col-retry" />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ width: 28 }} />
+                <th className="proxy-log-disclosure-cell" />
                 <th>时间</th>
                 <th>模型</th>
-                <th>站点</th>
-                <th>客户端</th>
-                <th>{tr("状态")}</th>
-                <th style={{ textAlign: "center" }}>用时</th>
-                <th style={{ textAlign: "right" }}>输入</th>
-                <th style={{ textAlign: "right" }}>输出</th>
-                <th style={{ textAlign: "right" }}>花费</th>
-                <th style={{ textAlign: "center" }}>重试</th>
+                <th className="proxy-log-compact-cell">站点</th>
+                <th className="proxy-log-compact-cell">客户端</th>
+                <th className="proxy-log-compact-cell">{tr("状态")}</th>
+                <th>用时</th>
+                <th className="proxy-log-numeric-column">
+                  输入
+                </th>
+                <th className="proxy-log-numeric-column">
+                  输出
+                </th>
+                <th className="proxy-log-numeric-column">
+                  缓存读
+                </th>
+                <th className="proxy-log-numeric-column">
+                  缓存建
+                </th>
+                <th className="proxy-log-numeric-column">
+                  花费
+                </th>
+                <th className="proxy-log-retry-column">重试</th>
               </tr>
             </thead>
             <tbody>
@@ -2967,7 +3429,10 @@ export default function ProxyLogs() {
                         transition: "background 0.15s",
                       }}
                     >
-                      <td style={{ padding: "8px 4px 8px 12px" }}>
+                      <td
+                        className="proxy-log-disclosure-cell"
+                        style={{ padding: "8px 4px 8px 12px" }}
+                      >
                         <svg
                           width="10"
                           height="10"
@@ -3070,6 +3535,7 @@ export default function ProxyLogs() {
                         </div>
                       </td>
                       <td
+                        className="proxy-log-compact-cell"
                         style={{
                           fontSize: 12,
                           color: "var(--color-text-secondary)",
@@ -3084,6 +3550,7 @@ export default function ProxyLogs() {
                         />
                       </td>
                       <td
+                        className="proxy-log-compact-cell"
                         style={{
                           fontSize: 12,
                           color: "var(--color-text-secondary)",
@@ -3091,7 +3558,7 @@ export default function ProxyLogs() {
                       >
                         {renderProxyLogClientCell(detailLog)}
                       </td>
-                      <td>
+                      <td className="proxy-log-compact-cell">
                         <span
                           className={`badge ${log.status === "success" ? "badge-success" : "badge-error"}`}
                           style={{ fontSize: 11, fontWeight: 600 }}
@@ -3110,7 +3577,7 @@ export default function ProxyLogs() {
                           {log.status === "success" ? "成功" : "失败"}
                         </span>
                       </td>
-                      <td style={{ textAlign: "center" }}>
+                      <td>
                         <span
                           style={{
                             fontVariantNumeric: "tabular-nums",
@@ -3126,8 +3593,8 @@ export default function ProxyLogs() {
                         </span>
                       </td>
                       <td
+                        className="proxy-log-numeric-column"
                         style={{
-                          textAlign: "right",
                           fontSize: 12,
                           fontVariantNumeric: "tabular-nums",
                           color: "var(--color-text-secondary)",
@@ -3136,8 +3603,8 @@ export default function ProxyLogs() {
                         {formatProxyLogTokenValue(log.promptTokens)}
                       </td>
                       <td
+                        className="proxy-log-numeric-column"
                         style={{
-                          textAlign: "right",
                           fontSize: 12,
                           fontVariantNumeric: "tabular-nums",
                           color: "var(--color-text-secondary)",
@@ -3146,18 +3613,36 @@ export default function ProxyLogs() {
                         {formatProxyLogTokenValue(log.completionTokens)}
                       </td>
                       <td
+                        className="proxy-log-numeric-column"
                         style={{
-                          textAlign: "right",
+                          fontSize: 12,
+                          fontVariantNumeric: "tabular-nums",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        {formatProxyLogTokenValue(log.cacheReadTokens)}
+                      </td>
+                      <td
+                        className="proxy-log-numeric-column"
+                        style={{
+                          fontSize: 12,
+                          fontVariantNumeric: "tabular-nums",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        {formatProxyLogTokenValue(log.cacheCreationTokens)}
+                      </td>
+                      <td
+                        className="proxy-log-numeric-column"
+                        style={{
                           fontSize: 12,
                           fontVariantNumeric: "tabular-nums",
                           fontWeight: 500,
                         }}
                       >
-                        {typeof log.estimatedCost === "number"
-                          ? `$${log.estimatedCost.toFixed(6)}`
-                          : "-"}
+                        <BillingCostDisplay log={detailLog} />
                       </td>
-                      <td style={{ textAlign: "center" }}>
+                      <td className="proxy-log-retry-column">
                         {log.retryCount > 0 ? (
                           <span
                             className="badge badge-warning"
@@ -3179,7 +3664,7 @@ export default function ProxyLogs() {
                     </tr>
                     {expanded === log.id && (
                       <tr style={{ background: "var(--color-bg)" }}>
-                        <td colSpan={11} style={{ padding: 0 }}>
+                        <td colSpan={13} style={{ padding: 0 }}>
                           <div className="anim-collapse is-open">
                             <div className="anim-collapse-inner">
                               <div
@@ -3422,84 +3907,51 @@ export default function ProxyLogs() {
                                     </div>
                                   )}
 
-                                <div style={{ display: "flex", gap: 6 }}>
-                                  <span
-                                    style={{
-                                      fontWeight: 600,
-                                      color: "var(--color-info)",
-                                      flexShrink: 0,
-                                    }}
-                                  >
-                                    计费过程
-                                  </span>
-                                  {pricingDomainBillingDetails ? (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                      <span>站点计价成本 USD <strong>${pricingDomainBillingDetails.siteCostUsd.toFixed(6)}</strong></span>
-                                      <span>真实成本 CNY <strong>¥{pricingDomainBillingDetails.actualCostCny.toFixed(6)}</strong></span>
-                                      <span style={{ color: "var(--color-text-muted)" }}>
-                                        计价时间 {formatDateTimeLocal(pricingDomainBillingDetails.pricedAt)}；历史快照不随当前价格重算
-                                      </span>
-                                    </div>
-                                  ) : billingProcessLines.length > 0 ? (
-                                    <div
+                                {detail && (
+                                  <div style={{ display: "flex", gap: 6 }}>
+                                    <span
                                       style={{
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 2,
+                                        fontWeight: 600,
+                                        color: "var(--color-info)",
+                                        flexShrink: 0,
                                       }}
                                     >
-                                      {billingProcessLines.map(
-                                        (line, index) => (
-                                          <span
-                                            key={`${log.id}-billing-${index}`}
-                                          >
-                                            {line}
-                                          </span>
-                                        ),
-                                      )}
-                                      <span
+                                      计费过程
+                                    </span>
+                                    {pricingDomainBillingDetails ? (
+                                      <PricingDomainBillingSummary
+                                        detail={pricingDomainBillingDetails}
+                                      />
+                                    ) : billingProcessLines.length > 0 ? (
+                                      <div
                                         style={{
-                                          color: "var(--color-text-muted)",
+                                          display: "flex",
+                                          flexDirection: "column",
+                                          gap: 2,
                                         }}
                                       >
-                                        仅供参考，以实际扣费为准
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    <span>
-                                      无详细计费拆分；输入{" "}
-                                      {formatProxyLogTokenValue(
-                                        detailLog.promptTokens,
-                                      )}{" "}
-                                      tokens
-                                      {" + "}输出{" "}
-                                      {formatProxyLogTokenValue(
-                                        detailLog.completionTokens,
-                                      )}{" "}
-                                      tokens
-                                      {" = "}总计{" "}
-                                      {formatProxyLogTokenValue(
-                                        detailLog.totalTokens,
-                                      )}{" "}
-                                      tokens
-                                      {typeof detailLog.estimatedCost ===
-                                        "number" && (
-                                        <>
-                                          ，预估费用{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
-                                            $
-                                            {detailLog.estimatedCost.toFixed(6)}
-                                          </strong>
-                                        </>
-                                      )}
-                                    </span>
-                                  )}
-                                </div>
+                                        {billingProcessLines.map(
+                                          (line, index) => (
+                                            <span
+                                              key={`${log.id}-billing-${index}`}
+                                            >
+                                              {line}
+                                            </span>
+                                          ),
+                                        )}
+                                        <span
+                                          style={{
+                                            color: "var(--color-text-muted)",
+                                          }}
+                                        >
+                                          仅供参考，以实际扣费为准
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <BillingFallbackSummary log={detailLog} />
+                                    )}
+                                  </div>
+                                )}
 
                                 <div
                                   style={{

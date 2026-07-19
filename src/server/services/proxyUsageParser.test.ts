@@ -111,6 +111,23 @@ describe('proxyUsageParser', () => {
     });
   });
 
+  it('treats direct cached token fields as part of the prompt total', () => {
+    const usage = parseProxyUsage({
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        cached_tokens: 40,
+      },
+    });
+
+    expect(usage).toMatchObject({
+      promptTokens: 100,
+      cacheReadTokens: 40,
+      promptTokensIncludeCache: true,
+    });
+  });
+
   it('parses anthropic cache usage fields without treating input tokens as cache-inclusive', () => {
     const usage = parseProxyUsage({
       usage: {
@@ -128,6 +145,26 @@ describe('proxyUsageParser', () => {
       cacheReadTokens: 1000,
       cacheCreationTokens: 40,
       promptTokensIncludeCache: false,
+    });
+  });
+
+  it('parses Gemini cached content usage as cache-read tokens', () => {
+    const usage = parseProxyUsage({
+      usageMetadata: {
+        promptTokenCount: 11,
+        candidatesTokenCount: 6,
+        totalTokenCount: 17,
+        cachedContentTokenCount: 2,
+      },
+    });
+
+    expect(usage).toEqual({
+      promptTokens: 11,
+      completionTokens: 6,
+      totalTokens: 17,
+      cacheReadTokens: 2,
+      cacheCreationTokens: 0,
+      promptTokensIncludeCache: true,
     });
   });
 

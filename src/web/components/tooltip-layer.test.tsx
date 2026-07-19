@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseStructuredTooltipDetail } from './TooltipLayer.js';
 
 describe('TooltipLayer component', () => {
   it('uses a portal-based fixed tooltip layer and is mounted by App', () => {
@@ -13,5 +14,33 @@ describe('TooltipLayer component', () => {
     expect(source).toContain('document.body.dataset.tooltipPortal');
     expect(appSource).toContain("import TooltipLayer from './components/TooltipLayer.js'");
     expect(appSource).toContain('<TooltipLayer />');
+  });
+
+  it('accepts validated structured rows for rich hover details', () => {
+    expect(parseStructuredTooltipDetail(JSON.stringify({
+      title: '费用明细',
+      sections: [{
+        title: '输入',
+        rows: [
+          { label: '单价', value: '$5.0000 / 1M tokens', tone: 'info' },
+          { label: '成本', value: '$0.004745' },
+        ],
+      }],
+    }))).toEqual({
+      title: '费用明细',
+      sections: [{
+        title: '输入',
+        rows: [
+          { label: '单价', value: '$5.0000 / 1M tokens', tone: 'info' },
+          { label: '成本', value: '$0.004745', tone: 'default' },
+        ],
+      }],
+    });
+
+    expect(parseStructuredTooltipDetail('{not-json')).toBeNull();
+    expect(parseStructuredTooltipDetail(JSON.stringify({
+      title: '空内容',
+      sections: [{ rows: [] }],
+    }))).toBeNull();
   });
 });

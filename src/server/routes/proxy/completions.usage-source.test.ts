@@ -164,6 +164,10 @@ describe('/v1/completions usage source logging', () => {
         prompt_tokens: 1,
         completion_tokens: 2,
         total_tokens: 3,
+        input_tokens: 120,
+        output_tokens: 30,
+        cache_read_input_tokens: 1000,
+        cache_creation_input_tokens: 40,
       },
     }), {
       status: 200,
@@ -186,6 +190,9 @@ describe('/v1/completions usage source logging', () => {
     expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
       status: 'success',
       errorMessage: expect.stringContaining('[usage:self-log]'),
+      cacheReadTokens: 1000,
+      cacheCreationTokens: 40,
+      promptTokensIncludeCache: false,
     }));
   });
 });

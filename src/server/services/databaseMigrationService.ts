@@ -659,7 +659,7 @@ function buildStatements(
   for (const row of snapshot.accounts.proxyLogs) {
     statements.push({
       table: 'proxy_logs',
-      columns: ['id', 'route_id', 'channel_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
+      columns: ['id', 'route_id', 'channel_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'prompt_tokens_include_cache', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, null),
@@ -673,6 +673,9 @@ function buildStatements(
         asNumber(row.latencyMs, null),
         asNumber(row.promptTokens, null),
         asNumber(row.completionTokens, null),
+        asNumber((row as any).cacheReadTokens, null),
+        asNumber((row as any).cacheCreationTokens, null),
+        (row as any).promptTokensIncludeCache == null ? null : asBoolean((row as any).promptTokensIncludeCache, false),
         asNumber(row.totalTokens, null),
         asNumber(row.estimatedCost, null),
         serializeColumnValue('proxy_logs', 'billing_details', row.billingDetails, contract),

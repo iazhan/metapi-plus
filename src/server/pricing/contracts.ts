@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isFirstPartyModelProvider } from './officialProviderPolicy.js';
 
 export const PRICE_FIELD_KEYS = [
   'inputPerMillionUsd',
@@ -69,6 +70,13 @@ export const siteModelPriceRuleInputSchema = z.object({
       message: 'custom mapping cannot reference an official model',
     });
   }
+  if (value.mappingMode === 'manual' && hasProvider && !isFirstPartyModelProvider(value.mappedProviderId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['mappedProviderId'],
+      message: 'manual mapping must use a first-party provider',
+    });
+  }
 });
 
 export const officialModelPriceInputSchema = z.object({
@@ -133,6 +141,28 @@ export interface PricingBillingSnapshot {
   inputAudioPerMillionUsd: number | null;
   outputAudioPerMillionUsd: number | null;
   perCallUsd: number | null;
+  appliedCacheReadPerMillionUsd: number | null;
+  appliedCacheWritePerMillionUsd: number | null;
+  cacheReadPriceFallback: boolean;
+  cacheWritePriceFallback: boolean;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    billablePromptTokens: number;
+    promptTokensIncludeCache: boolean | null;
+  };
+  costBreakdownUsd: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    reasoning: number;
+    inputAudio: number;
+    outputAudio: number;
+    perCall: number;
+  };
   groupRatio: number;
   groupRatioApplied: boolean;
   paidCny: number;

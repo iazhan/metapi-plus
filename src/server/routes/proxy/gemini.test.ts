@@ -1564,7 +1564,7 @@ describe('gemini native proxy routes', () => {
     const encoder = new TextEncoder();
     const upstreamBody = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode('data: {"responseId":"resp-fallback","candidates":[{"content":{"role":"model","parts":[{"text":"hello from fallback sse"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":6,"totalTokenCount":17}}\r\n\r\n'));
+        controller.enqueue(encoder.encode('data: {"responseId":"resp-fallback","candidates":[{"content":{"role":"model","parts":[{"text":"hello from fallback sse"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":6,"totalTokenCount":17,"cachedContentTokenCount":2}}\r\n\r\n'));
         controller.close();
       },
     });
@@ -1609,6 +1609,8 @@ describe('gemini native proxy routes', () => {
       promptTokens: 11,
       completionTokens: 6,
       totalTokens: 17,
+      cacheReadTokens: 2,
+      promptTokensIncludeCache: true,
       errorMessage: '[downstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent] [upstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent]',
     }));
     expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0, 'gemini-2.5-flash');

@@ -29,6 +29,9 @@ export type ProxyLogInsertInput = {
   latencyMs?: number | null;
   promptTokens?: number | null;
   completionTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  promptTokensIncludeCache?: boolean | null;
   totalTokens?: number | null;
   estimatedCost?: number | null;
   billingDetails?: unknown;
@@ -56,6 +59,9 @@ function buildProxyLogCoreSelectFields() {
     latencyMs: schema.proxyLogs.latencyMs,
     promptTokens: schema.proxyLogs.promptTokens,
     completionTokens: schema.proxyLogs.completionTokens,
+    cacheReadTokens: schema.proxyLogs.cacheReadTokens,
+    cacheCreationTokens: schema.proxyLogs.cacheCreationTokens,
+    promptTokensIncludeCache: schema.proxyLogs.promptTokensIncludeCache,
     totalTokens: schema.proxyLogs.totalTokens,
     estimatedCost: schema.proxyLogs.estimatedCost,
     errorMessage: schema.proxyLogs.errorMessage,
@@ -365,6 +371,9 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
     latencyMs: input.latencyMs ?? null,
     promptTokens: input.promptTokens ?? null,
     completionTokens: input.completionTokens ?? null,
+    ...(input.cacheReadTokens != null ? { cacheReadTokens: input.cacheReadTokens } : {}),
+    ...(input.cacheCreationTokens != null ? { cacheCreationTokens: input.cacheCreationTokens } : {}),
+    ...(input.promptTokensIncludeCache != null ? { promptTokensIncludeCache: input.promptTokensIncludeCache } : {}),
     totalTokens: input.totalTokens ?? null,
     estimatedCost: input.estimatedCost ?? 0,
     errorMessage: input.errorMessage ?? null,

@@ -218,6 +218,13 @@
       "when": 1784097159032,
       "tag": "0031_site_model_aliases",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1784435522483,
+      "tag": "0032_proxy_log_cache_usage",
+      "breakpoints": true
     }
   ]
 }

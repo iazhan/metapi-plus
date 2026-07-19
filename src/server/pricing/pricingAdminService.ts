@@ -25,6 +25,7 @@ import {
   triggerPriceRefresh,
   updatePriceRefreshScheduler,
 } from './priceRefreshScheduler.js';
+import { isFirstPartyModelProvider } from './officialProviderPolicy.js';
 
 async function siteExists(siteId: number): Promise<boolean> {
   return !!await db.select({ id: schema.sites.id }).from(schema.sites)
@@ -105,7 +106,7 @@ export async function getSitePricing(siteId: number) {
     profile,
     models: prices,
     rules,
-    catalog,
+    catalog: catalog.filter((row) => isFirstPartyModelProvider(row.providerId)),
     referenceAccountId: referenceAccount?.id ?? null,
     effectiveModels,
     refreshState: refreshStates.find((row) => row.scopeType === 'site' && row.scopeId === siteId) ?? null,

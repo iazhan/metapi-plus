@@ -713,6 +713,55 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
   });
 
+  it('forwards parsed cache usage to the success log', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 120,
+      completionTokens: 30,
+      totalTokens: 150,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'upstream',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({
+      estimatedCost: 0.01,
+      actualCostCny: 0.001,
+      billingDetails: { source: 'pricing-test' },
+    });
+    const logSuccess = vi.fn().mockResolvedValue(undefined);
+
+    const { recordSurfaceSuccess } = await import('./sharedSurface.js');
+    await recordSurfaceSuccess({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'oauth-user' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'new-api', name: 'Upstream' },
+        tokenValue: 'live-token',
+        tokenName: 'default',
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      parsedUsage: {
+        promptTokens: 120,
+        completionTokens: 30,
+        totalTokens: 150,
+        cacheReadTokens: 1_000,
+        cacheCreationTokens: 40,
+        promptTokensIncludeCache: false,
+      },
+      requestStartedAtMs: 1000,
+      latencyMs: 250,
+      retryCount: 0,
+      logSuccess,
+    });
+
+    expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      cacheReadTokens: 1_000,
+      cacheCreationTokens: 40,
+    }));
+  });
+
   it('logs unknown usage as null tokens while preserving success bookkeeping', async () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
       promptTokens: 0,

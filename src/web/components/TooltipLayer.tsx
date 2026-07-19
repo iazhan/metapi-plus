@@ -3,10 +3,30 @@ import { createPortal } from 'react-dom';
 
 type TooltipSide = 'top' | 'bottom';
 type TooltipAlign = 'start' | 'center' | 'end';
+export type StructuredTooltipTone =
+  | 'default'
+  | 'muted'
+  | 'info'
+  | 'accent'
+  | 'success'
+  | 'warning';
+
+export type StructuredTooltipDetail = {
+  title: string;
+  sections: Array<{
+    title?: string;
+    rows: Array<{
+      label: string;
+      value: string;
+      tone?: StructuredTooltipTone;
+    }>;
+  }>;
+};
 
 type ActiveTooltip = {
   target: HTMLElement;
   text: string;
+  detail: StructuredTooltipDetail | null;
   side: TooltipSide;
   align: TooltipAlign;
 };
@@ -20,6 +40,71 @@ type TooltipPosition = {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+const STRUCTURED_TOOLTIP_TONES = new Set<StructuredTooltipTone>([
+  'default',
+  'muted',
+  'info',
+  'accent',
+  'success',
+  'warning',
+]);
+
+function readNonEmptyText(value: unknown, maxLength = 240): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+export function parseStructuredTooltipDetail(
+  raw: string | null,
+): StructuredTooltipDetail | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const candidate = parsed as Record<string, unknown>;
+    const title = readNonEmptyText(candidate.title, 80);
+    if (!title || !Array.isArray(candidate.sections)) return null;
+
+    const sections = candidate.sections.slice(0, 8).flatMap((sectionValue) => {
+      if (
+        !sectionValue
+        || typeof sectionValue !== 'object'
+        || Array.isArray(sectionValue)
+      ) return [];
+      const section = sectionValue as Record<string, unknown>;
+      if (!Array.isArray(section.rows)) return [];
+      const rows = section.rows.slice(0, 30).flatMap((rowValue) => {
+        if (
+          !rowValue
+          || typeof rowValue !== 'object'
+          || Array.isArray(rowValue)
+        ) return [];
+        const row = rowValue as Record<string, unknown>;
+        const label = readNonEmptyText(row.label, 80);
+        const value = readNonEmptyText(row.value);
+        if (!label || !value) return [];
+        const tone = STRUCTURED_TOOLTIP_TONES.has(
+          row.tone as StructuredTooltipTone,
+        )
+          ? row.tone as StructuredTooltipTone
+          : 'default';
+        return [{ label, value, tone }];
+      });
+      if (rows.length === 0) return [];
+      const sectionTitle = readNonEmptyText(section.title, 80);
+      return [{
+        ...(sectionTitle ? { title: sectionTitle } : {}),
+        rows,
+      }];
+    });
+
+    return sections.length > 0 ? { title, sections } : null;
+  } catch {
+    return null;
+  }
 }
 
 function readTooltipSide(target: HTMLElement): TooltipSide {
@@ -72,6 +157,9 @@ export default function TooltipLayer() {
     setActiveTooltip({
       target,
       text,
+      detail: parseStructuredTooltipDetail(
+        target.getAttribute('data-tooltip-detail'),
+      ),
       side: readTooltipSide(target),
       align: readTooltipAlign(target),
     });
@@ -200,11 +288,19 @@ export default function TooltipLayer() {
 
   if (!activeTooltip || typeof document === 'undefined') return null;
 
+  const activeSide = position?.side ?? activeTooltip.side;
+  const bubbleClassName = [
+    'tooltip-bubble',
+    `tooltip-bubble-${activeSide}`,
+    activeTooltip.detail ? 'is-detail' : '',
+    position ? 'is-visible' : '',
+  ].filter(Boolean).join(' ');
+
   const tooltip = (
     <div className="tooltip-layer" aria-hidden="true">
       <div
         ref={bubbleRef}
-        className={`tooltip-bubble tooltip-bubble-${position?.side ?? activeTooltip.side} ${position ? 'is-visible' : ''}`.trim()}
+        className={bubbleClassName}
         style={position ? {
           position: 'fixed',
           left: position.left,
@@ -216,9 +312,40 @@ export default function TooltipLayer() {
           visibility: 'hidden',
         }}
       >
-        {activeTooltip.text}
+        {activeTooltip.detail ? (
+          <div className="tooltip-detail">
+            <div className="tooltip-detail-title">
+              {activeTooltip.detail.title}
+            </div>
+            {activeTooltip.detail.sections.map((section, sectionIndex) => (
+              <div
+                className="tooltip-detail-section"
+                key={`${section.title ?? 'section'}-${sectionIndex}`}
+              >
+                {section.title ? (
+                  <div className="tooltip-detail-section-title">
+                    {section.title}
+                  </div>
+                ) : null}
+                {section.rows.map((row, rowIndex) => (
+                  <div
+                    className="tooltip-detail-row"
+                    key={`${row.label}-${rowIndex}`}
+                  >
+                    <span className="tooltip-detail-label">{row.label}</span>
+                    <strong
+                      className={`tooltip-detail-value is-${row.tone ?? 'default'}`}
+                    >
+                      {row.value}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : activeTooltip.text}
         <span
-          className={`tooltip-bubble-arrow tooltip-bubble-arrow-${position?.side ?? activeTooltip.side}`}
+          className={`tooltip-bubble-arrow tooltip-bubble-arrow-${activeSide}`}
           style={position ? { left: position.arrowLeft } : undefined}
         />
       </div>

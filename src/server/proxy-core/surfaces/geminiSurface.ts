@@ -211,6 +211,9 @@ async function logProxy(
   totalTokens = 0,
   isStream = false,
   firstByteLatencyMs: number | null = null,
+  cacheReadTokens = 0,
+  cacheCreationTokens = 0,
+  promptTokensIncludeCache: boolean | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -237,6 +240,9 @@ async function logProxy(
       latencyMs,
       promptTokens,
       completionTokens,
+      ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+      ...(cacheCreationTokens > 0 ? { cacheCreationTokens } : {}),
+      ...(promptTokensIncludeCache != null ? { promptTokensIncludeCache } : {}),
       totalTokens,
       estimatedCost: 0,
       clientFamily: clientContext?.clientKind || null,
@@ -748,6 +754,9 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 parsedUsage.totalTokens,
                 isStreamAction,
                 firstByteLatencyMs,
+                parsedUsage.cacheReadTokens,
+                parsedUsage.cacheCreationTokens,
+                parsedUsage.promptTokensIncludeCache,
               );
               await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
                 attemptIndex: retryCount,
@@ -802,6 +811,9 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 parsedUsage.totalTokens,
                 isStreamAction,
                 firstByteLatencyMs,
+                parsedUsage.cacheReadTokens,
+                parsedUsage.cacheCreationTokens,
+                parsedUsage.promptTokensIncludeCache,
               );
               await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
                 attemptIndex: retryCount,
@@ -836,7 +848,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
           const text = await readRuntimeResponseText(upstream);
           const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
-          let parsedUsage = EMPTY_PROXY_USAGE;
+          let parsedUsage: ReturnType<typeof parseProxyUsage> = {
+            ...EMPTY_PROXY_USAGE,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            promptTokensIncludeCache: null,
+          };
           try {
             const parsed = JSON.parse(text);
             const unwrappedPayload = parsed;
@@ -866,6 +883,9 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               parsedUsage.totalTokens,
               isStreamAction,
               firstByteLatencyMs,
+              parsedUsage.cacheReadTokens,
+              parsedUsage.cacheCreationTokens,
+              parsedUsage.promptTokensIncludeCache,
             );
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: retryCount,
@@ -1199,6 +1219,9 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           parsedUsage.totalTokens,
           isStreamAction,
           firstByteLatencyMs,
+          parsedUsage.cacheReadTokens,
+          parsedUsage.cacheCreationTokens,
+          parsedUsage.promptTokensIncludeCache,
         );
         const downstreamPayload = geminiResponse;
         await finalizeDebugSuccess(
