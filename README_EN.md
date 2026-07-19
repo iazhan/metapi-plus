@@ -323,7 +323,9 @@ services:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
       CHECKIN_CRON: "0 8 * * *"
+      CHECKIN_ENABLED: "true"
       BALANCE_REFRESH_CRON: "0 * * * *"
+      BALANCE_REFRESH_ENABLED: "true"
       ACCOUNT_GROUP_RATE_REFRESH_ENABLED: "true"
       ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES: "30"
       PORT: ${PORT:-4000}
@@ -429,7 +431,9 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | Variable | Description | Default |
 | --- | --- | --- |
 | `CHECKIN_CRON` | Auto check-in cron expression | `0 8 * * *` |
+| `CHECKIN_ENABLED` | Enable scheduled automatic check-in | `true` |
 | `BALANCE_REFRESH_CRON` | Balance refresh cron expression | `0 * * * *` |
+| `BALANCE_REFRESH_ENABLED` | Enable scheduled automatic balance refresh | `true` |
 | `ACCOUNT_GROUP_RATE_REFRESH_ENABLED` | Enable automatic account-group rate refresh | `true` |
 | `ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES` | Automatic account-group rate refresh interval in integer minutes (`5`-`10080`) | `30` |
 

@@ -157,6 +157,7 @@ function stopCheckinSchedule() {
 
 function startCheckinSchedule() {
   stopCheckinSchedule();
+  if (!config.checkinEnabled) return;
   if (config.checkinScheduleMode === 'interval') {
     checkinIntervalTimer = setInterval(() => {
       void trackSchedulerTask(runIntervalCheckinPass());
@@ -177,6 +178,11 @@ function createBalanceTask(cronExpr: string) {
       console.error('[Scheduler] Balance refresh error:', err);
     }
   })()));
+}
+
+function startBalanceSchedule() {
+  balanceTask?.stop();
+  balanceTask = config.balanceRefreshEnabled ? createBalanceTask(config.balanceRefreshCron) : null;
 }
 
 function createDailySummaryTask(cronExpr: string) {
@@ -221,6 +227,7 @@ function createLogCleanupTask(cronExpr: string) {
 
 export async function startScheduler() {
   const activeCheckinCron = await resolveCronSetting('checkin_cron', config.checkinCron);
+  const activeCheckinEnabled = await resolveBooleanSetting('checkin_enabled', config.checkinEnabled);
   const activeCheckinScheduleMode = await resolveJsonSetting<CheckinScheduleMode>(
     'checkin_schedule_mode',
     (value): value is CheckinScheduleMode => value === 'cron' || value === 'interval',
@@ -231,6 +238,7 @@ export async function startScheduler() {
     config.checkinIntervalHours,
   );
   const activeBalanceCron = await resolveCronSetting('balance_refresh_cron', config.balanceRefreshCron);
+  const activeBalanceEnabled = await resolveBooleanSetting('balance_refresh_enabled', config.balanceRefreshEnabled);
   const activeDailySummaryCron = await resolveCronSetting('daily_summary_cron', DAILY_SUMMARY_DEFAULT_CRON);
   const activeLogCleanupCron = await resolveCronSetting('log_cleanup_cron', config.logCleanupCron || LOG_CLEANUP_DEFAULT_CRON);
   const activeLogCleanupUsageLogsEnabled = await resolveBooleanSetting(
@@ -246,9 +254,11 @@ export async function startScheduler() {
     normalizeLogCleanupRetentionDays(config.logCleanupRetentionDays),
   );
   config.checkinCron = activeCheckinCron;
+  config.checkinEnabled = activeCheckinEnabled;
   config.checkinScheduleMode = activeCheckinScheduleMode;
   config.checkinIntervalHours = Math.min(24, Math.max(1, activeCheckinIntervalHours));
   config.balanceRefreshCron = activeBalanceCron;
+  config.balanceRefreshEnabled = activeBalanceEnabled;
   config.logCleanupCron = activeLogCleanupCron;
   config.logCleanupUsageLogsEnabled = activeLogCleanupUsageLogsEnabled;
   config.logCleanupProgramLogsEnabled = activeLogCleanupProgramLogsEnabled;
@@ -259,12 +269,12 @@ export async function startScheduler() {
   dailySummaryTask?.stop();
   logCleanupTask?.stop();
   startCheckinSchedule();
-  balanceTask = createBalanceTask(activeBalanceCron);
+  startBalanceSchedule();
   dailySummaryTask = createDailySummaryTask(activeDailySummaryCron);
   logCleanupTask = createLogCleanupTask(activeLogCleanupCron);
 
-  console.log(`[Scheduler] Check-in schedule: ${config.checkinScheduleMode} (${config.checkinScheduleMode === 'cron' ? activeCheckinCron : `${config.checkinIntervalHours}h`})`);
-  console.log(`[Scheduler] Balance refresh cron: ${activeBalanceCron}`);
+  console.log(`[Scheduler] Check-in schedule: ${activeCheckinEnabled ? `${config.checkinScheduleMode} (${config.checkinScheduleMode === 'cron' ? activeCheckinCron : `${config.checkinIntervalHours}h`})` : 'disabled'}`);
+  console.log(`[Scheduler] Balance refresh: ${activeBalanceEnabled ? activeBalanceCron : 'disabled'}`);
   console.log(`[Scheduler] Daily summary cron: ${activeDailySummaryCron}`);
   console.log(
     `[Scheduler] Log cleanup cron: ${activeLogCleanupCron} (configured=${config.logCleanupConfigured}, usage=${activeLogCleanupUsageLogsEnabled}, program=${activeLogCleanupProgramLogsEnabled}, retentionDays=${activeLogCleanupRetentionDays})`,
@@ -291,6 +301,7 @@ export function updateCheckinCron(cronExpr: string) {
 }
 
 export function updateCheckinSchedule(input: {
+  enabled?: boolean;
   mode: CheckinScheduleMode;
   cronExpr?: string;
   intervalHours?: number;
@@ -311,14 +322,22 @@ export function updateCheckinSchedule(input: {
   config.checkinScheduleMode = nextMode;
   config.checkinCron = nextCronExpr;
   config.checkinIntervalHours = Math.trunc(nextIntervalHours);
+  if (input.enabled !== undefined) config.checkinEnabled = input.enabled;
   startCheckinSchedule();
 }
 
 export function updateBalanceRefreshCron(cronExpr: string) {
   if (!cron.validate(cronExpr)) throw new Error(`Invalid cron: ${cronExpr}`);
   config.balanceRefreshCron = cronExpr;
-  balanceTask?.stop();
-  balanceTask = createBalanceTask(cronExpr);
+  startBalanceSchedule();
+}
+
+export function updateBalanceRefreshSchedule(input: { enabled?: boolean; cronExpr?: string }) {
+  const cronExpr = input.cronExpr ?? config.balanceRefreshCron;
+  if (!cron.validate(cronExpr)) throw new Error(`Invalid cron: ${cronExpr}`);
+  config.balanceRefreshCron = cronExpr;
+  if (input.enabled !== undefined) config.balanceRefreshEnabled = input.enabled;
+  startBalanceSchedule();
 }
 
 export function updateLogCleanupSettings(input: {

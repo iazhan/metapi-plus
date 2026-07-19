@@ -133,6 +133,9 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const checkinCron = parseSettingFromMap<string>(settingsMap, 'checkin_cron');
   if (typeof checkinCron === 'string' && checkinCron) config.checkinCron = checkinCron;
 
+  const checkinEnabled = parseSettingFromMap<boolean>(settingsMap, 'checkin_enabled');
+  if (typeof checkinEnabled === 'boolean') config.checkinEnabled = checkinEnabled;
+
   const checkinScheduleMode = parseSettingFromMap<string>(settingsMap, 'checkin_schedule_mode');
   if (checkinScheduleMode === 'cron' || checkinScheduleMode === 'interval') {
     config.checkinScheduleMode = checkinScheduleMode;
@@ -145,6 +148,9 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const balanceRefreshCron = parseSettingFromMap<string>(settingsMap, 'balance_refresh_cron');
   if (typeof balanceRefreshCron === 'string' && balanceRefreshCron) config.balanceRefreshCron = balanceRefreshCron;
+
+  const balanceRefreshEnabled = parseSettingFromMap<boolean>(settingsMap, 'balance_refresh_enabled');
+  if (typeof balanceRefreshEnabled === 'boolean') config.balanceRefreshEnabled = balanceRefreshEnabled;
 
   const accountGroupRateRefreshEnabled = parseSettingFromMap<boolean>(
     settingsMap,

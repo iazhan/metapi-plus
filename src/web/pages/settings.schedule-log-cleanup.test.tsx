@@ -122,6 +122,27 @@ describe('Settings log cleanup schedule', () => {
     }
   });
 
+  it('renders automatic check-in and balance refresh switches', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(root.root.findByProps({ 'data-testid': 'checkin-enabled' }).props.checked).toBe(true);
+      expect(root.root.findByProps({ 'data-testid': 'balance-refresh-enabled' }).props.checked).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('groups every scheduled task family under a titled divider', async () => {
     let root!: WebTestRenderer;
     try {
@@ -230,9 +251,11 @@ describe('Settings log cleanup schedule', () => {
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
         checkinCron: '0 8 * * *',
+        checkinEnabled: true,
         checkinScheduleMode: 'interval',
         checkinIntervalHours: 6,
         balanceRefreshCron: '0 * * * *',
+        balanceRefreshEnabled: true,
         priceRefreshEnabled: true,
         priceRefreshCron: '0 0 * * *',
         priceRefreshScheduleMode: 'cron',

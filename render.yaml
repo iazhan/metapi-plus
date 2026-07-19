@@ -27,8 +27,12 @@ services:
         value: "true"
       - key: CHECKIN_CRON
         value: "0 8 * * *"
+      - key: CHECKIN_ENABLED
+        value: "true"
       - key: BALANCE_REFRESH_CRON
         value: "0 * * * *"
+      - key: BALANCE_REFRESH_ENABLED
+        value: "true"
       - key: ACCOUNT_GROUP_RATE_REFRESH_ENABLED
         value: "true"
       - key: ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES

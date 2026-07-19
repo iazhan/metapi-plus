@@ -84,11 +84,13 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     systemProxyUrl: env.SYSTEM_PROXY_URL || '',
     accountCredentialSecret: env.ACCOUNT_CREDENTIAL_SECRET || env.AUTH_TOKEN || 'change-me-admin-token',
     checkinCron: env.CHECKIN_CRON || '0 8 * * *',
+    checkinEnabled: parseBoolean(env.CHECKIN_ENABLED, true),
     checkinScheduleMode: (env.CHECKIN_SCHEDULE_MODE || 'cron').trim().toLowerCase() === 'interval'
       ? 'interval' as const
       : 'cron' as const,
     checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(parseNumber(env.CHECKIN_INTERVAL_HOURS, 6)))),
     balanceRefreshCron: env.BALANCE_REFRESH_CRON || '0 * * * *',
+    balanceRefreshEnabled: parseBoolean(env.BALANCE_REFRESH_ENABLED, true),
     accountGroupRateRefreshEnabled: parseBoolean(
       env.ACCOUNT_GROUP_RATE_REFRESH_ENABLED,
       ACCOUNT_GROUP_RATE_REFRESH_DEFAULT_ENABLED,

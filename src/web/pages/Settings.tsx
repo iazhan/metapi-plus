@@ -75,9 +75,11 @@ type PayloadRulesEditorDrafts = Record<PayloadRulesEditorSectionKey, string>;
 
 type RuntimeSettings = {
   checkinCron: string;
+  checkinEnabled: boolean;
   checkinScheduleMode: 'cron' | 'interval';
   checkinIntervalHours: number;
   balanceRefreshCron: string;
+  balanceRefreshEnabled: boolean;
   priceRefreshEnabled: boolean;
   priceRefreshCron: string;
   priceRefreshScheduleMode: 'cron' | 'interval';
@@ -394,9 +396,11 @@ export default function Settings() {
   const isMobile = useIsMobile();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
     checkinCron: '0 8 * * *',
+    checkinEnabled: true,
     checkinScheduleMode: 'cron',
     checkinIntervalHours: 6,
     balanceRefreshCron: '0 * * * *',
+    balanceRefreshEnabled: true,
     priceRefreshEnabled: true,
     priceRefreshCron: '0 0 * * *',
     priceRefreshScheduleMode: 'cron',
@@ -728,11 +732,13 @@ export default function Settings() {
       setAccountGroupRateRefreshIntervalDraft(String(accountGroupRateRefreshIntervalMinutes));
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
+        checkinEnabled: typeof runtimeInfo.checkinEnabled === 'boolean' ? runtimeInfo.checkinEnabled : true,
         checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
         checkinIntervalHours: Number(runtimeInfo.checkinIntervalHours) >= 1
           ? Math.min(24, Math.trunc(Number(runtimeInfo.checkinIntervalHours)))
           : 6,
         balanceRefreshCron: runtimeInfo.balanceRefreshCron || '0 * * * *',
+        balanceRefreshEnabled: typeof runtimeInfo.balanceRefreshEnabled === 'boolean' ? runtimeInfo.balanceRefreshEnabled : true,
         priceRefreshEnabled: typeof runtimeInfo.priceRefreshEnabled === 'boolean'
           ? runtimeInfo.priceRefreshEnabled
           : true,
@@ -870,9 +876,11 @@ export default function Settings() {
     try {
       await api.updateRuntimeSettings({
         checkinCron: runtime.checkinCron,
+        checkinEnabled: runtime.checkinEnabled,
         checkinScheduleMode: runtime.checkinScheduleMode,
         checkinIntervalHours: runtime.checkinIntervalHours,
         balanceRefreshCron: runtime.balanceRefreshCron,
+        balanceRefreshEnabled: runtime.balanceRefreshEnabled,
         priceRefreshEnabled: runtime.priceRefreshEnabled,
         priceRefreshCron: runtime.priceRefreshCron,
         priceRefreshScheduleMode: runtime.priceRefreshScheduleMode,
@@ -1456,6 +1464,18 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
           <ScheduleSubsection id="checkin" title="自动签到">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <input
+                data-testid="checkin-enabled"
+                type="checkbox"
+                checked={runtime.checkinEnabled}
+                onChange={(event) => setRuntime((previous) => ({
+                  ...previous,
+                  checkinEnabled: event.target.checked,
+                }))}
+              />
+              启用自动签到
+            </label>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end' }}>
               <div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到方式</div>
@@ -1501,6 +1521,18 @@ export default function Settings() {
           </ScheduleSubsection>
 
           <ScheduleSubsection id="balance-refresh" title="余额自动刷新">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <input
+                data-testid="balance-refresh-enabled"
+                type="checkbox"
+                checked={runtime.balanceRefreshEnabled}
+                onChange={(event) => setRuntime((previous) => ({
+                  ...previous,
+                  balanceRefreshEnabled: event.target.checked,
+                }))}
+              />
+              启用余额自动刷新
+            </label>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>余额刷新 Cron</div>
               <input

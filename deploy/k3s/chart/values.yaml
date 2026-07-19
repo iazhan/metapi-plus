@@ -24,7 +24,9 @@ env:
   port: "4000"
   tz: Asia/Shanghai
   checkinCron: "0 8 * * *"
+  checkinEnabled: "true"
   balanceRefreshCron: "0 * * * *"
+  balanceRefreshEnabled: "true"
   accountGroupRateRefreshEnabled: "true"
   accountGroupRateRefreshIntervalMinutes: "30"
   deployHelperToken: ""

@@ -87,6 +87,19 @@ describe('applyRuntimeSettings', () => {
     expect(config.priceRefreshCron).toBe('0 6 * * *');
   });
 
+  it('hydrates disabled automatic check-in and balance refresh settings', () => {
+    config.checkinEnabled = true;
+    config.balanceRefreshEnabled = true;
+
+    applyRuntimeSettings(new Map([
+      ['checkin_enabled', JSON.stringify(false)],
+      ['balance_refresh_enabled', JSON.stringify(false)],
+    ]));
+
+    expect(config.checkinEnabled).toBe(false);
+    expect(config.balanceRefreshEnabled).toBe(false);
+  });
+
   it('derives explicit log cleanup ownership from the complete settings snapshot', () => {
     config.logCleanupConfigured = false;
     applyRuntimeSettings(new Map([

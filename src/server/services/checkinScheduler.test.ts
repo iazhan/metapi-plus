@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { config } from '../config.js';
 
 const cronStopMock = vi.fn();
 const scheduleMock = vi.fn(() => ({
@@ -42,6 +43,8 @@ vi.mock('./checkinService.js', () => ({
 describe('checkinScheduler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    config.checkinEnabled = true;
+    config.balanceRefreshEnabled = true;
     cronStopMock.mockReset();
     scheduleMock.mockClear();
     validateMock.mockClear();
@@ -101,6 +104,42 @@ describe('checkinScheduler', () => {
     await scheduler.stopScheduler();
 
     expect(cronStopMock).toHaveBeenCalledTimes(4);
+  }, 10_000);
+
+  it('does not register check-in or balance tasks when either global switch is disabled', async () => {
+    const scheduler = await import('./checkinScheduler.js');
+
+    scheduler.updateCheckinSchedule({
+      enabled: false,
+      mode: 'cron',
+      cronExpr: '0 8 * * *',
+      intervalHours: 6,
+    });
+    scheduler.updateBalanceRefreshSchedule({ enabled: false, cronExpr: '0 * * * *' });
+
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('stops active check-in and balance schedules when their switches are turned off', async () => {
+    const scheduler = await import('./checkinScheduler.js');
+
+    scheduler.updateCheckinSchedule({
+      enabled: true,
+      mode: 'cron',
+      cronExpr: '0 8 * * *',
+      intervalHours: 6,
+    });
+    scheduler.updateCheckinSchedule({
+      enabled: false,
+      mode: 'cron',
+      cronExpr: '0 8 * * *',
+      intervalHours: 6,
+    });
+    scheduler.updateBalanceRefreshSchedule({ enabled: true, cronExpr: '0 * * * *' });
+    scheduler.updateBalanceRefreshSchedule({ enabled: false, cronExpr: '0 * * * *' });
+
+    expect(scheduleMock).toHaveBeenCalledTimes(2);
+    expect(cronStopMock).toHaveBeenCalledTimes(2);
   });
 
   it('waits for an in-flight scheduled check-in before shutdown completes', async () => {

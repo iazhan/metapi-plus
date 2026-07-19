@@ -378,9 +378,11 @@ export type RuntimeSettingsPayload = {
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
+  checkinEnabled?: boolean;
   checkinScheduleMode?: "cron" | "interval";
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  balanceRefreshEnabled?: boolean;
   priceRefreshEnabled?: boolean;
   priceRefreshCron?: string;
   priceRefreshScheduleMode?: "cron" | "interval";

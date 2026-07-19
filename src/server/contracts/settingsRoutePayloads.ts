@@ -24,6 +24,8 @@ const runtimeSettingsPayloadSchema = z.object({
   smtpSecure: z.boolean().optional(),
   logCleanupUsageLogsEnabled: z.boolean().optional(),
   logCleanupProgramLogsEnabled: z.boolean().optional(),
+  checkinEnabled: z.boolean().optional(),
+  balanceRefreshEnabled: z.boolean().optional(),
   priceRefreshEnabled: z.boolean().optional(),
   priceRefreshCron: z.string().optional(),
   priceRefreshScheduleMode: z.enum(['cron', 'interval']).optional(),
@@ -133,6 +135,12 @@ function formatSettingsPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'logCleanupProgramLogsEnabled') {
     return '自动清理程序日志格式无效：需要 boolean';
+  }
+  if (firstPath === 'checkinEnabled') {
+    return '自动签到开关格式无效：需要 boolean';
+  }
+  if (firstPath === 'balanceRefreshEnabled') {
+    return '余额自动刷新开关格式无效：需要 boolean';
   }
   if (firstPath === 'priceRefreshCron') {
     return '价格刷新 Cron 格式无效：需要 string';

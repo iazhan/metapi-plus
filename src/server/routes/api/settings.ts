@@ -6,7 +6,7 @@ import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
-import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
+import { updateBalanceRefreshCron, updateBalanceRefreshSchedule, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import {
   exportBackup,
@@ -76,9 +76,11 @@ interface RuntimeSettingsBody {
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
+  checkinEnabled?: boolean;
   checkinScheduleMode?: 'cron' | 'interval';
   checkinIntervalHours?: number;
   balanceRefreshCron?: string;
+  balanceRefreshEnabled?: boolean;
   priceRefreshEnabled?: boolean;
   priceRefreshCron?: string;
   priceRefreshScheduleMode?: 'cron' | 'interval';
@@ -382,6 +384,23 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       if (typeof value !== 'string' || !value || !cron.validate(value)) return;
       config.balanceRefreshCron = value;
       updateBalanceRefreshCron(value);
+      return;
+    }
+    case 'checkin_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.checkinEnabled = value;
+      updateCheckinSchedule({
+        enabled: value,
+        mode: config.checkinScheduleMode,
+        cronExpr: config.checkinCron,
+        intervalHours: config.checkinIntervalHours,
+      });
+      return;
+    }
+    case 'balance_refresh_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.balanceRefreshEnabled = value;
+      updateBalanceRefreshSchedule({ enabled: value, cronExpr: config.balanceRefreshCron });
       return;
     }
     case 'price_refresh_cron': {
@@ -785,9 +804,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
 function getRuntimeSettingsResponse(currentAdminIp = '') {
   return {
     checkinCron: config.checkinCron,
+    checkinEnabled: config.checkinEnabled,
     checkinScheduleMode: config.checkinScheduleMode,
     checkinIntervalHours: config.checkinIntervalHours,
     balanceRefreshCron: config.balanceRefreshCron,
+    balanceRefreshEnabled: config.balanceRefreshEnabled,
     priceRefreshEnabled: config.priceRefreshEnabled,
     priceRefreshCron: config.priceRefreshCron,
     priceRefreshScheduleMode: config.priceRefreshScheduleMode,
@@ -1079,9 +1100,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'Telegram Topic ID 格式无效，需要正整数' });
     }
 
-    const checkinScheduleTouched = body.checkinCron !== undefined
+    const checkinScheduleTouched = body.checkinEnabled !== undefined
+      || body.checkinCron !== undefined
       || body.checkinScheduleMode !== undefined
       || body.checkinIntervalHours !== undefined;
+
+    if (body.checkinEnabled !== undefined && body.checkinEnabled !== config.checkinEnabled) {
+      changedLabels.push(body.checkinEnabled ? '开启自动签到' : '关闭自动签到');
+    }
 
     if (body.checkinCron !== undefined) {
       if (!cron.validate(body.checkinCron)) {
@@ -1099,7 +1125,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (body.checkinScheduleMode !== config.checkinScheduleMode) {
         changedLabels.push('签到方式');
       }
-      config.checkinScheduleMode = body.checkinScheduleMode;
     }
 
     if (body.checkinIntervalHours !== undefined) {
@@ -1111,11 +1136,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (nextIntervalHours !== config.checkinIntervalHours) {
         changedLabels.push(`签到间隔（${config.checkinIntervalHours}h -> ${nextIntervalHours}h）`);
       }
-      config.checkinIntervalHours = nextIntervalHours;
     }
 
     if (checkinScheduleTouched) {
       const nextCheckinCron = body.checkinCron !== undefined ? body.checkinCron : config.checkinCron;
+      const nextCheckinEnabled = body.checkinEnabled !== undefined ? body.checkinEnabled : config.checkinEnabled;
       const nextCheckinScheduleMode: 'cron' | 'interval' = body.checkinScheduleMode !== undefined
         ? body.checkinScheduleMode
         : config.checkinScheduleMode;
@@ -1123,28 +1148,41 @@ export async function settingsRoutes(app: FastifyInstance) {
         ? Math.trunc(Number(body.checkinIntervalHours))
         : config.checkinIntervalHours;
 
+      await db.transaction(async (tx) => {
+        await upsertSetting('checkin_cron', nextCheckinCron, tx as typeof db);
+        await upsertSetting('checkin_enabled', nextCheckinEnabled, tx as typeof db);
+        await upsertSetting('checkin_schedule_mode', nextCheckinScheduleMode, tx as typeof db);
+        await upsertSetting('checkin_interval_hours', nextCheckinIntervalHours, tx as typeof db);
+      });
       updateCheckinSchedule({
+        enabled: nextCheckinEnabled,
         mode: nextCheckinScheduleMode,
         cronExpr: nextCheckinCron,
         intervalHours: nextCheckinIntervalHours,
       });
-      config.checkinCron = nextCheckinCron;
-      config.checkinScheduleMode = nextCheckinScheduleMode;
-      config.checkinIntervalHours = nextCheckinIntervalHours;
-      upsertSetting('checkin_cron', config.checkinCron);
-      upsertSetting('checkin_schedule_mode', config.checkinScheduleMode);
-      upsertSetting('checkin_interval_hours', config.checkinIntervalHours);
     }
 
-    if (body.balanceRefreshCron !== undefined) {
-      if (!cron.validate(body.balanceRefreshCron)) {
+    if (body.balanceRefreshCron !== undefined || body.balanceRefreshEnabled !== undefined) {
+      const nextBalanceRefreshCron = body.balanceRefreshCron !== undefined
+        ? body.balanceRefreshCron
+        : config.balanceRefreshCron;
+      const nextBalanceRefreshEnabled = body.balanceRefreshEnabled !== undefined
+        ? body.balanceRefreshEnabled
+        : config.balanceRefreshEnabled;
+      if (!cron.validate(nextBalanceRefreshCron)) {
         return reply.code(400).send({ success: false, message: '余额刷新 Cron 表达式无效' });
       }
-      if (body.balanceRefreshCron !== config.balanceRefreshCron) {
-        changedLabels.push(`余额刷新 Cron（${config.balanceRefreshCron} -> ${body.balanceRefreshCron}）`);
+      if (nextBalanceRefreshCron !== config.balanceRefreshCron) {
+        changedLabels.push(`余额刷新 Cron（${config.balanceRefreshCron} -> ${nextBalanceRefreshCron}）`);
       }
-      updateBalanceRefreshCron(body.balanceRefreshCron);
-      upsertSetting('balance_refresh_cron', body.balanceRefreshCron);
+      if (nextBalanceRefreshEnabled !== config.balanceRefreshEnabled) {
+        changedLabels.push(nextBalanceRefreshEnabled ? '开启余额自动刷新' : '关闭余额自动刷新');
+      }
+      await db.transaction(async (tx) => {
+        await upsertSetting('balance_refresh_cron', nextBalanceRefreshCron, tx as typeof db);
+        await upsertSetting('balance_refresh_enabled', nextBalanceRefreshEnabled, tx as typeof db);
+      });
+      updateBalanceRefreshSchedule({ enabled: nextBalanceRefreshEnabled, cronExpr: nextBalanceRefreshCron });
     }
 
     const priceRefreshScheduleTouched = body.priceRefreshEnabled !== undefined

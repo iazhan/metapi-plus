@@ -66,8 +66,12 @@ spec:
             expose: false
           CHECKIN_CRON:
             default: 0 8 * * *
+          CHECKIN_ENABLED:
+            default: "true"
           BALANCE_REFRESH_CRON:
             default: 0 * * * *
+          BALANCE_REFRESH_ENABLED:
+            default: "true"
           ACCOUNT_GROUP_RATE_REFRESH_ENABLED:
             default: "true"
           ACCOUNT_GROUP_RATE_REFRESH_INTERVAL_MINUTES:

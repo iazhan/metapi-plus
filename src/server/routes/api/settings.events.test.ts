@@ -47,6 +47,8 @@ describe('settings and auth events', () => {
     (config as any).checkinScheduleMode = 'cron';
     (config as any).checkinIntervalHours = 6;
     config.balanceRefreshCron = '0 * * * *';
+    (config as any).checkinEnabled = true;
+    (config as any).balanceRefreshEnabled = true;
     config.logCleanupConfigured = false;
     config.logCleanupCron = '0 6 * * *';
     config.logCleanupUsageLogsEnabled = false;
@@ -132,6 +134,31 @@ describe('settings and auth events', () => {
     const savedInterval = await db.select().from(schema.settings).where(eq(schema.settings.key, 'checkin_interval_hours')).get();
     expect(savedMode?.value).toBe(JSON.stringify('interval'));
     expect(savedInterval?.value).toBe(JSON.stringify(8));
+  });
+
+  it('persists and returns the automatic check-in and balance refresh switches', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        checkinEnabled: false,
+        balanceRefreshEnabled: false,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json()).toMatchObject({
+      checkinEnabled: false,
+      balanceRefreshEnabled: false,
+    });
+    expect(config.checkinEnabled).toBe(false);
+    expect(config.balanceRefreshEnabled).toBe(false);
+    const savedCheckin = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'checkin_enabled')).get();
+    const savedBalance = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'balance_refresh_enabled')).get();
+    expect(savedCheckin?.value).toBe(JSON.stringify(false));
+    expect(savedBalance?.value).toBe(JSON.stringify(false));
   });
 
   it('persists session lease settings from runtime settings', async () => {

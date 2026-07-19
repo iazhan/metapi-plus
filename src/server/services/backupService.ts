@@ -1306,7 +1306,9 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function isSettingValueAcceptable(key: string, value: unknown): boolean {
-  if (key === 'account_group_rate_refresh_enabled') {
+  if (key === 'account_group_rate_refresh_enabled'
+    || key === 'checkin_enabled'
+    || key === 'balance_refresh_enabled') {
     return typeof value === 'boolean';
   }
 

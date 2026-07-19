@@ -94,6 +94,20 @@ describe('buildConfig', () => {
     expect(built.accountGroupRateRefreshIntervalMinutes).toBe(30);
   });
 
+  it('defaults automatic check-in and balance refresh to enabled and accepts environment overrides', () => {
+    expect(buildConfig({})).toMatchObject({
+      checkinEnabled: true,
+      balanceRefreshEnabled: true,
+    });
+    expect(buildConfig({
+      CHECKIN_ENABLED: 'false',
+      BALANCE_REFRESH_ENABLED: 'false',
+    })).toMatchObject({
+      checkinEnabled: false,
+      balanceRefreshEnabled: false,
+    });
+  });
+
   it('reads valid account group rate refresh environment values and rejects invalid intervals', () => {
     expect(buildConfig({
       ACCOUNT_GROUP_RATE_REFRESH_ENABLED: 'false',
