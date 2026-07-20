@@ -34,6 +34,12 @@ import type { StructuredTooltipDetail } from "../components/TooltipLayer.js";
 import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
+import {
+  getCompleteBillingDetails,
+  getPricingDomainBillingDetails,
+  getProxyLogDisplayUsage,
+  isFiniteNumber,
+} from "./helpers/proxyLogDisplayUsage.js";
 import { tr } from "../i18n.js";
 
 type ProxyLogRenderItem = ProxyLogListItem;
@@ -322,54 +328,6 @@ function formatPerMillionPrice(value: number) {
   return `$${formatCompactNumber(value)} / 1M tokens`;
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function getCompleteBillingDetails(
-  log: ProxyLogRenderItem,
-): LegacyProxyLogBillingDetails | null {
-  const detail = log.billingDetails;
-  if (!detail) return null;
-  if (!("usage" in detail) || !("pricing" in detail) || !("breakdown" in detail)) return null;
-
-  const requiredNumbers = [
-    detail.usage.promptTokens,
-    detail.usage.completionTokens,
-    detail.usage.totalTokens,
-    detail.usage.cacheReadTokens,
-    detail.usage.cacheCreationTokens,
-    detail.usage.billablePromptTokens,
-    detail.pricing.modelRatio,
-    detail.pricing.completionRatio,
-    detail.pricing.cacheRatio,
-    detail.pricing.cacheCreationRatio,
-    detail.pricing.groupRatio,
-    detail.breakdown.inputPerMillion,
-    detail.breakdown.outputPerMillion,
-    detail.breakdown.cacheReadPerMillion,
-    detail.breakdown.cacheCreationPerMillion,
-    detail.breakdown.inputCost,
-    detail.breakdown.outputCost,
-    detail.breakdown.cacheReadCost,
-    detail.breakdown.cacheCreationCost,
-    detail.breakdown.totalCost,
-  ];
-
-  return requiredNumbers.every(isFiniteNumber) ? detail : null;
-}
-
-function getPricingDomainBillingDetails(log: ProxyLogRenderItem): PricingDomainBillingDetails | null {
-  const detail = log.billingDetails;
-  if (!detail || !("siteCostUsd" in detail) || !("actualCostCny" in detail)) return null;
-  return isFiniteNumber(detail.siteCostUsd)
-    && detail.siteCostUsd >= 0
-    && isFiniteNumber(detail.actualCostCny)
-    && detail.actualCostCny >= 0
-    ? detail
-    : null;
-}
-
 function formatBillingDetailSummary(log: ProxyLogRenderItem) {
   const detail = getCompleteBillingDetails(log);
   if (!detail) return null;
@@ -412,11 +370,12 @@ function formatProxyLogTokenValue(value: number | null | undefined): string {
 }
 
 function BillingFallbackSummary({ log }: { log: ProxyLogRenderItem }) {
+  const usage = getProxyLogDisplayUsage(log);
   const metrics = [
     {
       key: "input",
       label: "输入",
-      value: formatProxyLogTokenValue(log.promptTokens),
+      value: formatProxyLogTokenValue(usage.inputTokens),
       unit: "tokens",
     },
     {
@@ -428,15 +387,43 @@ function BillingFallbackSummary({ log }: { log: ProxyLogRenderItem }) {
     {
       key: "cache-read",
       label: "缓存读",
-      value: formatProxyLogTokenValue(log.cacheReadTokens),
+      value: formatProxyLogTokenValue(usage.cacheReadTokens),
       unit: "tokens",
     },
     {
       key: "cache-creation",
       label: "缓存建",
-      value: formatProxyLogTokenValue(log.cacheCreationTokens),
+      value: formatProxyLogTokenValue(usage.cacheCreationTokens),
       unit: "tokens",
     },
+    {
+      key: "input-cost",
+      label: "输入成本",
+      value: "--",
+      unit: "",
+    },
+    {
+      key: "output-cost",
+      label: "输出成本",
+      value: "--",
+      unit: "",
+    },
+    ...(typeof usage.cacheReadTokens === "number" && usage.cacheReadTokens > 0
+      ? [{
+          key: "cache-read-cost",
+          label: "缓存读成本",
+          value: "--",
+          unit: "",
+        }]
+      : []),
+    ...(typeof usage.cacheCreationTokens === "number" && usage.cacheCreationTokens > 0
+      ? [{
+          key: "cache-creation-cost",
+          label: "缓存建成本",
+          value: "--",
+          unit: "",
+        }]
+      : []),
     {
       key: "total",
       label: "总计",
@@ -456,29 +443,24 @@ function BillingFallbackSummary({ log }: { log: ProxyLogRenderItem }) {
 
   return (
     <div
-      className="proxy-log-billing-fallback"
+      className="proxy-log-billing-summary proxy-log-billing-fallback"
       data-testid="proxy-log-billing-fallback"
     >
-      <div className="proxy-log-billing-fallback-note">
-        未保存计费快照，无法还原当时单价、倍率和分项成本；以下为日志原始用量与历史预估费用，不按当前价格重算。
-      </div>
-      <div className="proxy-log-billing-fallback-metrics">
-        {metrics.map((metric) => (
-          <div
-            className="proxy-log-billing-fallback-metric"
-            data-testid={`billing-fallback-${metric.key}`}
-            key={metric.key}
-          >
-            <span className="proxy-log-billing-fallback-label">
-              {metric.label}
-            </span>
-            <strong className="proxy-log-billing-fallback-value">
-              {metric.value}
-              {metric.unit && metric.value !== "--" ? ` ${metric.unit}` : ""}
-            </strong>
-          </div>
-        ))}
-      </div>
+      {metrics.map((metric) => (
+        <span
+          data-testid={`billing-fallback-${metric.key}`}
+          key={metric.key}
+        >
+          {metric.label}{" "}
+          <strong>
+            {metric.value}
+            {metric.unit && metric.value !== "--" ? ` ${metric.unit}` : ""}
+          </strong>
+        </span>
+      ))}
+      <span className="proxy-log-billing-summary-note">
+        未保存计费快照，无法还原当时单价、倍率和分项成本；以上为日志用量与历史预估费用，不按当前价格重算。
+      </span>
     </div>
   );
 }
@@ -486,7 +468,7 @@ function BillingFallbackSummary({ log }: { log: ProxyLogRenderItem }) {
 function formatPricingDomainUsage(detail: PricingDomainBillingDetails): string[] {
   if (!detail.usage) return [];
   const lines = [
-    `输入 ${detail.usage.billablePromptTokens.toLocaleString()} tokens`,
+    `计费输入 ${detail.usage.billablePromptTokens.toLocaleString()} tokens`,
     `输出 ${detail.usage.completionTokens.toLocaleString()} tokens`,
   ];
   if (detail.usage.cacheReadTokens > 0) {
@@ -512,8 +494,8 @@ function PricingDomainBillingSummary({
 
   return (
     <div
+      className="proxy-log-billing-summary"
       data-testid="pricing-domain-billing-summary"
-      style={{ display: "flex", flexDirection: "column", gap: 2 }}
     >
       {formatPricingDomainUsage(detail).map((line) => (
         <span key={line}>{line}</span>
@@ -521,7 +503,7 @@ function PricingDomainBillingSummary({
       {detail.costBreakdownUsd && (
         <>
           <span>
-            输入成本 <strong>${detail.costBreakdownUsd.input.toFixed(6)}</strong>
+            计费输入成本 <strong>${detail.costBreakdownUsd.input.toFixed(6)}</strong>
           </span>
           <span>
             输出成本 <strong>${detail.costBreakdownUsd.output.toFixed(6)}</strong>
@@ -546,7 +528,7 @@ function PricingDomainBillingSummary({
       <span>
         真实成本 CNY <strong>¥{detail.actualCostCny.toFixed(6)}</strong>
       </span>
-      <span style={{ color: "var(--color-text-muted)" }}>
+      <span className="proxy-log-billing-summary-note">
         计价时间 {formatDateTimeLocal(detail.pricedAt)}；历史快照不随当前价格重算
       </span>
     </div>
@@ -589,7 +571,7 @@ function buildUsagePriceCostRows(input: {
       value: !isFiniteNumber(input.price)
         ? "未配置"
         : `${formatTooltipPerMillionPrice(input.price)}${input.priceNote ?? ""}`,
-      tone: !isFiniteNumber(input.price) ? "warning" : "info",
+      tone: !isFiniteNumber(input.price) || Boolean(input.priceNote) ? "warning" : "info",
     },
     {
       label: `${input.label}成本`,
@@ -600,8 +582,8 @@ function buildUsagePriceCostRows(input: {
 
 function formatPricingSources(
   sources: PricingDomainBillingDetails["priceSources"] | undefined,
-): string {
-  if (!sources || typeof sources !== "object") return "--";
+): Pick<StructuredTooltipRow, "value" | "tone"> {
+  if (!sources || typeof sources !== "object") return { value: "--", tone: "warning" };
   const labels = {
     manual: "手工覆盖",
     site: "站点价格",
@@ -609,7 +591,11 @@ function formatPricingSources(
     missing: "缺失",
   } as const;
   const unique = Array.from(new Set(Object.values(sources).map((source) => labels[source])));
-  return unique.join(" / ") || "--";
+  const value = unique.join(" / ") || "--";
+  return {
+    value,
+    tone: unique.includes("缺失") ? "warning" : "info",
+  };
 }
 
 function buildPricingDomainTooltipDetail(
@@ -621,7 +607,7 @@ function buildPricingDomainTooltipDetail(
 
   if (usage && breakdown) {
     rows.push(...buildUsagePriceCostRows({
-      label: "输入",
+      label: "计费输入",
       tokens: usage.billablePromptTokens,
       price: detail.inputPerMillionUsd,
       cost: breakdown.input,
@@ -688,6 +674,7 @@ function buildPricingDomainTooltipDetail(
   const pricingModel = [detail.providerId, detail.catalogModelId]
     .filter(Boolean)
     .join(" / ") || detail.upstreamModelId;
+  const pricingSources = formatPricingSources(detail.priceSources);
   return {
     title: "费用明细",
     sections: [
@@ -696,11 +683,11 @@ function buildPricingDomainTooltipDetail(
         title: "计价参数",
         rows: [
           { label: "计价模型", value: pricingModel },
-          { label: "价格来源", value: formatPricingSources(detail.priceSources), tone: "info" },
+          { label: "价格来源", ...pricingSources },
           {
             label: "分组倍率",
             value: `${formatCompactNumber(detail.groupRatio)}x${detail.groupRatioApplied ? "（已应用）" : "（未应用）"}`,
-            tone: "accent",
+            tone: detail.groupRatioApplied ? "info" : "muted",
           },
           {
             label: "服务档位",
@@ -711,8 +698,8 @@ function buildPricingDomainTooltipDetail(
       {
         title: "合计",
         rows: [
-          { label: "站点计价", value: formatTooltipUsd(detail.siteCostUsd), tone: "info" },
-          { label: "实际成本", value: `¥${detail.actualCostCny.toFixed(6)}`, tone: "success" },
+          { label: "站点计价", value: formatTooltipUsd(detail.siteCostUsd) },
+          { label: "实际成本", value: `¥${detail.actualCostCny.toFixed(6)}`, tone: "accent" },
           {
             label: "计价时间",
             value: formatDateTimeLocal(detail.pricedAt),
@@ -729,7 +716,7 @@ function buildLegacyBillingTooltipDetail(
 ): StructuredTooltipDetail {
   const rows: StructuredTooltipRow[] = [
     ...buildUsagePriceCostRows({
-      label: "输入",
+      label: "计费输入",
       tokens: detail.usage.billablePromptTokens,
       price: detail.breakdown.inputPerMillion,
       cost: detail.breakdown.inputCost,
@@ -775,7 +762,7 @@ function buildLegacyBillingTooltipDetail(
       {
         title: "合计",
         rows: [
-          { label: "预估费用", value: formatTooltipUsd(detail.breakdown.totalCost), tone: "success" },
+          { label: "预估费用", value: formatTooltipUsd(detail.breakdown.totalCost), tone: "accent" },
         ],
       },
     ],
@@ -790,19 +777,20 @@ function buildBillingTooltipDetail(log: ProxyLogRenderItem): StructuredTooltipDe
   const legacyDetail = getCompleteBillingDetails(log);
   if (legacyDetail) return buildLegacyBillingTooltipDetail(legacyDetail);
 
+  const usage = getProxyLogDisplayUsage(log);
   const rows: StructuredTooltipRow[] = [
     { label: "状态", value: "未保存计费快照", tone: "warning" },
-    { label: "输入", value: formatTooltipTokens(log.promptTokens) },
+    { label: "输入", value: formatTooltipTokens(usage.inputTokens) },
     { label: "输出", value: formatTooltipTokens(log.completionTokens) },
-    { label: "缓存读", value: formatTooltipTokens(log.cacheReadTokens) },
-    { label: "缓存建", value: formatTooltipTokens(log.cacheCreationTokens) },
+    { label: "缓存读", value: formatTooltipTokens(usage.cacheReadTokens) },
+    { label: "缓存建", value: formatTooltipTokens(usage.cacheCreationTokens) },
     { label: "总计", value: formatTooltipTokens(log.totalTokens) },
     {
       label: "历史预估",
       value: typeof log.estimatedCost === "number"
         ? formatTooltipUsd(log.estimatedCost)
         : "--",
-      tone: "success",
+      tone: "accent",
     },
     { label: "说明", value: "无法还原当时单价和倍率", tone: "muted" },
   ];
@@ -850,7 +838,7 @@ function buildBillingProcessLines(log: ProxyLogRenderItem) {
   if (!detail) return [];
 
   const lines = [
-    `提示价格：${formatPerMillionPrice(detail.breakdown.inputPerMillion)}`,
+    `计费输入价格：${formatPerMillionPrice(detail.breakdown.inputPerMillion)}`,
     `补全价格：${formatPerMillionPrice(detail.breakdown.outputPerMillion)}`,
   ];
 
@@ -867,7 +855,7 @@ function buildBillingProcessLines(log: ProxyLogRenderItem) {
   }
 
   const parts = [
-    `提示 ${detail.usage.billablePromptTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.inputPerMillion)}`,
+    `计费输入 ${detail.usage.billablePromptTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.inputPerMillion)}`,
   ];
 
   if (detail.usage.cacheReadTokens > 0) {
@@ -3090,6 +3078,7 @@ export default function ProxyLogs() {
               const detailLog: ProxyLogRenderItem = detail
                 ? { ...log, ...detail }
                 : log;
+              const displayUsage = getProxyLogDisplayUsage(detailLog);
               const pathMeta = parseProxyLogPathMeta(
                 detailLog.errorMessage ?? undefined,
               );
@@ -3207,7 +3196,7 @@ export default function ProxyLogs() {
                     <div className="mobile-summary-metric">
                       <div className="mobile-summary-metric-label">输入</div>
                       <div className="mobile-summary-metric-value">
-                        {formatProxyLogTokenValue(log.promptTokens)}
+                        {formatProxyLogTokenValue(displayUsage.inputTokens)}
                       </div>
                     </div>
                     <div className="mobile-summary-metric">
@@ -3219,13 +3208,13 @@ export default function ProxyLogs() {
                     <div className="mobile-summary-metric">
                       <div className="mobile-summary-metric-label">缓存读</div>
                       <div className="mobile-summary-metric-value">
-                        {formatProxyLogTokenValue(log.cacheReadTokens)}
+                        {formatProxyLogTokenValue(displayUsage.cacheReadTokens)}
                       </div>
                     </div>
                     <div className="mobile-summary-metric">
                       <div className="mobile-summary-metric-label">缓存建</div>
                       <div className="mobile-summary-metric-value">
-                        {formatProxyLogTokenValue(log.cacheCreationTokens)}
+                        {formatProxyLogTokenValue(displayUsage.cacheCreationTokens)}
                       </div>
                     </div>
                       <div className="mobile-summary-metric">
@@ -3389,6 +3378,7 @@ export default function ProxyLogs() {
                 const detailLog: ProxyLogRenderItem = detail
                   ? { ...log, ...detail }
                   : log;
+                const displayUsage = getProxyLogDisplayUsage(detailLog);
                 const pathMeta = parseProxyLogPathMeta(
                   detailLog.errorMessage ?? undefined,
                 );
@@ -3600,7 +3590,7 @@ export default function ProxyLogs() {
                           color: "var(--color-text-secondary)",
                         }}
                       >
-                        {formatProxyLogTokenValue(log.promptTokens)}
+                        {formatProxyLogTokenValue(displayUsage.inputTokens)}
                       </td>
                       <td
                         className="proxy-log-numeric-column"
@@ -3620,7 +3610,7 @@ export default function ProxyLogs() {
                           color: "var(--color-text-secondary)",
                         }}
                       >
-                        {formatProxyLogTokenValue(log.cacheReadTokens)}
+                        {formatProxyLogTokenValue(displayUsage.cacheReadTokens)}
                       </td>
                       <td
                         className="proxy-log-numeric-column"
@@ -3630,7 +3620,7 @@ export default function ProxyLogs() {
                           color: "var(--color-text-secondary)",
                         }}
                       >
-                        {formatProxyLogTokenValue(log.cacheCreationTokens)}
+                        {formatProxyLogTokenValue(displayUsage.cacheCreationTokens)}
                       </td>
                       <td
                         className="proxy-log-numeric-column"

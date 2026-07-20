@@ -16,6 +16,17 @@ describe('TooltipLayer component', () => {
     expect(appSource).toContain('<TooltipLayer />');
   });
 
+  it('keeps rich detail tooltip colors theme-aware', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/web/index.css'), 'utf8')
+      .replace(/\r\n/g, '\n');
+
+    expect(css).toMatch(/\.tooltip-bubble\.is-detail\s*\{/);
+    expect(css).toMatch(/\[data-theme="dark"\]\s+\.tooltip-bubble\.is-detail\s*\{/);
+    expect(css).toContain('--tooltip-detail-surface: var(--color-bg-card);');
+    expect(css).toContain('--tooltip-detail-surface: #101827;');
+    expect(css).toContain('.tooltip-detail-value.is-warning');
+  });
+
   it('accepts validated structured rows for rich hover details', () => {
     expect(parseStructuredTooltipDetail(JSON.stringify({
       title: '费用明细',

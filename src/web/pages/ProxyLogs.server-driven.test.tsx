@@ -137,7 +137,12 @@ function buildPricingDomainDetail(costOverrides: Partial<{
     siteName: 'main-site',
     billingDetails: {
       currency: 'CNY',
-      priceSources: { inputPerMillionUsd: 'models_dev', outputPerMillionUsd: 'models_dev' },
+      priceSources: {
+        inputPerMillionUsd: 'models_dev',
+        outputPerMillionUsd: 'models_dev',
+        cacheReadPerMillionUsd: 'missing',
+        cacheWritePerMillionUsd: 'missing',
+      },
       providerId: 'openai',
       catalogModelId: 'gpt-4.1-mini',
       upstreamModelId: 'gpt-4.1-mini-2025-04-14',
@@ -420,6 +425,7 @@ describe('ProxyLogs server-driven page', () => {
       completionTokens: 5,
       cacheReadTokens: 3,
       cacheCreationTokens: 2,
+      promptTokensIncludeCache: true,
       totalTokens: 15,
       retryCount: 0,
       estimatedCost: 1.23,
@@ -473,10 +479,14 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('Codex 兼容：移除 2 项 image generation 声明');
       expect(text).toContain('计费过程');
       expect(text).toContain('未保存计费快照');
-      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-input' }))).toContain('10 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-input' }))).toContain('输入 5 tokens');
       expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-output' }))).toContain('5 tokens');
       expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-read' }))).toContain('3 tokens');
       expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-creation' }))).toContain('2 tokens');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-input-cost' }))).toContain('输入成本 --');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-output-cost' }))).toContain('输出成本 --');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-read-cost' }))).toContain('缓存读成本 --');
+      expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cache-creation-cost' }))).toContain('缓存建成本 --');
       expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-total' }))).toContain('15 tokens');
       expect(collectText(root.root.findByProps({ 'data-testid': 'billing-fallback-cost' }))).toContain('$1.230000');
     } finally {
@@ -1132,6 +1142,9 @@ describe('ProxyLogs server-driven page', () => {
 
   it('shows pricing-domain cache usage and zero-cost cache lines on mobile', async () => {
     mobileState.value = true;
+    apiMock.getProxyLogs.mockResolvedValueOnce(buildListResponse({
+      items: [buildPricingDomainDetail()],
+    }));
     apiMock.getProxyLogDetail.mockResolvedValueOnce(buildPricingDomainDetail({
       cacheRead: 0,
       cacheWrite: 0,
@@ -1148,6 +1161,13 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
+      const mobileMetrics = root.root.findAll((node) => (
+        node.props.className === 'mobile-summary-metric'
+      )).map(collectText);
+      expect(mobileMetrics).toContain('输入650');
+      expect(mobileMetrics).toContain('缓存读300');
+      expect(mobileMetrics).toContain('缓存建50');
+
       const detailButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
@@ -1159,8 +1179,10 @@ describe('ProxyLogs server-driven page', () => {
       const summary = collectText(root.root.findByProps({
         'data-testid': 'pricing-domain-billing-summary',
       }));
+      expect(summary).toContain('计费输入 650 tokens');
       expect(summary).toContain('缓存读 300 tokens');
       expect(summary).toContain('缓存建 50 tokens');
+      expect(summary).toContain('计费输入成本 $0.000260');
       expect(summary).toContain('缓存读成本 $0.000000');
       expect(summary).toContain('缓存建成本 $0.000000');
       expect(summary).toContain('站点计价成本 USD $0.002400');
@@ -1170,13 +1192,9 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
-  it('renders separate cache read and creation columns after input and output', async () => {
+  it('renders billable input separately from cache read and creation', async () => {
     apiMock.getProxyLogs.mockResolvedValueOnce(buildListResponse({
-      items: [{
-        ...buildListResponse().items[0],
-        cacheReadTokens: 1000,
-        cacheCreationTokens: 40,
-      }],
+      items: [buildPricingDomainDetail()],
     }));
 
     let root!: WebTestRenderer;
@@ -1197,12 +1215,16 @@ describe('ProxyLogs server-driven page', () => {
       const cells = childInstances(row).filter((node) => node.type === 'td');
       const headers = root.root.findAllByType('th').map(collectText);
 
+      expect(headers).toContain('输入');
       expect(headers).toContain('缓存读');
       expect(headers).toContain('缓存建');
+      expect(headers).not.toContain('输入总量');
       expect(headers).not.toContain('缓存读/建');
-      expect(collectText(cells[2]!)).toContain('gpt-4o');
-      expect(collectText(cells[9]!)).toBe('1,000');
-      expect(collectText(cells[10]!)).toBe('40');
+      expect(collectText(cells[2]!)).toContain('gpt-4.1-mini');
+      expect(collectText(cells[7]!)).toBe('650');
+      expect(collectText(cells[8]!)).toBe('500');
+      expect(collectText(cells[9]!)).toBe('300');
+      expect(collectText(cells[10]!)).toBe('50');
     } finally {
       root?.unmount();
     }
@@ -1229,19 +1251,28 @@ describe('ProxyLogs server-driven page', () => {
       });
       const tooltip = JSON.parse(String(trigger.props['data-tooltip-detail'])) as {
         title: string;
-        sections: Array<{ rows: Array<{ label: string; value: string }> }>;
+        sections: Array<{ rows: Array<{ label: string; value: string; tone?: string }> }>;
       };
       const rows = tooltip.sections.flatMap((section) => section.rows);
 
       expect(trigger.props['aria-label']).toBe('查看费用明细');
       expect(tooltip.title).toBe('费用明细');
       expect(rows).toContainEqual(expect.objectContaining({
-        label: '输入单价',
+        label: '计费输入用量',
+        value: '650 tokens',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '计费输入单价',
         value: '$0.4000 / 1M tokens',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '计费输入成本',
+        value: '$0.000260',
       }));
       expect(rows).toContainEqual(expect.objectContaining({
         label: '缓存读单价',
         value: '$0.4000 / 1M tokens（输入价回退）',
+        tone: 'warning',
       }));
       expect(rows).toContainEqual(expect.objectContaining({
         label: '缓存读成本',
@@ -1250,10 +1281,17 @@ describe('ProxyLogs server-driven page', () => {
       expect(rows).toContainEqual(expect.objectContaining({
         label: '分组倍率',
         value: '1.2x（已应用）',
+        tone: 'info',
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        label: '价格来源',
+        value: '官方目录 / 缺失',
+        tone: 'warning',
       }));
       expect(rows).toContainEqual(expect.objectContaining({
         label: '实际成本',
         value: '¥0.000240',
+        tone: 'accent',
       }));
       expect(apiMock.getProxyLogDetail).not.toHaveBeenCalled();
     } finally {
