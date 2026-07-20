@@ -559,24 +559,80 @@ function collectOutputText(state: OpenAiResponsesAggregateState): string {
   return parts.join('');
 }
 
+/** Resolves a streamed output item by stable terminal `id` or `call_id`. */
+function resolveKnownOutputIndex(
+  state: OpenAiResponsesAggregateState,
+  itemType: string,
+  consumedIndexes: Set<number>,
+  ...candidateIds: Array<unknown>
+): number | undefined {
+  const indexMaps: Array<Record<string, number>> = [state.outputIndexById];
+  if (itemType === 'reasoning') indexMaps.push(state.reasoningIndexById);
+  if (itemType === 'function_call') indexMaps.push(state.functionIndexById);
+  if (itemType === 'custom_tool_call') indexMaps.push(state.customToolIndexById);
+  if (itemType === 'image_generation_call') indexMaps.push(state.imageGenerationIndexById);
+
+  for (const rawId of candidateIds) {
+    const itemId = asTrimmedString(rawId);
+    if (!itemId) continue;
+    for (const indexMap of indexMaps) {
+      const index = indexMap[itemId];
+      if (
+        index !== undefined
+        && !consumedIndexes.has(index)
+        && isOutputItemType(state.outputItems[index], itemType)
+      ) {
+        return index;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Aligns compacted terminal output with streamed items without reusing one item twice.
+ * ID-less items fall back to the next compatible type; unknown stable IDs stay distinct.
+ */
+function resolveTerminalOutputIndex(
+  state: OpenAiResponsesAggregateState,
+  item: AggregateOutputItem,
+  terminalIndex: number,
+  consumedIndexes: Set<number>,
+): number {
+  const itemType = asTrimmedString(item.type).toLowerCase();
+  const candidateIds = [item.id, item.call_id];
+  const knownIndex = resolveKnownOutputIndex(state, itemType, consumedIndexes, ...candidateIds);
+  if (knownIndex !== undefined) return knownIndex;
+
+  const hasStableIdentity = candidateIds.some((candidateId) => !!asTrimmedString(candidateId));
+  if (!hasStableIdentity) {
+    const compatibleIndex = state.outputItems.findIndex((existing, index) => (
+      !consumedIndexes.has(index) && isOutputItemType(existing, itemType)
+    ));
+    if (compatibleIndex >= 0) return compatibleIndex;
+  }
+
+  const existingAtTerminalIndex = state.outputItems[terminalIndex];
+  if (!consumedIndexes.has(terminalIndex) && !existingAtTerminalIndex) {
+    return terminalIndex;
+  }
+  return state.outputItems.length;
+}
+
 function hydrateStateFromTerminalResponseOutput(
   state: OpenAiResponsesAggregateState,
   responsePayload: Record<string, unknown> | null | undefined,
 ): void {
   if (!isRecord(responsePayload) || !Array.isArray(responsePayload.output)) return;
 
+  const consumedIndexes = new Set<number>();
   for (let index = 0; index < responsePayload.output.length; index += 1) {
     const item = responsePayload.output[index];
     if (!isRecord(item)) continue;
     const itemType = asTrimmedString(item.type).toLowerCase();
     if (!itemType) continue;
-    const resolvedIndex = resolveCompatibleOutputIndex(
-      state,
-      itemType,
-      index,
-      item.id,
-      item.call_id,
-    );
+    const resolvedIndex = resolveTerminalOutputIndex(state, item, index, consumedIndexes);
+    consumedIndexes.add(resolvedIndex);
     setOutputItem(state, resolvedIndex, cloneJson(item));
   }
 }
