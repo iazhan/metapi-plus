@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi" width="280">
+<img src="docs/logos/logo-full.png" alt="Metapi Plus" width="280">
 
 **A relay for relays — aggregate scattered AI relay stations into one unified gateway**
 
@@ -63,7 +63,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 
 ## 🌐 Live Demo
 
-> Try Metapi without deploying — full-featured demo instance:
+> Try Metapi Plus without deploying — full-featured demo instance:
 
 | | |
 |---|---|
@@ -78,9 +78,11 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 
 ## About
 
+> **Metapi Plus** is a community-maintained enhanced fork of [cita-777/metapi](https://github.com/cita-777/metapi), focused on resolving long-standing issues, maintaining releasable versions, and preserving deployment and data compatibility with upstream Metapi where practical.
+
 The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming.
 
-**Metapi** acts as the **Meta-Aggregation Layer** on top of these relay stations, unifying multiple sites into **one endpoint (with configurable per-project downstream API Keys)** — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models. Currently supported upstream platforms:
+**Metapi Plus** acts as the **Meta-Aggregation Layer** on top of these relay stations, unifying multiple sites into **one endpoint (with configurable per-project downstream API Keys)** — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models. Currently supported upstream platforms:
 
 - [New API](https://github.com/QuantumNous/new-api)
 - [One API](https://github.com/songquanpeng/one-api)
@@ -91,7 +93,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 
 AnyRouter-style deployments should use the `new-api` platform. Existing `anyrouter` configuration is kept as a legacy alias for `new-api`.
 
-| Pain Point | How Metapi Solves It |
+| Pain Point | How Metapi Plus Solves It |
 | --- | --- |
 | One key per site, tedious client config | **Unified proxy endpoint + optional per-project downstream keys** — all site models auto-aggregated under `/v1/*` |
 | No idea which site offers the cheapest model | **Smart routing** auto-selects the optimal channel by cost, balance, and usage |
@@ -179,7 +181,7 @@ Version 2.0.0 completely removes OAuth account proxying. The upgrade permanently
 
 **Downstream Clients** (Cursor · Claude Code · Codex · Open WebUI · Cherry Studio, etc.)
 &emsp;↓ &ensp;`Authorization: Bearer <PROXY_TOKEN>`
-**Metapi Gateway**
+**Metapi Plus Gateway**
 &emsp;• Unified `/v1` proxy for core OpenAI / Claude-compatible endpoints (Responses, Chat Completions, Messages, Completions, Embeddings, Images, Models)
 &emsp;• Smart Routing Engine — weighted selection by cost, balance, and availability; auto-cooldown & retry on failure
 &emsp;• Model Discovery — auto-aggregates all upstream models with zero config
@@ -452,7 +454,7 @@ Full configuration reference: [docs/configuration.md](docs/configuration.md)
 
 ## Proxy API Endpoints
 
-Metapi exposes standard OpenAI / Claude compatible endpoints:
+Metapi Plus exposes standard OpenAI / Claude compatible endpoints:
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
@@ -543,7 +545,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 | Project | Description |
 | --- | --- |
-| [New API](https://github.com/QuantumNous/new-api) | Next-gen LLM gateway, one of Metapi's primary upstreams |
+| [New API](https://github.com/QuantumNous/new-api) | Next-gen LLM gateway, one of the primary upstreams for Metapi Plus |
 | [One API](https://github.com/songquanpeng/one-api) | Classic OpenAI API aggregation |
 | [OneHub](https://github.com/MartialBE/one-hub) | Enhanced One API fork |
 | [DoneHub](https://github.com/deanxv/done-hub) | Enhanced OneHub fork |
@@ -553,7 +555,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 | Project | Description |
 | --- | --- |
-| [All API Hub](https://github.com/qixing-jk/all-api-hub) | Browser extension — all-in-one relay account manager, Metapi's original inspiration |
+| [All API Hub](https://github.com/qixing-jk/all-api-hub) | Browser extension — all-in-one relay account manager, the original inspiration for upstream Metapi |
 | [LLM Metadata](https://github.com/nicepkg/llm-metadata) | LLM model metadata library, used for model description reference |
 | [New API](https://github.com/QuantumNous/new-api) | Platform adapter reference implementation |
 
@@ -561,7 +563,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 ## Data & Privacy
 
-Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
+Metapi Plus is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
 
 ---
 
@@ -591,7 +593,7 @@ If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and
 
 ## Thanks
 
-Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi. A lot of the product polish in this project came directly from community usage and iteration.
+Metapi Plus inherits from upstream Metapi. Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi; much of this project's foundation grew out of that community's real-world usage and iteration.
 
 Special thanks to all contributors:
 
@@ -612,7 +614,7 @@ Special thanks to all contributors:
 
 <div align="center">
 
-**If Metapi helps you, a Star is the best support!**
+**If Metapi Plus helps you, a Star is the best support!**
 
 <sub>Built with love by the AI community</sub>
 

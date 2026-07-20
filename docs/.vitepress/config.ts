@@ -44,8 +44,8 @@ if (!sanitizeUrlSourceEntry) {
 export default withMermaid(
   defineConfig({
     lang: 'zh-CN',
-    title: 'Metapi 文档',
-    description: 'Metapi 使用文档、FAQ 与运维指南',
+    title: 'Metapi Plus 文档',
+    description: 'Metapi Plus 使用文档、FAQ 与运维指南',
     head: [
       ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon.png' }],
       ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: '/favicon-64.png' }],
@@ -64,7 +64,7 @@ export default withMermaid(
       },
     },
     themeConfig: {
-      siteTitle: 'Metapi Docs',
+      siteTitle: 'Metapi Plus Docs',
       logo: '/logos/logo-icon-512.png',
       nav: [
         { text: '首页', link: '/' },
@@ -103,7 +103,7 @@ export default withMermaid(
       },
       footer: {
         message: 'MIT Licensed',
-        copyright: 'Copyright (c) 2026 Metapi Contributors',
+        copyright: 'Copyright (c) 2026 Metapi Plus Contributors',
       },
       search: {
         provider: 'local',

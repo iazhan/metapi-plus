@@ -23,8 +23,8 @@
 
 这套能力只适用于：
 
-- 你已经在 K3s / Kubernetes 中部署了 Metapi
-- 而且当前 Metapi 是通过 Helm release 管理的
+- 你已经在 K3s / Kubernetes 中部署了 Metapi Plus
+- 而且当前 Metapi Plus 是通过 Helm release 管理的
 
 它不适用于：
 
@@ -34,9 +34,9 @@
 但如果你是老用户，正在计划从 Docker Compose 迁到 K3s / Helm，以获得版本管理、回滚和后台更新入口，那么这一节和对应专题页是值得提前看的。它写的不是“怎么原地升级 Compose”，而是“迁移完成后你会如何使用更新中心”。
 
 > [!IMPORTANT]
-> Metapi 当前正式支持单实例运行。仓库自带 Helm chart 固定使用 `replicaCount: 1` 和 `Recreate` 更新策略，升级时会有短暂停机；不要通过增加副本实现滚动更新，否则内存调度器和维护任务可能重复执行。
+> Metapi Plus 当前正式支持单实例运行。仓库自带 Helm chart 固定使用 `replicaCount: 1` 和 `Recreate` 更新策略，升级时会有短暂停机；不要通过增加副本实现滚动更新，否则内存调度器和维护任务可能重复执行。
 
-如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
+如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi Plus，并希望在管理后台中：
 
 - 查看当前运行版本
 - 检查 GitHub Releases / GHCR 镜像的稳定版
@@ -86,7 +86,7 @@
 
 | 组件 | 作用 | 免费额度 |
 |------|------|----------|
-| [Render](https://render.com) | 运行 Metapi 容器 | Free Web Service（750 小时/月，闲置 15 分钟自动休眠） |
+| [Render](https://render.com) | 运行 Metapi Plus 容器 | Free Web Service（750 小时/月，闲置 15 分钟自动休眠） |
 | [TiDB Serverless](https://tidbcloud.com) | MySQL 兼容数据库，替代 SQLite 实现数据持久化 | 5 GiB 存储 + 5000 万 Request Units/月 |
 | [UptimeRobot](https://uptimerobot.com) | 每 5 分钟 ping 一次，防止 Render 免费实例休眠 | 50 个免费监控 |
 
@@ -235,7 +235,7 @@ docker run -d --name metapi-plus \
 
 ### 桌面版特性
 
-- 内置本地 Metapi 服务，无需手动准备 Node.js 运行环境
+- 内置本地 Metapi Plus 服务，无需手动准备 Node.js 运行环境
 - 托盘菜单支持重新打开窗口、重启后端、开机自启
 - 支持基于 GitHub Releases 的应用内更新检查
 

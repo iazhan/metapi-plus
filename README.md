@@ -47,7 +47,7 @@
 
 ## 🌐 在线体验
 
-> 无需部署，直接体验 Metapi 的完整功能：
+> 无需部署，直接体验 Metapi Plus 的完整功能：
 
 |                        |                                                            |
 | ---------------------- | ---------------------------------------------------------- |
@@ -76,7 +76,7 @@ AnyRouter 这类 New API 搭建站点请选择 `new-api`，旧配置中的 `anyr
 
 详细接法见 [上游接入](./docs/upstream-integration.md)。
 
-| 痛点                                  | Metapi 怎么解决                                                        |
+| 痛点                                  | Metapi Plus 怎么解决                                                   |
 | ------------------------------------- | ---------------------------------------------------------------------- |
 | 🔑 每个站点一个 Key，下游工具配置一堆 | **统一代理入口 + 可选多下游 Key 策略**，模型自动聚合到 `/v1/*` |
 | 💸 不知道哪个站点用某个模型最便宜     | **智能路由** 自动按成本、余额、使用率选最优通道                  |
@@ -163,7 +163,7 @@ AnyRouter 这类 New API 搭建站点请选择 `new-api`，旧配置中的 `anyr
 ## 🏛️ 架构概览
 
 <div align="center">
-  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi Plus: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
 </div>
 
 ---
@@ -413,7 +413,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 | 项目                                            | 说明                                    |
 | ----------------------------------------------- | --------------------------------------- |
-| [New API](https://github.com/QuantumNous/new-api)  | 新一代大模型网关，Metapi 的主要上游之一 |
+| [New API](https://github.com/QuantumNous/new-api)  | 新一代大模型网关，Metapi Plus 的主要上游之一 |
 | [One API](https://github.com/songquanpeng/one-api) | 经典 OpenAI 接口聚合管理                |
 | [OneHub](https://github.com/MartialBE/one-hub)     | One API 增强分支                        |
 | [DoneHub](https://github.com/deanxv/done-hub)      | OneHub 增强分支                         |
@@ -423,7 +423,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 | 项目                                                 | 说明                                                      |
 | ---------------------------------------------------- | --------------------------------------------------------- |
-| [All API Hub](https://github.com/qixing-jk/all-api-hub) | 浏览器扩展版 — 一站式管理中转站账号，Metapi 最初灵感来源 |
+| [All API Hub](https://github.com/qixing-jk/all-api-hub) | 浏览器扩展版 — 一站式管理中转站账号，上游 Metapi 最初的灵感来源 |
 | [LLM Metadata](https://github.com/nicepkg/llm-metadata) | LLM 模型元数据库，用于模型描述参考                        |
 | [New API](https://github.com/QuantumNous/new-api)       | 平台适配器参考实现                                        |
 
@@ -431,7 +431,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 ## 🔒 数据与隐私
 
-Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
+Metapi Plus 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
 
 ---
 

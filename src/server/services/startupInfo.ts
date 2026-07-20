@@ -41,7 +41,7 @@ export function buildStartupSummaryLines(input: StartupSummaryInput): string[] {
   const endpoints = buildStartupEndpoints(input);
 
   return [
-    `metapi running on ${input.host}:${input.port}`,
+    `Metapi Plus running on ${input.host}:${input.port}`,
     `Dashboard: ${endpoints.adminDashboardUrl}`,
     `Admin API: ${endpoints.adminApiExample}`,
     `Proxy API: ${endpoints.proxyApiExample}`,

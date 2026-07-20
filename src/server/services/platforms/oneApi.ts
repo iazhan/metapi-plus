@@ -4,6 +4,7 @@ import {
   CheckinResult,
   BalanceInfo,
   CreateApiTokenOptions,
+  DEFAULT_API_TOKEN_NAME,
   type PlatformDetectionContext,
 } from './base.js';
 import type { PlatformPriceQuote, PricingCredential } from '../../pricing/contracts.js';
@@ -41,7 +42,7 @@ export class OneApiAdapter extends BasePlatformAdapter {
   }
 
   private buildDefaultTokenPayload(options?: CreateApiTokenOptions): CreateApiTokenPayload {
-    const normalizedName = (options?.name || '').trim() || 'metapi';
+    const normalizedName = (options?.name || '').trim() || DEFAULT_API_TOKEN_NAME;
     const unlimitedQuota = options?.unlimitedQuota ?? true;
     const remainQuota = Number.isFinite(options?.remainQuota)
       ? Math.max(0, Math.trunc(options?.remainQuota as number))

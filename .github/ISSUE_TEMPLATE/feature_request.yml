@@ -36,7 +36,7 @@ body:
     id: area
     attributes:
       label: Related Area / 相关模块
-      description: Which part of Metapi is this feature mainly about? / 这个功能主要涉及 Metapi 的哪个模块？
+      description: Which part of Metapi Plus is this feature mainly about? / 这个功能主要涉及 Metapi Plus 的哪个模块？
       options:
         - Site / Account Management / 站点与账号管理
         - Token Management / 令牌管理

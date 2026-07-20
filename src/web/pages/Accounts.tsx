@@ -1991,7 +1991,7 @@ export default function Accounts() {
                               color: "var(--color-text-muted)",
                             }}
                           >
-                            配置 refresh_token 后，metapi 会在 JWT 临近过期或
+                            配置 refresh_token 后，Metapi Plus 会在 JWT 临近过期或
                             401 时自动续期并回写新 token。
                           </div>
                         </div>

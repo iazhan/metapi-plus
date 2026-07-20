@@ -20,7 +20,7 @@
 
 面板型站点优先使用 Access Token，拿不到时再考虑 Cookie；兼容接口、CPA 和官方预设使用 API Key。Claude 官方 `api.anthropic.com` 和其他 Anthropic-compatible 站点均按 API Key 方式添加。
 
-### Q: 在 Metapi 里怎么切换认证方式？
+### Q: 在 Metapi Plus 里怎么切换认证方式？
 
 **A:** 在「账号管理 / API Key 管理」中按站点类型选择 Session 或 API Key。具体平台选择见 [上游接入](/upstream-integration)。
 
@@ -31,7 +31,7 @@
 
 ### Q: AnyRouter 这类 New API 变体站点应该怎么接？
 
-**A:** 请选择 `new-api` 平台。AnyRouter 不再作为独立平台维护，Metapi 会把旧配置中的 `anyrouter` 兼容映射到 `new-api`。这类站点中有些实例会隐藏 Access Token 入口，或额外加登录盾。建议：
+**A:** 请选择 `new-api` 平台。AnyRouter 不再作为独立平台维护，Metapi Plus 会把旧配置中的 `anyrouter` 兼容映射到 `new-api`。这类站点中有些实例会隐藏 Access Token 入口，或额外加登录盾。建议：
 
 1. 如果站点后台能生成系统访问令牌，优先用 Session 模式 + Access Token
 2. 如果没有 Access Token 入口，或验证时被盾/认证页拦截，再改用 Cookie 导入
@@ -45,11 +45,11 @@
 
 **A:** Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。当前建议：
 
-1. 可以使用账号密码登录。Metapi 会调用 `/api/v1/auth/login`，保存 Access Token、Refresh Token 和过期时间，并初始化账号令牌与分组倍率
-2. 如果站点要求 2FA 或 Turnstile，Metapi 不会接入第三方打码服务；请先在原站完成验证，再改用 Session 凭证导入
+1. 可以使用账号密码登录。Metapi Plus 会调用 `/api/v1/auth/login`，保存 Access Token、Refresh Token 和过期时间，并初始化账号令牌与分组倍率
+2. 如果站点要求 2FA 或 Turnstile，Metapi Plus 不会接入第三方打码服务；请先在原站完成验证，再改用 Session 凭证导入
 3. 手动导入时，在 Session 模式分别粘贴 F12 中的 `auth_token`、`refresh_token`、`token_expires_at`，无需配置用户 ID
 4. Sub2API 通常为订阅制使用，不支持签到；如果只关心代理调用，也可以直接使用 API Key 模式
-5. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
+5. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi Plus 会再尝试用它发现模型
 
 详细操作说明见 [上游接入](/upstream-integration)。
 
@@ -169,11 +169,11 @@ docker compose up -d
 
 - 上游站点不支持签到功能
 - 账号凭证已过期（系统会尝试自动重登录）
-- 站点接口变更 — 检查 Metapi 是否为最新版本
+- 站点接口变更 — 检查 Metapi Plus 是否为最新版本
 
 ### Q: 签到成功但奖励显示为 0
 
-**A:** 部分站点的签到接口不返回奖励金额。Metapi 会尝试从收入日志推算奖励，但可能存在延迟。
+**A:** 部分站点的签到接口不返回奖励金额。Metapi Plus 会尝试从收入日志推算奖励，但可能存在延迟。
 
 ---
 

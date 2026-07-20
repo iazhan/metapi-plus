@@ -136,6 +136,8 @@ export interface CreateApiTokenOptions {
   modelLimits?: string;
 }
 
+export const DEFAULT_API_TOKEN_NAME = 'metapi-plus';
+
 export type PlatformDetectionContext = {
   siteProxy?: SiteProxyConfigLike | null;
   signal?: AbortSignal;

@@ -145,7 +145,7 @@ describe('notifyService', () => {
     const payload = JSON.parse(call[1]?.body || '{}') as { msgtype?: string; text?: { content?: string } };
     expect(Array.isArray(payload)).toBe(false);
     expect(payload.msgtype).toBe('text');
-    expect(payload.text?.content || '').toContain('[metapi][INFO] 测试通知');
+    expect(payload.text?.content || '').toContain('[Metapi Plus][INFO] 测试通知');
     expect(payload.text?.content || '').toContain('message');
   });
 
@@ -328,7 +328,7 @@ describe('notifyService', () => {
 
     const payload = JSON.parse(call[1]?.body || '{}') as { msg_type?: string; content?: { text?: string } };
     expect(payload.msg_type).toBe('text');
-    expect(payload.content?.text || '').toContain('[metapi][INFO] 测试通知');
+    expect(payload.content?.text || '').toContain('[Metapi Plus][INFO] 测试通知');
     expect(payload.content?.text || '').toContain('feishu message');
   });
 
@@ -374,7 +374,7 @@ describe('notifyService', () => {
 
     const payload = JSON.parse(call[1]?.body || '{}') as { msg_type?: string; content?: { text?: string } };
     expect(payload.msg_type).toBe('text');
-    expect(payload.content?.text || '').toContain('[metapi][WARNING] 测试通知');
+    expect(payload.content?.text || '').toContain('[Metapi Plus][WARNING] 测试通知');
     expect(payload.content?.text || '').toContain('lark message');
   });
 });

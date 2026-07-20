@@ -1,6 +1,6 @@
 # 🚀 快速上手
 
-本文档帮助你在 10 分钟内完成 Metapi 的首次部署。
+本文档帮助你在 10 分钟内完成 Metapi Plus 的首次部署。
 
 [返回文档首页](/)
 
@@ -87,7 +87,7 @@ docker compose up -d
 如果你是在个人电脑上本地使用，请直接下载桌面版安装包：
 
 1. 打开 [Releases](https://github.com/iazhan/metapi-plus/releases) 下载与你系统匹配的桌面安装包
-2. 安装并启动 Metapi Desktop
+2. 安装并启动 Metapi Plus Desktop
 3. 桌面壳会自动启动本地服务并保存数据，无需手动准备 Node.js 环境
 
 Linux 安装包选择建议：
@@ -108,14 +108,14 @@ Linux 安装包选择建议：
 > 首次登录后建议立即到「设置」里改成你自己的强密码令牌。
 
 > [!TIP]
-> - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
+> - Windows 下常见路径是 `%APPDATA%\metapi-plus\data` 和 `%APPDATA%\metapi-plus\logs`。
 > - 如果没有额外覆盖端口，本机其他客户端可以直接连接 `http://127.0.0.1:4000`。
 > - Linux 用户建议优先选原生包：Fedora 系列用 `.rpm`，Debian/Ubuntu 系列用 `.deb`。
 
 > [!WARNING]
 > **端口冲突排障：** 桌面版默认使用 `4000` 端口；如果该端口被其他应用占用：
 > - 设置环境变量 `METAPI_DESKTOP_SERVER_PORT=<指定端口>` 改到一个空闲端口
-> - 或关闭占用 `4000` 的应用后重启 Metapi Desktop
+> - 或关闭占用 `4000` 的应用后重启 Metapi Plus Desktop
 
 > [!NOTE]
 > 服务器部署统一推荐 Docker / Docker Compose，不再提供裸 Node.js 的 Release 压缩包。
@@ -140,7 +140,7 @@ pnpm run dev
 完成部署后，按以下顺序配置：
 
 > [!TIP] 从 ALL-API-Hub 迁移（可选）
-> 如果你使用过 ALL-API-Hub，Metapi 兼容其导出的备份设置，可直接导入，无需手动逐项配置。
+> 如果你使用过 ALL-API-Hub，Metapi Plus 兼容其导出的备份设置，可直接导入，无需手动逐项配置。
 >
 > 导入后刷新账号状态可能出现个别账号令牌过期，点击重新绑定按钮按照下面步骤2的方法获取Access Token或者Cookie等即可。
 >
@@ -235,7 +235,7 @@ pnpm run dev
 
 ![路由筛选](./screenshots/routes-filter.png)
 
-- **可以通过创建群组，从而对上游模型进行匹配和重定向，如果建立下图群组，下游访问Metapi时获取的claude-opus-4-6模型将在命中样本中智能选取，日志中可以看见映射。** ![路由群组示例](./screenshots/route-group.png)
+- **可以通过创建群组，从而对上游模型进行匹配和重定向，如果建立下图群组，下游访问 Metapi Plus 时获取的 claude-opus-4-6 模型将在命中样本中智能选取，日志中可以看见映射。** ![路由群组示例](./screenshots/route-group.png)
 
 - **可以在使用日志中看见下游的请求模型和实际分配给下游使用的模型**
 
@@ -243,7 +243,7 @@ pnpm run dev
 
 ### 步骤 5：验证代理
 
-**Metapi还有更多功能，可以在设置中寻找，请尽情探索，有建议可以提出Issue改进。**
+**Metapi Plus 还有更多功能，可以在设置中寻找，请尽情探索，有建议可以提出 Issue 改进。**
 
 按运行方式选择验证入口：
 

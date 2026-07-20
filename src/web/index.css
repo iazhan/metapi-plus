@@ -1313,7 +1313,7 @@ body {
   font-size: 16px;
   font-weight: 700;
   color: var(--color-text-primary);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 /* --- Mobile Nav --- */
@@ -3455,15 +3455,15 @@ textarea {
 
 .login-brand-name {
   font-family: 'Avenir Next', 'Segoe UI Variable Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
-  font-size: clamp(34px, 3.2vw, 46px);
+  font-size: 42px;
   font-weight: 800;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
 }
 
 .login-brand-kicker {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0;
   text-transform: uppercase;
   color: #64748b;
 }
@@ -3782,12 +3782,28 @@ textarea {
     border-radius: 28px;
   }
 
+  .login-brand-name {
+    font-size: 32px;
+  }
+
   .login-brand-copy {
     font-size: 15px;
   }
 
   .login-brand-footer {
     margin-top: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .login-brand-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .login-brand-name {
+    font-size: 28px;
   }
 }
 

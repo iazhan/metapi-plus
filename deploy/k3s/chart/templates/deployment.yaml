@@ -1,5 +1,5 @@
 {{- if ne (int .Values.replicaCount) 1 -}}
-{{- fail "Metapi's single-instance runtime requires replicaCount=1" -}}
+{{- fail "Metapi Plus single-instance runtime requires replicaCount=1" -}}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment

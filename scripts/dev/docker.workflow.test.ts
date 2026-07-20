@@ -111,6 +111,18 @@ describe('docker workflows', () => {
     expect(chartValues).not.toContain('1467078763/metapi');
   });
 
+  it('uses one Metapi Plus service name across bundled Compose tooling', () => {
+    const compose = readFileSync(resolve(process.cwd(), 'docker/docker-compose.yml'), 'utf8');
+    const override = readFileSync(resolve(process.cwd(), 'docker/docker-compose.override.yml'), 'utf8');
+    const updateScript = readFileSync(resolve(process.cwd(), 'update-and-restart.sh'), 'utf8');
+
+    expect(compose).toMatch(/^  metapi-plus:/m);
+    expect(override).toMatch(/^  metapi-plus:/m);
+    expect(override).not.toMatch(/^  metapi:/m);
+    expect(updateScript).toContain('port metapi-plus 4000');
+    expect(updateScript).not.toContain('port metapi 4000');
+  });
+
   it('uses an armv7-capable node base image in the Dockerfile', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
 

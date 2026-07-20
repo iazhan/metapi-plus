@@ -153,7 +153,7 @@ if [ -n "$BACKUP_FILE" ]; then
   echo "Data backup saved to: $BACKUP_FILE"
 fi
 
-if PORT_MAPPING="$(docker compose "${COMPOSE_ARGS[@]}" port metapi 4000 2>/dev/null)"; then
+if PORT_MAPPING="$(docker compose "${COMPOSE_ARGS[@]}" port metapi-plus 4000 2>/dev/null)"; then
   echo
   echo "Service is available at: $PORT_MAPPING"
 fi

@@ -3,7 +3,7 @@ kind: Template
 metadata:
   name: Metapi Plus
 spec:
-  description: Community-maintained Metapi fork for AI API aggregation platforms.
+  description: Metapi Plus is a community-maintained AI API aggregation gateway.
   icon: https://raw.githubusercontent.com/iazhan/metapi-plus/main/docs/logos/logo-icon-512.png
   coverImage: https://raw.githubusercontent.com/iazhan/metapi-plus/main/docs/logos/logo-banner.png
   tags:
@@ -13,7 +13,7 @@ spec:
   readme: |-
     # Metapi Plus (Zeabur Template)
 
-    Metapi Plus is a community-maintained Metapi fork with token routing, account management, monitoring, and admin dashboard.
+    Metapi Plus is a community-maintained AI API aggregation gateway with token routing, account management, monitoring, and an admin dashboard.
 
     ## Required Variables
 

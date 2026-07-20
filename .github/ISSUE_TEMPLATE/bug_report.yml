@@ -41,7 +41,7 @@ body:
     id: problem-area
     attributes:
       label: Problem Area / 问题模块
-      description: Which part of Metapi seems related? Optional, but helpful. / 您觉得问题和 Metapi 的哪个模块有关？选填，但有助于排查。
+      description: Which part of Metapi Plus seems related? Optional, but helpful. / 您觉得问题和 Metapi Plus 的哪个模块有关？选填，但有助于排查。
       options:
         - Site / Account Management / 站点与账号管理
         - Token Management / 令牌管理
@@ -59,7 +59,7 @@ body:
   - type: textarea
     id: app-version
     attributes:
-      label: Metapi Version / Metapi 版本
+      label: Metapi Plus Version / Metapi Plus 版本
       description: Tell us the version, image tag, or commit if you know it. / 如果您知道，请填写版本号、镜像标签或 commit。
       placeholder: |
         e.g. v1.2.2 / latest / commit SHA
@@ -150,7 +150,7 @@ body:
         Host platform:
         Reverse proxy:
         Client tool:
-        Metapi version:
+        Metapi Plus version:
         Database:
 
         操作系统：
@@ -158,5 +158,5 @@ body:
         宿主环境：
         反向代理：
         客户端工具：
-        Metapi 版本：
+        Metapi Plus 版本：
         数据库：

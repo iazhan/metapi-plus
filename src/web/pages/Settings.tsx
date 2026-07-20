@@ -2109,7 +2109,7 @@ export default function Settings() {
             <div style={settingsModernTitleBlockStyle}>
               <div style={{ ...settingsModernTitleStyle, color: 'var(--color-danger)' }}>批量测活</div>
               <div style={settingsModernDescriptionStyle}>
-                默认关闭。开启后，metapi 会在后台定时对活跃账号模型发送最小化探测请求，用来校正“/models 能看到但实际不可用”的假阳性。
+                默认关闭。开启后，Metapi Plus 会在后台定时对活跃账号模型发送最小化探测请求，用来校正“/models 能看到但实际不可用”的假阳性。
               </div>
             </div>
             <div style={settingsModernPillRowStyle}>
@@ -2135,7 +2135,7 @@ export default function Settings() {
           </div>
           <label style={settingsModernToggleStyle}>
             <div style={settingsModernToggleCopyStyle}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>允许 metapi 后台主动批量测活</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>允许 Metapi Plus 后台主动批量测活</span>
               <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
                 首次从关闭切换到开启时，需要手动输入确认语句；关闭时可直接保存。
               </span>
@@ -2812,7 +2812,7 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-7" style={{ padding: 20, border: '1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))' }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10, color: 'var(--color-danger)' }}>危险操作</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 12 }}>
-            重新初始化系统会清空当前 metapi 使用中的全部数据库内容；若当前运行在外部 MySQL/Postgres，也会先清空该外部库中的 metapi 数据，然后切回默认 SQLite。
+            重新初始化系统会清空当前 Metapi Plus 使用中的全部数据库内容；若当前运行在外部 MySQL/Postgres，也会先清空该外部库中的 Metapi Plus 数据，然后切回默认 SQLite。
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 14 }}>
             完成后管理员 Token 会重置为 <code style={{ fontFamily: 'var(--font-mono)' }}>{FACTORY_RESET_ADMIN_TOKEN}</code>，当前会话会立即退出并刷新页面。

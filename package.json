@@ -1,7 +1,7 @@
 {
   "name": "metapi-plus",
   "version": "2.2.0",
-  "description": "Community-maintained Metapi fork for AI API aggregation platforms",
+  "description": "Metapi Plus, a community-maintained AI API aggregation gateway",
   "main": "dist/desktop/main.js",
   "keywords": [
     "ai",

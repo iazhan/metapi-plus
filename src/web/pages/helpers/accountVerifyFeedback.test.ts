@@ -9,7 +9,7 @@ describe('account verify feedback', () => {
   it('treats fetch failures as connectivity issues instead of token mistakes', () => {
     expect(normalizeVerifyFailureMessage('Failed to fetch')).not.toBe('Failed to fetch');
     expect(buildVerifyFailureHint({ success: false, message: 'Failed to fetch' })).not.toBeNull();
-    expect(buildAddAccountPrereqHint({ success: false, message: 'Failed to fetch' })).toMatch(/metapi|站点|代理/i);
+    expect(buildAddAccountPrereqHint({ success: false, message: 'Failed to fetch' })).toMatch(/Metapi Plus|站点|代理/i);
   });
 
   it('treats timeout failures as reachability issues instead of token mistakes', () => {

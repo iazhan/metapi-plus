@@ -66,6 +66,8 @@ describe('About update center', () => {
       await flushMicrotasks();
 
       const text = collectText(root.root);
+      expect(text).toContain('关于 Metapi Plus');
+      expect(text).toContain('Metapi Plus');
       expect(text).toContain('v1.2.3');
       expect(text).toContain('GitHub 稳定版');
       expect(text).toContain('1.3.0');
