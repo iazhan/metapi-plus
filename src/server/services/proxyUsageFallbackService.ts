@@ -14,9 +14,45 @@ const MATCH_LOOKAHEAD_MS = 120_000;
 const MATCH_MAX_CREATED_DELTA_MS = 90_000;
 const MATCH_MAX_LATENCY_DELTA_MS = 12_000;
 const QUOTA_PER_UNIT = 500_000;
-const SUPPORTED_USAGE_FALLBACK_PLATFORMS = new Set(['done-hub', 'one-hub', 'new-api', 'sub2api']);
-const ALWAYS_LOOKUP_SELF_LOG_PLATFORMS = new Set(['done-hub', 'one-hub', 'sub2api']);
-const PLATFORM_REQUIRES_USER_HEADER = new Set(['new-api']);
+
+interface SelfLogPlatformCapabilities {
+  alwaysLookup: boolean;
+  promptTokensExcludeCache: boolean;
+  requiresUserHeader: boolean;
+  transport: 'standard' | 'sub2api';
+}
+
+const SELF_LOG_PLATFORM_CAPABILITIES: Record<string, SelfLogPlatformCapabilities> = {
+  'done-hub': {
+    alwaysLookup: true,
+    promptTokensExcludeCache: false,
+    requiresUserHeader: false,
+    transport: 'standard',
+  },
+  'one-hub': {
+    alwaysLookup: true,
+    promptTokensExcludeCache: false,
+    requiresUserHeader: false,
+    transport: 'standard',
+  },
+  'new-api': {
+    alwaysLookup: false,
+    promptTokensExcludeCache: false,
+    requiresUserHeader: true,
+    transport: 'standard',
+  },
+  sub2api: {
+    alwaysLookup: true,
+    // Sub2API reports non-cached input in input_tokens and cache usage separately.
+    promptTokensExcludeCache: true,
+    requiresUserHeader: false,
+    transport: 'sub2api',
+  },
+};
+
+function getSelfLogPlatformCapabilities(platform: string): SelfLogPlatformCapabilities | null {
+  return SELF_LOG_PLATFORM_CAPABILITIES[normalizePlatformAlias(platform)] ?? null;
+}
 
 interface ProxyUsage {
   promptTokens: number;
@@ -154,9 +190,9 @@ export function shouldLookupSelfLog(
   usage: ProxyUsage,
   upstreamUsagePresent?: boolean,
 ): boolean {
-  const normalizedPlatform = normalizePlatformAlias(platform);
-  if (!SUPPORTED_USAGE_FALLBACK_PLATFORMS.has(normalizedPlatform)) return false;
-  if (ALWAYS_LOOKUP_SELF_LOG_PLATFORMS.has(normalizedPlatform)) return true;
+  const capabilities = getSelfLogPlatformCapabilities(platform);
+  if (!capabilities) return false;
+  if (capabilities.alwaysLookup) return true;
   const normalizedUsage = normalizeUsage(usage);
   const hasUpstreamUsage = upstreamUsagePresent ?? !isUsageMissing(normalizedUsage);
   return !hasUpstreamUsage;
@@ -210,14 +246,17 @@ function getPayloadList(payload: unknown): unknown[] {
   return [];
 }
 
-function mapSelfLogItem(raw: unknown): SelfLogItem | null {
+function mapSelfLogItem(
+  raw: unknown,
+  capabilities: SelfLogPlatformCapabilities | null,
+): SelfLogItem | null {
   if (!raw || typeof raw !== 'object') return null;
   const row = raw as Record<string, unknown>;
 
   const modelName = String(row.model_name ?? row.modelName ?? row.model ?? '').trim();
   if (!modelName) return null;
 
-  const promptTokens = toPositiveInt(
+  const rawPromptTokens = toPositiveInt(
     row.prompt_tokens
       ?? row.promptTokens
       ?? row.input_tokens
@@ -229,8 +268,17 @@ function mapSelfLogItem(raw: unknown): SelfLogItem | null {
       ?? row.output_tokens
       ?? row.outputTokens,
   );
+  const billingMeta = parseSelfLogBillingMeta(row.other, row);
+  const promptTokensExcludeCache = capabilities?.promptTokensExcludeCache === true;
+  const promptTokens = promptTokensExcludeCache
+    ? rawPromptTokens
+      + (billingMeta?.cacheReadTokens ?? 0)
+      + (billingMeta?.cacheCreationTokens ?? 0)
+    : rawPromptTokens;
   const totalTokensRaw = toPositiveInt(row.total_tokens ?? row.totalTokens);
-  const totalTokens = totalTokensRaw > 0 ? totalTokensRaw : (promptTokens + completionTokens);
+  const totalTokens = promptTokensExcludeCache
+    ? Math.max(totalTokensRaw, promptTokens + completionTokens)
+    : (totalTokensRaw > 0 ? totalTokensRaw : (promptTokens + completionTokens));
   const createdAtMs = toTimestampMs(row.created_at ?? row.createdAt);
   if (createdAtMs <= 0) return null;
   const recoveredCost = roundCost(toNumber(row.actual_cost ?? row.actualCost ?? row.total_cost ?? row.totalCost, 0));
@@ -265,24 +313,29 @@ function mapSelfLogItem(raw: unknown): SelfLogItem | null {
     ...(recoveredCost > 0 ? { recoveredCost } : {}),
     createdAtMs,
     requestTimeMs,
-    billingMeta: parseSelfLogBillingMeta(row.other),
+    billingMeta,
   };
 }
 
-function parseSelfLogBillingMeta(rawOther: unknown): SelfLogBillingMeta | null {
+function parseSelfLogBillingMeta(
+  rawOther: unknown,
+  row: Record<string, unknown>,
+): SelfLogBillingMeta | null {
   let payload = rawOther;
   if (typeof rawOther === 'string') {
     const trimmed = rawOther.trim();
-    if (!trimmed) return null;
-    try {
-      payload = JSON.parse(trimmed);
-    } catch {
-      return null;
+    if (trimmed) {
+      try {
+        payload = JSON.parse(trimmed);
+      } catch {
+        payload = null;
+      }
     }
   }
 
-  if (!payload || typeof payload !== 'object') return null;
-  const other = payload as Record<string, unknown>;
+  const other = payload && typeof payload === 'object'
+    ? payload as Record<string, unknown>
+    : {};
 
   const modelRatio = normalizePositiveRatio(other.model_ratio ?? other.modelRatio, 1);
   const completionRatio = normalizePositiveRatio(
@@ -301,14 +354,20 @@ function parseSelfLogBillingMeta(rawOther: unknown): SelfLogBillingMeta | null {
     1,
   );
   const groupRatio = normalizePositiveRatio(other.group_ratio ?? other.groupRatio, 1);
-  const cacheReadTokens = toPositiveInt(
-    other.cache_tokens ?? other.cacheTokens ?? other.cache_read_tokens ?? other.cacheReadTokens,
+  const cacheReadTokens = Math.max(
+    toPositiveInt(
+      other.cache_tokens ?? other.cacheTokens ?? other.cache_read_tokens ?? other.cacheReadTokens,
+    ),
+    toPositiveInt(row.cache_read_tokens ?? row.cacheReadTokens),
   );
-  const cacheCreationTokens = toPositiveInt(
-    other.cache_creation_tokens
-      ?? other.cacheCreationTokens
-      ?? other.create_cache_tokens
-      ?? other.createCacheTokens,
+  const cacheCreationTokens = Math.max(
+    toPositiveInt(
+      other.cache_creation_tokens
+        ?? other.cacheCreationTokens
+        ?? other.create_cache_tokens
+        ?? other.createCacheTokens,
+    ),
+    toPositiveInt(row.cache_creation_tokens ?? row.cacheCreationTokens),
   );
 
   const hasMeaningfulData = (
@@ -358,8 +417,8 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
   }, SELF_LOG_FETCH_TIMEOUT_MS);
 
   try {
-    const platform = normalizePlatformAlias(input.site.platform);
-    if (platform === 'sub2api') {
+    const capabilities = getSelfLogPlatformCapabilities(input.site.platform);
+    if (capabilities?.transport === 'sub2api') {
       const query = new URLSearchParams({
         page: '1',
         page_size: String(SELF_LOG_PAGE_SIZE),
@@ -392,7 +451,7 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
     };
-    if (PLATFORM_REQUIRES_USER_HEADER.has(platform)) {
+    if (capabilities?.requiresUserHeader) {
       const userId = resolveSelfLogUserId(input);
       if (userId) {
         headers['New-Api-User'] = String(userId);
@@ -444,21 +503,23 @@ async function fetchSelfLogPayload(baseUrl: string, token: string, input: ProxyU
 
 async function fetchRecentSelfLogItems(input: ProxyUsageFallbackInput): Promise<SelfLogItem[]> {
   const baseUrl = normalizeUrl(input.site.url);
+  const platform = normalizePlatformAlias(input.site.platform);
   const tokens = buildTokenCandidates(input);
   for (const token of tokens) {
     try {
       const payload = await fetchSelfLogPayload(baseUrl, token, input);
-      const items = extractSelfLogItems(payload);
+      const items = extractSelfLogItems(payload, platform);
       if (items.length > 0) return items;
     } catch {}
   }
   return [];
 }
 
-export function extractSelfLogItems(payload: unknown): SelfLogItem[] {
+export function extractSelfLogItems(payload: unknown, platform = ''): SelfLogItem[] {
+  const capabilities = getSelfLogPlatformCapabilities(platform);
   const rows = getPayloadList(payload);
   const items = rows
-    .map((row) => mapSelfLogItem(row))
+    .map((row) => mapSelfLogItem(row, capabilities))
     .filter((item): item is SelfLogItem => item !== null)
     .sort((a, b) => b.createdAtMs - a.createdAtMs);
 

@@ -130,6 +130,120 @@ describe('proxyUsageFallbackService sub2api', () => {
     });
   });
 
+  it('normalizes sub2api input tokens with separate cache usage before returning billing usage', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      code: 0,
+      message: 'success',
+      data: {
+        items: [
+          {
+            id: 1003,
+            model: 'gpt-5.6-sol',
+            input_tokens: 2809,
+            output_tokens: 1643,
+            total_tokens: 4452,
+            cache_read_tokens: 170752,
+            cache_creation_tokens: 0,
+            total_cost: 0.148711,
+            actual_cost: 0.148711,
+            duration_ms: 39247,
+            created_at: '2026-07-20T09:47:06.000Z',
+            api_key: {
+              key: 'sk-route',
+              name: 'upstream-key-name',
+            },
+            other: JSON.stringify({
+              cache_tokens: 170752,
+            }),
+          },
+        ],
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const result = await resolveProxyUsageWithSelfLogFallback({
+      site: {
+        url: 'https://sub2api.example.com',
+        platform: 'sub2api',
+      },
+      account: {
+        accessToken: 'jwt-access-token',
+      },
+      tokenValue: 'sk-route',
+      tokenName: 'upstream-key-name',
+      modelName: 'gpt-5.6-sol',
+      requestStartedAtMs: Date.parse('2026-07-20T09:46:27.000Z'),
+      requestEndedAtMs: Date.parse('2026-07-20T09:47:06.000Z'),
+      localLatencyMs: 39247,
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+    });
+
+    expect(result).toMatchObject({
+      promptTokens: 173561,
+      completionTokens: 1643,
+      totalTokens: 175204,
+      recoveredFromSelfLog: true,
+      selfLogBillingMeta: {
+        cacheReadTokens: 170752,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: true,
+      },
+    });
+  });
+
+  it('normalizes cache fields supplied on the usage row when other is absent', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        items: [
+          {
+            model: 'gpt-5.6-sol',
+            input_tokens: 100,
+            output_tokens: 10,
+            total_tokens: 110,
+            cache_read_tokens: 50,
+            cache_creation_tokens: 5,
+            actual_cost: 0.0001,
+            duration_ms: 1000,
+            created_at: '2026-07-20T09:47:06.000Z',
+            api_key: { key: 'sk-route', name: 'upstream-key-name' },
+          },
+        ],
+      },
+    }), { status: 200 }));
+
+    const result = await resolveProxyUsageWithSelfLogFallback({
+      site: {
+        url: 'https://sub2api.example.com',
+        platform: 'sub2api',
+      },
+      account: { accessToken: 'jwt-access-token' },
+      tokenValue: 'sk-route',
+      tokenName: 'upstream-key-name',
+      modelName: 'gpt-5.6-sol',
+      requestStartedAtMs: Date.parse('2026-07-20T09:46:27.000Z'),
+      requestEndedAtMs: Date.parse('2026-07-20T09:47:06.000Z'),
+      localLatencyMs: 1000,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    });
+
+    expect(result).toMatchObject({
+      promptTokens: 155,
+      completionTokens: 10,
+      totalTokens: 165,
+      selfLogBillingMeta: {
+        cacheReadTokens: 50,
+        cacheCreationTokens: 5,
+        promptTokensIncludeCache: true,
+      },
+    });
+  });
+
   it('treats explicit zero upstream usage as upstream instead of unknown', async () => {
     const result = await resolveProxyUsageWithSelfLogFallback({
       site: {
