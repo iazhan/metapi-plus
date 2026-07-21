@@ -29,6 +29,14 @@ jobs:
           node-version: 25
           cache: npm
 
+      - name: Validate release changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          node scripts/publish/extractReleaseNotes.mjs \
+            --tag "${{ github.ref_name }}" \
+            --changelog CHANGELOG.md \
+            --output release-notes.md
+
       - name: Install dependencies
         run: npm ci
 
@@ -267,6 +275,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build release notes from changelog
+        run: |
+          node scripts/publish/extractReleaseNotes.mjs \
+            --tag "${{ github.ref_name }}" \
+            --changelog CHANGELOG.md \
+            --output release-notes.md
+
       - name: Download package artifacts
         uses: actions/download-artifact@v8
         with:
@@ -280,6 +298,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
+          body_path: release-notes.md
           generate_release_notes: true
           files: release-assets/*
 

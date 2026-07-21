@@ -189,6 +189,25 @@ test: add tests for checkin reward parser
 chore: upgrade Vite to 6.0
 ```
 
+## Release Process / 发布流程
+
+GitHub Release 的正文来自根目录的 [`CHANGELOG.md`](CHANGELOG.md)，不以提交信息代替面向用户的更新说明。
+
+1. 开发期间，将尚未发布的用户可见变化记录在 `## [Unreleased]` 下。
+2. 准备版本时，将本次内容整理为 `## [X.Y.Z] - YYYY-MM-DD`，并在文件顶部保留新的 `## [Unreleased]` 段落。
+3. 只保留有实际内容的“新增、改进、修复、注意事项”等分类；内容应描述用户能感知的结果，而不是复制 commit 标题。
+4. 在创建 `vX.Y.Z` tag 前运行以下命令，确认对应版本段落存在且包含实际内容：
+
+```bash
+node scripts/publish/extractReleaseNotes.mjs \
+  --tag vX.Y.Z \
+  --changelog CHANGELOG.md \
+  --output tmp/release-notes.md
+```
+
+5. 将版本号、`CHANGELOG.md` 和其他发布元数据一同提交后再创建 tag。tag 推送触发的 Release workflow 会再次校验并提取同一段落；缺少或为空时会在构建前失败。
+6. GitHub Release 以提取出的人工更新日志为正文，并保留 GitHub 自动生成的 `Full Changelog` 作为技术参考。
+
 ### What Not to Commit / 不要提交的内容
 
 - Runtime data: `data/`, `tmp/` / 运行时数据：`data/`、`tmp/`

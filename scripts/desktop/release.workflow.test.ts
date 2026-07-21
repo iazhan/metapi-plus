@@ -28,4 +28,19 @@ describe('release workflow', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
     expect(workflow).toContain('sudo apt-get install --no-install-recommends -y rpm');
   });
+
+  it('publishes the current tag changelog section as the GitHub Release body', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+    const publishReleaseJob = workflow
+      .split('\n  publish-release:')[1]
+      ?.split('\n  publish-docker-arch:')[0];
+
+    expect(publishReleaseJob).toContain('name: Checkout');
+    expect(publishReleaseJob).toContain('node scripts/publish/extractReleaseNotes.mjs');
+    expect(publishReleaseJob).toContain('--tag "${{ github.ref_name }}"');
+    expect(publishReleaseJob).toContain('--output release-notes.md');
+    expect(publishReleaseJob).toContain('body_path: release-notes.md');
+    expect(publishReleaseJob).toContain('generate_release_notes: true');
+    expect(workflow).toContain('name: Validate release changelog');
+  });
 });
