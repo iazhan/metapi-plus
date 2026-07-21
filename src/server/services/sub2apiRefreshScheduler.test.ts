@@ -2,11 +2,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
 
 const refreshSub2ApiManagedSessionSingleflightMock = vi.fn();
+const setAccountRuntimeHealthMock = vi.fn();
 
 vi.mock('./sub2apiRefreshSingleflight.js', () => ({
   refreshSub2ApiManagedSessionSingleflight: (...args: unknown[]) => refreshSub2ApiManagedSessionSingleflightMock(...args),
+}));
+
+vi.mock('./accountHealthService.js', () => ({
+  setAccountRuntimeHealth: (...args: unknown[]) => setAccountRuntimeHealthMock(...args),
 }));
 
 vi.mock('./sub2apiManagedAuth.js', async (importOriginal) => {
@@ -68,6 +74,7 @@ describe('sub2apiRefreshScheduler', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     refreshSub2ApiManagedSessionSingleflightMock.mockReset();
+    setAccountRuntimeHealthMock.mockReset();
     await stopSub2ApiManagedRefreshScheduler();
     await resetSub2ApiManagedRefreshSchedulerForTests();
 
@@ -215,6 +222,193 @@ describe('sub2apiRefreshScheduler', () => {
       accountIds.due,
       accountIds.expired,
     ].sort((a, b) => a - b));
+  });
+
+  it('recovers expired sub2api managed sessions without requiring expiry metadata', async () => {
+    const nowMs = Date.parse('2026-07-21T00:00:00.000Z');
+    vi.setSystemTime(nowMs);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'sub2-expired-site',
+      url: 'https://sub2-expired.example.com',
+      platform: 'sub2api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'expired-managed@example.com',
+      accessToken: 'expired-access-token',
+      apiToken: null,
+      status: 'expired',
+      extraConfig: buildSub2ApiExtraConfig({
+        refreshToken: 'expired-refresh-token',
+      }),
+    }).returning().get();
+
+    refreshSub2ApiManagedSessionSingleflightMock.mockResolvedValue({
+      accessToken: 'recovered-access-token',
+      extraConfig: buildSub2ApiExtraConfig({
+        refreshToken: 'rotated-refresh-token',
+        tokenExpiresAt: nowMs + (60 * 60 * 1000),
+      }),
+    });
+
+    const result = await executeSub2ApiManagedRefreshPass({ nowMs });
+
+    expect(result).toMatchObject({
+      scanned: 1,
+      refreshed: 1,
+      failed: 0,
+      skipped: 0,
+      refreshedAccountIds: [account.id],
+      failedAccountIds: [],
+    });
+    expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: expect.objectContaining({ id: account.id, status: 'expired' }),
+        currentAccessToken: 'expired-access-token',
+      }),
+    );
+    expect(setAccountRuntimeHealthMock).toHaveBeenCalledWith(
+      account.id,
+      {
+        state: 'healthy',
+        reason: 'Sub2API 托管会话刷新成功',
+        source: 'sub2api-refresh',
+      },
+      {
+        expectedSession: {
+          accessToken: 'recovered-access-token',
+          extraConfig: buildSub2ApiExtraConfig({
+            refreshToken: 'rotated-refresh-token',
+            tokenExpiresAt: nowMs + (60 * 60 * 1000),
+          }),
+        },
+      },
+    );
+  });
+
+  it('backs off repeated refresh failures for the same managed session', async () => {
+    const nowMs = Date.parse('2026-07-21T00:00:00.000Z');
+    vi.setSystemTime(nowMs);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'sub2-backoff-site',
+      url: 'https://sub2-backoff.example.com',
+      platform: 'sub2api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'backoff-managed@example.com',
+      accessToken: 'expired-access-token',
+      apiToken: null,
+      status: 'expired',
+      extraConfig: buildSub2ApiExtraConfig({
+        refreshToken: 'backoff-refresh-token',
+      }),
+    }).returning().get();
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    refreshSub2ApiManagedSessionSingleflightMock.mockRejectedValue(new Error('refresh rejected'));
+
+    try {
+      const first = await executeSub2ApiManagedRefreshPass({ nowMs });
+      const beforeFirstRetry = await executeSub2ApiManagedRefreshPass({ nowMs: nowMs + 59_999 });
+      const second = await executeSub2ApiManagedRefreshPass({ nowMs: nowMs + 60_000 });
+      const beforeSecondRetry = await executeSub2ApiManagedRefreshPass({
+        nowMs: nowMs + 60_000 + 299_999,
+      });
+      const third = await executeSub2ApiManagedRefreshPass({
+        nowMs: nowMs + 60_000 + 300_000,
+      });
+
+      expect(first).toMatchObject({ failed: 1, skipped: 0 });
+      expect(beforeFirstRetry).toMatchObject({ failed: 0, skipped: 1 });
+      expect(second).toMatchObject({ failed: 1, skipped: 0 });
+      expect(beforeSecondRetry).toMatchObject({ failed: 0, skipped: 1 });
+      expect(third).toMatchObject({ failed: 1, skipped: 0 });
+      expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(3);
+      expect(setAccountRuntimeHealthMock).toHaveBeenCalledTimes(3);
+      expect(setAccountRuntimeHealthMock).toHaveBeenNthCalledWith(
+        1,
+        account.id,
+        {
+          state: 'unhealthy',
+          reason: 'refresh rejected',
+          source: 'sub2api-refresh',
+        },
+        {
+          expectedSession: {
+            accessToken: 'expired-access-token',
+            extraConfig: buildSub2ApiExtraConfig({
+              refreshToken: 'backoff-refresh-token',
+            }),
+          },
+        },
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('retries immediately when the managed session changes during backoff', async () => {
+    const nowMs = Date.parse('2026-07-21T00:00:00.000Z');
+    vi.setSystemTime(nowMs);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'sub2-rotated-session-site',
+      url: 'https://sub2-rotated-session.example.com',
+      platform: 'sub2api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'rotated-session@example.com',
+      accessToken: 'old-access-token',
+      apiToken: null,
+      status: 'expired',
+      extraConfig: buildSub2ApiExtraConfig({
+        refreshToken: 'old-refresh-token',
+      }),
+    }).returning().get();
+
+    refreshSub2ApiManagedSessionSingleflightMock
+      .mockRejectedValueOnce(new Error('refresh rejected'))
+      .mockResolvedValueOnce({
+        accessToken: 'recovered-access-token',
+        extraConfig: buildSub2ApiExtraConfig({
+          refreshToken: 'recovered-refresh-token',
+          tokenExpiresAt: nowMs + (60 * 60 * 1000),
+        }),
+      });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const first = await executeSub2ApiManagedRefreshPass({ nowMs });
+      await db.update(schema.accounts).set({
+        accessToken: 'rotated-access-token',
+        extraConfig: buildSub2ApiExtraConfig({
+          refreshToken: 'rotated-refresh-token',
+        }),
+      }).where(eq(schema.accounts.id, account.id)).run();
+      const afterRotation = await executeSub2ApiManagedRefreshPass({ nowMs: nowMs + 1_000 });
+
+      expect(first).toMatchObject({ failed: 1, skipped: 0 });
+      expect(afterRotation).toMatchObject({ refreshed: 1, failed: 0, skipped: 0 });
+      expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(2);
+      expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          account: expect.objectContaining({
+            id: account.id,
+            accessToken: 'rotated-access-token',
+          }),
+          currentAccessToken: 'rotated-access-token',
+        }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('refreshes due sub2api accounts with bounded concurrency instead of serially', async () => {

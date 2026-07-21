@@ -245,17 +245,25 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   }
 
   if (!effectiveSuccess) {
-    setAccountRuntimeHealth(account.id, {
-      state: 'unhealthy',
-      reason: result.message || '\u7b7e\u5230\u5931\u8d25',
-      source: 'checkin',
-    });
     if (isTokenExpiredError({ message: result.message })) {
       await reportTokenExpired({
         accountId: account.id,
         username: account.username,
         siteName: site.name,
         detail: result.message,
+        expectedAccessToken: activeAccessToken || '',
+        expectedExtraConfig: activeExtraConfig ?? null,
+      });
+    } else {
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: result.message || '\u7b7e\u5230\u5931\u8d25',
+        source: 'checkin',
+      }, {
+        expectedSession: {
+          accessToken: activeAccessToken || '',
+          extraConfig: activeExtraConfig ?? null,
+        },
       });
     }
 

@@ -253,24 +253,50 @@ export async function refreshBalance(accountId: number) {
         });
         activeAccessToken = refreshed.accessToken;
         activeExtraConfig = refreshed.extraConfig;
-      } catch {}
+      } catch (error) {
+        const message = (error as Error)?.message || 'unknown error';
+        const health = await setAccountRuntimeHealth(account.id, {
+          state: 'unhealthy',
+          reason: message,
+          source: 'sub2api-refresh',
+        }, {
+          expectedSession: {
+            accessToken: activeAccessToken || '',
+            extraConfig: activeExtraConfig ?? null,
+          },
+        });
+        if (health) {
+          activeExtraConfig = mergeAccountExtraConfig(activeExtraConfig, {
+            runtimeHealth: health,
+          });
+        }
+        console.warn(`[sub2api-refresh] failed to refresh account ${account.id} before balance fetch: ${message}`);
+      }
     }
   }
   const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
     () => adapter.getBalance(site.url, token, platformUserId));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
-    setAccountRuntimeHealth(account.id, {
-      state: 'unhealthy',
-      reason: message,
-      source: 'balance',
-    });
     if (shouldReportExpired(message)) {
       await reportTokenExpired({
         accountId: account.id,
         username: account.username,
         siteName: site.name,
         detail: message,
+        expectedAccessToken: activeAccessToken || '',
+        expectedExtraConfig: activeExtraConfig ?? null,
+      });
+    } else {
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: message,
+        source: 'balance',
+      }, {
+        expectedSession: {
+          accessToken: activeAccessToken || '',
+          extraConfig: activeExtraConfig ?? null,
+        },
       });
     }
     throw new Error(message);

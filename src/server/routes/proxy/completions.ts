@@ -379,6 +379,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             username: selected.account.username,
             siteName: selected.site.name,
             detail: `HTTP ${status}`,
+            expectedAccessToken: selected.account.accessToken || '',
+            expectedExtraConfig: selected.account.extraConfig ?? null,
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {

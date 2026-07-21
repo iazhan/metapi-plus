@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
   getCredentialModeFromExtraConfig,
@@ -12,6 +12,12 @@ export type RuntimeHealthInfo = {
   reason: string;
   source: string;
   checkedAt: string | null;
+};
+
+/** 用于阻止迟到的健康检查结果覆盖已轮换会话。 */
+export type AccountRuntimeHealthSessionGuard = {
+  accessToken: string;
+  extraConfig: string | null;
 };
 
 const VALID_RUNTIME_HEALTH_STATES = new Set<RuntimeHealthState>([
@@ -36,6 +42,10 @@ function parseObject(value: string | Record<string, unknown> | null | undefined)
   } catch {
     return {};
   }
+}
+
+function nullableEquals(column: any, value: string | null): SQL {
+  return value === null ? isNull(column) : eq(column, value);
 }
 
 function normalizeRuntimeHealthState(value: unknown): RuntimeHealthState | null {
@@ -184,6 +194,9 @@ function applyRuntimeHealthToExtraConfig(extraConfig: string | null | undefined,
   });
 }
 
+/**
+ * 更新账户运行状态；传入会话守卫时，仅允许写入同一会话代次。
+ */
 export async function setAccountRuntimeHealth(
   accountId: number,
   input: {
@@ -192,22 +205,41 @@ export async function setAccountRuntimeHealth(
     source?: string | null;
     checkedAt?: string | null;
   },
+  options?: {
+    expectedSession?: AccountRuntimeHealthSessionGuard;
+  },
 ): Promise<RuntimeHealthInfo | null> {
   try {
     const query = db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)) as any;
     const account = typeof query?.get === 'function' ? await query.get() : null;
     if (!account) return null;
 
+    const expectedSession = options?.expectedSession;
+    if (
+      expectedSession
+      && (
+        account.accessToken !== expectedSession.accessToken
+        || (account.extraConfig ?? null) !== expectedSession.extraConfig
+      )
+    ) {
+      return null;
+    }
+
     const health = buildRuntimeHealthPatch(input);
     const nextExtraConfig = applyRuntimeHealthToExtraConfig(account.extraConfig, health);
 
-    await db.update(schema.accounts)
+    const result = await db.update(schema.accounts)
       .set({
         extraConfig: nextExtraConfig,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(schema.accounts.id, accountId))
+      .where(and(
+        eq(schema.accounts.id, accountId),
+        eq(schema.accounts.accessToken, account.accessToken),
+        nullableEquals(schema.accounts.extraConfig, account.extraConfig ?? null),
+      ))
       .run();
+    if (Number(result?.changes || 0) !== 1) return null;
 
     return health;
   } catch {

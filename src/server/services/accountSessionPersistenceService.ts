@@ -1,4 +1,4 @@
-import { and, eq, isNull, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 
 export type AccountSessionSnapshot = typeof schema.accounts.$inferSelect;
@@ -17,6 +17,13 @@ export type PersistedRecoveredAccountSession = {
   extraConfig: string;
 };
 
+/** 可稳定标识一次账户会话代次的持久化字段。 */
+export type AccountSessionIdentity = {
+  accountId: number;
+  accessToken: string;
+  extraConfig: string | null;
+};
+
 function nullableEquals(column: any, value: string | null): SQL {
   return value === null ? isNull(column) : eq(column, value);
 }
@@ -31,6 +38,34 @@ export function sessionSnapshotMatches(latest: AccountSessionSnapshot, snapshot:
     && String(latest.accessToken || '') === String(snapshot.accessToken || '')
     && (latest.extraConfig ?? null) === (snapshot.extraConfig ?? null)
     && normalizeAccountSessionStatus(latest.status) === normalizeAccountSessionStatus(snapshot.status);
+}
+
+/**
+ * 仅过期实际产生认证失败的会话代次；快照不匹配时不修改账户。
+ */
+export async function expireAccountSessionIfCurrent(
+  input: AccountSessionIdentity,
+): Promise<boolean> {
+  const result = await db.update(schema.accounts)
+    .set({
+      status: 'expired',
+      updatedAt: new Date().toISOString(),
+    })
+    .where(and(
+      eq(schema.accounts.id, input.accountId),
+      eq(schema.accounts.accessToken, input.accessToken),
+      nullableEquals(schema.accounts.extraConfig, input.extraConfig),
+      or(
+        isNull(schema.accounts.status),
+        and(
+          ne(schema.accounts.status, 'disabled'),
+          ne(schema.accounts.status, 'expired'),
+        ),
+      ),
+    ))
+    .run();
+
+  return Number(result?.changes || 0) === 1;
 }
 
 /**

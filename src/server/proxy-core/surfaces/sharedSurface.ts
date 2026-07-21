@@ -21,7 +21,12 @@ type SurfaceWarningScope = 'chat' | 'responses';
 
 type SurfaceSelectedChannel = {
   channel: { routeId: number | null; id: number };
-  account: { id: number; username?: string | null };
+  account: {
+    id: number;
+    username?: string | null;
+    accessToken?: string | null;
+    extraConfig?: string | null;
+  };
   site: { name?: string | null };
   actualModel?: string | null;
 };
@@ -525,6 +530,8 @@ export function createSurfaceFailureToolkit(input: {
           username: args.selected.account.username,
           siteName: args.selected.site.name,
           detail: `HTTP ${args.status}`,
+          expectedAccessToken: args.selected.account.accessToken || '',
+          expectedExtraConfig: args.selected.account.extraConfig ?? null,
         }));
       }
 

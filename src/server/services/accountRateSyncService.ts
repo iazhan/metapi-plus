@@ -1,4 +1,3 @@
-import { and, eq, isNull, ne, or, type SQL } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
   getCredentialModeFromExtraConfig,
@@ -13,6 +12,7 @@ import { getAdapter } from './platforms/index.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isSub2ApiPlatform } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
+import { expireAccountSessionIfCurrent } from './accountSessionPersistenceService.js';
 import type { GroupRateInfo } from './platforms/base.js';
 
 export const ACCOUNT_RATE_SYNC_TIMEOUT_MS = 15_000;
@@ -197,26 +197,6 @@ async function recoverRateSession(
     : { accessToken, extraConfig: relogged.extraConfig };
 }
 
-function nullableEquals(column: any, value: string | null): SQL {
-  return value === null ? isNull(column) : eq(column, value);
-}
-
-async function markExpired(
-  accountId: number,
-  expectedAccessToken: string,
-  expectedExtraConfig: string | null,
-): Promise<void> {
-  await db.update(schema.accounts)
-    .set({ status: 'expired', updatedAt: new Date().toISOString() })
-    .where(and(
-      eq(schema.accounts.id, accountId),
-      eq(schema.accounts.accessToken, expectedAccessToken),
-      nullableEquals(schema.accounts.extraConfig, expectedExtraConfig),
-      or(isNull(schema.accounts.status), ne(schema.accounts.status, 'disabled')),
-    ))
-    .run();
-}
-
 async function persistGroupRates(
   accountId: number,
   expectedAccessToken: string,
@@ -328,7 +308,11 @@ export async function refreshAccountGroupRates(
       }
     }
     if (!recovered) {
-      await markExpired(row.accounts.id, accessToken, activeExtraConfig);
+      await expireAccountSessionIfCurrent({
+        accountId: row.accounts.id,
+        accessToken,
+        extraConfig: activeExtraConfig,
+      });
       return {
         rateSync: { status: 'failed', message: firstMessage },
         recoveredSession,
@@ -365,7 +349,11 @@ export async function refreshAccountGroupRates(
       const retryMessage = errorMessage(retryError, 'rate sync failed');
       const retryFailureKind = classifyRateFailure(retryError);
       if (retryFailureKind === 'auth') {
-        await markExpired(row.accounts.id, recovered.accessToken, recovered.extraConfig);
+        await expireAccountSessionIfCurrent({
+          accountId: row.accounts.id,
+          accessToken: recovered.accessToken,
+          extraConfig: recovered.extraConfig,
+        });
       }
       return {
         rateSync: { status: 'failed', message: retryMessage },
